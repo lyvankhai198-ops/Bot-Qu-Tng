@@ -21,22 +21,28 @@ LANG = {
 
         # Main menu buttons
         "btn_gift": "🎁 Nhận Quà",
-        "btn_inventory": "📦 Kho Quà",
-        "btn_rules": "📜 Quy Định",
-        "btn_support": "💬 Liên Hệ Admin",
+        "btn_support": "💬 Hỗ Trợ",
         "btn_shop": "🛍 Kênh Bán Hàng",
-        "btn_refund": "💰 Tính Hoàn Tiền",
-        "btn_warranty": "🛡 Bảo Hành",
-        "btn_expiry": "📅 Tính Ngày Hết Hạn",
-        "btn_check_warranty": "📦 Kiểm Tra Bảo Hành",
-        "btn_calculator": "🧮 Máy Tính Nhanh",
-        "btn_faq": "❓ FAQ",
-        "btn_notify": "📢 Thông Báo",
-        "btn_admin": "👑 Admin",
-        "btn_back": "🔙 Quay lại",
+        "btn_check_order": "📦 Kiểm Tra Đơn Hàng",
         "btn_home": "🏠 Trang chủ",
-        "btn_recalc": "🔄 Tính lại",
         "btn_open_shop": "🛍 MỞ KÊNH BÁN HÀNG",
+
+        # Check order
+        "check_order_ask": (
+            "📦 <b>KIỂM TRA ĐƠN HÀNG</b>\n\n"
+            "Vui lòng nhập <b>email tài khoản</b> bạn đã nhận để kiểm tra:"
+        ),
+        "check_order_found": (
+            "✅ <b>ĐÃ TÌM THẤY ĐƠN HÀNG</b>\n\n"
+            "📧 Email: <code>{email}</code>\n"
+            "👤 Tên: <b>{name}</b>\n"
+            "📅 Ngày nhận: <b>{claim_time}</b>\n"
+            "🔖 Đợt: <b>{round_id}</b>"
+        ),
+        "check_order_not_found": (
+            "❌ <b>Không tìm thấy đơn hàng.</b>\n\n"
+            "Kiểm tra lại email hoặc liên hệ Admin để được hỗ trợ."
+        ),
 
         # Admin menu buttons
         "btn_add_account": "📦 Thêm Tài Khoản",
@@ -277,22 +283,28 @@ LANG = {
 
         # Main menu buttons
         "btn_gift": "🎁 Claim Gift",
-        "btn_inventory": "📦 Gift Stock",
-        "btn_rules": "📜 Rules",
-        "btn_support": "💬 Contact Admin",
+        "btn_support": "💬 Support",
         "btn_shop": "🛍 Shop Channel",
-        "btn_refund": "💰 Refund Calculator",
-        "btn_warranty": "🛡 Warranty",
-        "btn_expiry": "📅 Expiry Date",
-        "btn_check_warranty": "📦 Check Warranty",
-        "btn_calculator": "🧮 Quick Calculator",
-        "btn_faq": "❓ FAQ",
-        "btn_notify": "📢 Announcements",
-        "btn_admin": "👑 Admin",
-        "btn_back": "🔙 Back",
+        "btn_check_order": "📦 Check Order",
         "btn_home": "🏠 Home",
-        "btn_recalc": "🔄 Recalculate",
         "btn_open_shop": "🛍 OPEN SHOP CHANNEL",
+
+        # Check order
+        "check_order_ask": (
+            "📦 <b>CHECK YOUR ORDER</b>\n\n"
+            "Please enter the <b>account email</b> you received to look it up:"
+        ),
+        "check_order_found": (
+            "✅ <b>ORDER FOUND</b>\n\n"
+            "📧 Email: <code>{email}</code>\n"
+            "👤 Name: <b>{name}</b>\n"
+            "📅 Claimed: <b>{claim_time}</b>\n"
+            "🔖 Round: <b>{round_id}</b>"
+        ),
+        "check_order_not_found": (
+            "❌ <b>Order not found.</b>\n\n"
+            "Please double-check the email or contact Admin for support."
+        ),
 
         # Admin menu buttons
         "btn_add_account": "📦 Add Account",

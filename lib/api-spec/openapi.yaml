@@ -1,22 +1,22 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Bot Quà Tặng AI Admin API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: bot
+    description: Bot administration
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,7 +24,283 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /bot/auth:
+    post:
+      operationId: botLogin
+      tags: [bot]
+      summary: Admin login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Auth token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResult"
+        "401":
+          description: Unauthorized
+
+  /bot/stats:
+    get:
+      operationId: getBotStats
+      tags: [bot]
+      summary: Dashboard statistics
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStats"
+
+  /bot/settings:
+    get:
+      operationId: getBotSettings
+      tags: [bot]
+      summary: Get bot settings
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotSettings"
+    put:
+      operationId: updateBotSettings
+      tags: [bot]
+      summary: Update bot settings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BotSettingsInput"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotSettings"
+
+  /bot/accounts:
+    get:
+      operationId: listAccounts
+      tags: [bot]
+      summary: List all accounts in stock
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Account list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Account"
+    post:
+      operationId: addAccounts
+      tags: [bot]
+      summary: Add accounts to stock (bulk)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountsInput"
+      responses:
+        "200":
+          description: Add result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddAccountsResult"
+
+  /bot/accounts/{email}:
+    delete:
+      operationId: deleteAccount
+      tags: [bot]
+      summary: Delete account from stock
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: email
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+        "404":
+          description: Not found
+
+  /bot/users:
+    get:
+      operationId: listUsers
+      tags: [bot]
+      summary: List all bot users
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BotUser"
+
+  /bot/users/{userId}/ban:
+    post:
+      operationId: banUser
+      tags: [bot]
+      summary: Ban a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Banned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/users/{userId}/unban:
+    post:
+      operationId: unbanUser
+      tags: [bot]
+      summary: Unban a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Unbanned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/logs:
+    get:
+      operationId: getBotLogs
+      tags: [bot]
+      summary: Get recent activity logs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LogEntry"
+
+  /bot/receivers:
+    get:
+      operationId: getReceivers
+      tags: [bot]
+      summary: Get users who claimed gift this round
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Receivers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClaimRecord"
+
+  /bot/broadcast:
+    post:
+      operationId: queueBroadcast
+      tags: [bot]
+      summary: Queue a broadcast message to all users
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BroadcastInput"
+      responses:
+        "200":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/round:
+    post:
+      operationId: newRound
+      tags: [bot]
+      summary: Start a new giveaway round
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewRoundInput"
+      responses:
+        "200":
+          description: Round started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
   schemas:
     HealthStatus:
       type: object
@@ -34,3 +310,155 @@ components:
       required:
         - status
 
+    LoginInput:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+
+    LoginResult:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+
+    BotStats:
+      type: object
+      required: [totalUsers, stock, claimed, banned, roundId]
+      properties:
+        totalUsers:
+          type: integer
+        stock:
+          type: integer
+        claimed:
+          type: integer
+        banned:
+          type: integer
+        roundId:
+          type: string
+
+    BotSettings:
+      type: object
+      required: [shopLink, shopUsername, supportUsername, cooldownHours, roundId]
+      properties:
+        shopLink:
+          type: string
+        shopUsername:
+          type: string
+        supportUsername:
+          type: string
+        cooldownHours:
+          type: integer
+        roundId:
+          type: string
+
+    BotSettingsInput:
+      type: object
+      properties:
+        shopLink:
+          type: string
+        shopUsername:
+          type: string
+        supportUsername:
+          type: string
+        cooldownHours:
+          type: integer
+        roundId:
+          type: string
+
+    Account:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+
+    AccountsInput:
+      type: object
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Account"
+
+    AddAccountsResult:
+      type: object
+      required: [added, total]
+      properties:
+        added:
+          type: integer
+        total:
+          type: integer
+
+    BotUser:
+      type: object
+      required: [userId, username, firstName, startedAt, banned]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        firstName:
+          type: string
+        startedAt:
+          type: string
+        banned:
+          type: boolean
+
+    LogEntry:
+      type: object
+      required: [time, action, user]
+      properties:
+        time:
+          type: string
+        action:
+          type: string
+        user:
+          type: string
+        admin:
+          type: string
+
+    ClaimRecord:
+      type: object
+      required: [userId, username, firstName, claimTime, accountEmail, roundId]
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        firstName:
+          type: string
+        claimTime:
+          type: string
+        accountEmail:
+          type: string
+        roundId:
+          type: string
+
+    BroadcastInput:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    NewRoundInput:
+      type: object
+      required: [roundId]
+      properties:
+        roundId:
+          type: string
+
+    ActionResult:
+      type: object
+      required: [ok, message]
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string

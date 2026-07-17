@@ -19,6 +19,7 @@ FILES = {
     "logs": os.path.join(DATA_DIR, "logs.json"),
     "user_states": os.path.join(DATA_DIR, "user_states.json"),
     "announcements": os.path.join(DATA_DIR, "announcements.json"),
+    "pending_broadcasts": os.path.join(DATA_DIR, "pending_broadcasts.json"),
 }
 
 DEFAULT_SETTINGS = {
@@ -38,6 +39,7 @@ DEFAULTS = {
     "logs": [],
     "user_states": {},
     "announcements": [],
+    "pending_broadcasts": [],
 }
 
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -132,7 +134,7 @@ def get_accounts() -> list:
     return load("accounts")
 
 
-def add_accounts(new_accounts: list) -> None:
+def add_accounts(new_accounts: list) -> int:
     accounts = load("accounts")
     existing_emails = {a["email"] for a in accounts}
     added = 0
@@ -240,7 +242,6 @@ def banned_count() -> int:
 
 def get_settings() -> dict:
     s = load("settings")
-    # Merge with defaults for missing keys
     for k, v in DEFAULT_SETTINGS.items():
         if k not in s:
             s[k] = v
@@ -263,13 +264,12 @@ def add_log(action: str, user: str, admin: str = "") -> None:
         "user": user,
         "admin": admin,
     })
-    # Keep last 500 logs
     if len(logs) > 500:
         logs = logs[-500:]
     save("logs", logs)
 
 
-def get_logs(limit: int = 20) -> list:
+def get_logs(limit: int = 50) -> list:
     return load("logs")[-limit:]
 
 
@@ -286,3 +286,22 @@ def add_announcement(msg: str) -> None:
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
     save("announcements", ann)
+
+
+# ── Pending Broadcasts (written by web, consumed by bot) ──────────────────────
+
+def get_pending_broadcasts() -> list:
+    return load("pending_broadcasts")
+
+
+def queue_broadcast(message: str) -> None:
+    pending = load("pending_broadcasts")
+    pending.append({
+        "message": message,
+        "queued_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    save("pending_broadcasts", pending)
+
+
+def clear_pending_broadcasts() -> None:
+    save("pending_broadcasts", [])
