@@ -1,0 +1,510 @@
+You are a senior Python Telegram developer.
+
+IMPORTANT:
+
+DO NOT create a new project.
+
+Continue editing my existing Telegram Giveaway Bot.
+
+Keep every existing feature working.
+
+Only add and improve features.
+
+Language: Vietnamese.
+
+Use python-telegram-bot.
+
+Database:
+Keep existing JSON files if possible.
+
+UI must be clean and professional.
+
+====================================================
+
+PROJECT NAME
+
+AI Center
+
+====================================================
+
+GENERAL
+
+This is NOT only a Giveaway Bot anymore.
+
+It is now an AI Center utility bot.
+
+The bot must look premium and modern.
+
+Every submenu must have:
+
+🔙 Quay lại
+
+🏠 Trang chủ
+
+Never force users to type commands.
+
+Everything must be button based.
+
+====================================================
+
+MAIN MENU
+
+🎁 Nhận Quà
+
+💰 Tính Hoàn Tiền
+
+🛡 Bảo Hành
+
+📅 Tính Ngày Hết Hạn
+
+📦 Kiểm Tra Bảo Hành
+
+🧮 Máy Tính Nhanh
+
+❓ FAQ
+
+📢 Thông Báo
+
+🛍 Kênh Bán Hàng
+
+💬 Liên Hệ Admin
+
+====================================================
+
+KEEP EXISTING FEATURES
+
+Keep:
+
+Giveaway
+
+Admin panel
+
+Add account
+
+Reset giveaway
+
+Logs
+
+Statistics
+
+Selling channel button
+
+Support button
+
+Everything must continue working.
+
+====================================================
+
+FEATURE 1
+
+Refund Calculator
+
+Flow
+
+Ask
+
+Giá sản phẩm
+
+↓
+
+Tổng số ngày
+
+↓
+
+Đã dùng bao nhiêu ngày
+
+↓
+
+Calculate
+
+remaining_days
+
+refund_amount
+
+Show
+
+💰 KẾT QUẢ
+
+Giá gốc
+
+Đã dùng
+
+Còn lại
+
+Tiền hoàn
+
+Buttons
+
+🔄 Tính lại
+
+🏠 Trang chủ
+
+====================================================
+
+FEATURE 2
+
+Warranty Rules
+
+Beautiful menu
+
+✅ Được bảo hành
+
+❌ Không bảo hành
+
+⚠️ Trường hợp đặc biệt
+
+📞 Liên hệ Admin
+
+Admin can edit these texts.
+
+====================================================
+
+FEATURE 3
+
+Warranty Checker
+
+Ask
+
+Ngày mua
+
+↓
+
+Số ngày bảo hành
+
+↓
+
+Calculate
+
+Ngày hết hạn
+
+Số ngày còn lại
+
+Status
+
+Còn BH
+
+Hoặc
+
+Hết BH
+
+====================================================
+
+FEATURE 4
+
+Expiration Calculator
+
+Ask
+
+Ngày mua
+
+↓
+
+Số ngày
+
+↓
+
+Show
+
+Ngày hết hạn
+
+Còn bao nhiêu ngày
+
+====================================================
+
+FEATURE 5
+
+Quick Calculator
+
+Menu
+
+💵 Lãi
+
+💰 Hoàn tiền
+
+💲 Quy đổi USD
+
+📅 Tính ngày
+
+Example
+
+245000
+
+350000
+
+↓
+
+Lãi
+
+105000
+
+Biên lợi nhuận
+
+42.8%
+
+====================================================
+
+FEATURE 6
+
+Currency
+
+Convert
+
+USD
+
+USDT
+
+VND
+
+Allow user to enter
+
+59$
+
+↓
+
+Show VND
+
+====================================================
+
+FEATURE 7
+
+FAQ
+
+Questions
+
+Bao lâu giao
+
+Có BH không
+
+Có đổi TK không
+
+Escrow là gì
+
+Thanh toán thế nào
+
+Admin can edit FAQ.
+
+====================================================
+
+FEATURE 8
+
+Broadcast
+
+Admin only.
+
+Send message to every user.
+
+Progress bar.
+
+Report
+
+Sent
+
+Failed
+
+====================================================
+
+FEATURE 9
+
+Statistics
+
+Admin menu
+
+👥 Tổng user
+
+🎁 Đã nhận quà
+
+📦 Quà còn
+
+📈 User mới
+
+📊 Tổng lượt sử dụng
+
+====================================================
+
+FEATURE 10
+
+Admin Settings
+
+Add
+
+Edit
+
+Delete
+
+Warranty rules
+
+FAQ
+
+Announcement
+
+Selling channel
+
+Support contact
+
+====================================================
+
+FEATURE 11
+
+History
+
+Every user has history
+
+Received gift
+
+Refund calculation
+
+Warranty check
+
+Last activity
+
+====================================================
+
+FEATURE 12
+
+Navigation
+
+Every page has
+
+🔙 Quay lại
+
+🏠 Trang chủ
+
+Never force /start again.
+
+====================================================
+
+FEATURE 13
+
+Selling Channel
+
+Always open
+
+https://t.me/shoptaikhoanaibot
+
+====================================================
+
+FEATURE 14
+
+Contact
+
+Button
+
+💬 Liên Hệ Admin
+
+Open Telegram username
+
+====================================================
+
+FEATURE 15
+
+Premium Design
+
+Nice separators
+
+Rounded style
+
+Emoji
+
+Readable
+
+Professional
+
+====================================================
+
+FEATURE 16
+
+Error handling
+
+No crash
+
+Always validate input
+
+Support
+
+200k
+
+1m5
+
+1.500.000
+
+Automatically convert to integer.
+
+====================================================
+
+FEATURE 17
+
+Admin Menu
+
+👑 Admin
+
+➕
+
+Kho quà
+
+Broadcast
+
+FAQ
+
+Warranty
+
+Statistics
+
+Reset Giveaway
+
+Logs
+
+Backup
+
+Restore
+
+====================================================
+
+FEATURE 18
+
+Backup
+
+Backup every JSON file.
+
+Download backup.
+
+====================================================
+
+FEATURE 19
+
+Logs
+
+Save
+
+Time
+
+Action
+
+User
+
+Admin
+
+====================================================
+
+FEATURE 20
+
+DO NOT REMOVE EXISTING CODE.
+
+Improve only.
+
+Preserve giveaway logic.
+
+Preserve admin detection.
+
+Preserve selling channel.
+
+Preserve account distribution.
+
+Only add professional utilities.
+
+Return COMPLETE source code.
+
+Update every required file.
+
+Bot must run with
+
+python bot.py

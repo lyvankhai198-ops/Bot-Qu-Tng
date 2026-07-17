@@ -1,0 +1,389 @@
+Create a complete Python Telegram Bot named "Bot Quà Tặng AI".
+
+Use:
+- python-telegram-bot
+- Flask keep-alive
+- JSON files for storage
+- ReplyKeyboardMarkup for persistent bottom menu
+- InlineKeyboardMarkup for link buttons
+
+Secrets:
+- TELEGRAM_BOT_TOKEN
+- ADMIN_ID
+
+Language:
+Vietnamese
+
+Data files:
+- accounts.json
+- claimed_users.json
+- users.json
+- banned_users.json
+- settings.json
+- logs.json
+- user_states.json
+
+Default settings.json:
+{
+  "shop_link": "https://t.me/shoptaikhoanaibot",
+  "shop_username": "@shoptaikhoanaibot",
+  "support_username": "@YOUR_USERNAME",
+  "cooldown_hours": 0,
+  "round_id": "dot1"
+}
+
+==================================================
+USER MENU
+==================================================
+
+Use ReplyKeyboardMarkup.
+
+User main menu:
+
+🎁 Nhận Quà        📦 Kho Quà
+📜 Quy Định        💬 Hỗ Trợ
+🛍 Kênh Bán Hàng
+
+The keyboard must always stay visible.
+Users should not need to type /start again.
+
+==================================================
+ADMIN MENU
+==================================================
+
+If user_id == ADMIN_ID, show admin menu:
+
+🎁 Nhận Quà        📦 Kho Quà
+📜 Quy Định        🛍 Kênh Bán Hàng
+💬 Hỗ Trợ         👑 Admin
+
+Admin page menu:
+
+📦 Thêm Tài Khoản
+🗑 Xóa Tài Khoản
+📢 Gửi Thông Báo
+🎁 Mở Đợt Quà Mới
+👥 Người Đã Nhận
+📊 Thống Kê
+🚫 Ban User
+✅ Bỏ Ban
+⚙️ Cài Đặt
+🔙 Quay lại
+
+==================================================
+NAVIGATION
+==================================================
+
+Add real back navigation.
+
+- Every sub-page must include "🔙 Quay lại".
+- "🔙 Quay lại" returns to the previous screen, not always main menu.
+- Main menu has no back button.
+- Store navigation history per user in memory or user_states.json.
+
+==================================================
+START
+==================================================
+
+/start:
+- Save user to users.json with:
+  user_id
+  username
+  first_name
+  started_at
+- If admin, show admin-capable menu.
+- Send:
+
+🎁 BOT QUÀ TẶNG AI
+
+Chào mừng bạn đến với bot nhận quà miễn phí của AI Center.
+
+Vui lòng chọn chức năng bên dưới.
+
+==================================================
+USER FEATURES
+==================================================
+
+🎁 Nhận Quà
+
+Before giving gift:
+- If user is banned, deny.
+- Check if stock exists.
+- Check claimed_users.json.
+- Claim rule:
+  - If cooldown_hours == 0: user can claim once per round_id.
+  - If cooldown_hours > 0: user can claim again after cooldown time.
+- If user already claimed and cannot claim yet:
+  ❌ Bạn đã nhận quà trước đó.
+  ⏳ Bạn có thể nhận lại sau: X giờ Y phút.
+- If stock empty:
+  😔 Kho quà hiện đã hết.
+- If available:
+  - Take first account from accounts.json.
+  - Remove it from stock.
+  - Save claim record to claimed_users.json under current round_id.
+  - Save log to logs.json.
+  - Send:
+
+🎉 Chúc mừng! Bạn đã nhận quà thành công.
+
+📧 Tài khoản: {email}
+🔑 Mật khẩu: {password}
+
+⚠️ Mỗi người chỉ nhận quà theo quy định của bot.
+
+Nếu cần tài khoản Premium, hãy ghé:
+🛍 @shoptaikhoanaibot
+
+Add inline button:
+🛍 MỞ KÊNH BÁN HÀNG
+URL: https://t.me/shoptaikhoanaibot
+
+Also notify admin:
+🎁 Có người vừa nhận quà:
+User: @{username}
+ID: {user_id}
+Account: {email}
+
+📦 Kho Quà
+
+Show:
+📦 KHO QUÀ
+
+🎁 Còn lại: {count} phần quà
+
+If count <= 10 and count > 0:
+🔥 Sắp hết quà, nhanh tay nhận nhé!
+
+📜 Quy Định
+
+Show:
+📜 QUY ĐỊNH NHẬN QUÀ
+
+1. Mỗi tài khoản Telegram nhận quà theo quy định của từng đợt.
+2. Không spam bot.
+3. Quà tặng có thể hết bất cứ lúc nào.
+4. Tài khoản được cấp miễn phí, không hoàn lại.
+5. Vui lòng đổi mật khẩu sau khi nhận.
+6. Nếu cần tài khoản Premium, hãy ghé kênh bán hàng.
+
+⚠️ Vi phạm quy định sẽ bị chặn khỏi bot.
+
+🛍 Kênh Bán Hàng
+
+Show:
+🛍 KÊNH BÁN HÀNG CHÍNH THỨC
+
+Tại đây bạn có thể mua:
+
+🤖 ChatGPT Plus
+🧠 Grok Super
+🎬 Veo 3
+🎥 Higgsfield
+🎞 CapCut Pro
+✨ Và nhiều sản phẩm AI khác.
+
+Telegram:
+@shoptaikhoanaibot
+
+Inline button:
+🛍 MỞ KÊNH BÁN HÀNG
+URL: https://t.me/shoptaikhoanaibot
+
+💬 Hỗ Trợ
+
+Show:
+💬 HỖ TRỢ
+
+Liên hệ admin:
+@YOUR_USERNAME
+
+==================================================
+ADMIN FEATURES
+==================================================
+
+Only ADMIN_ID can use admin features.
+
+👑 Admin
+Show admin menu.
+
+📦 Thêm Tài Khoản
+When admin presses this button:
+Bot replies:
+📦 Gửi tài khoản theo dạng:
+
+email----password
+
+Hoặc nhiều dòng:
+
+mail1----pass1
+mail2----pass2
+mail3----pass3
+
+Then bot waits for admin input.
+Accept both formats:
+email----password
+email|password
+email password
+
+Add all valid accounts to accounts.json.
+
+After adding:
+✅ Đã thêm {count} tài khoản.
+📦 Kho hiện có: {stock} tài khoản.
+
+Broadcast to all users:
+🎁 Quà Tặng vừa được cập nhật!
+
+🔥 Đã thêm {count} tài khoản mới.
+
+👉 Bấm "🎁 Nhận Quà" để nhận ngay trước khi hết.
+
+🛍 Nếu cần tài khoản Premium:
+@shoptaikhoanaibot
+
+🗑 Xóa Tài Khoản
+Ask admin:
+Nhập email tài khoản cần xóa khỏi kho.
+Then remove it from accounts.json.
+
+📢 Gửi Thông Báo
+Ask admin:
+Nhập nội dung muốn gửi cho toàn bộ người dùng.
+Then broadcast to users.json.
+
+🎁 Mở Đợt Quà Mới
+Ask admin:
+Nhập tên đợt quà mới.
+Example:
+dot2
+
+Set settings.round_id = input.
+Reset claims for new round automatically because claimed_users is stored by round.
+Broadcast:
+🎉 Đợt Quà mới đã bắt đầu!
+
+Bạn đã có thể nhận quà trở lại.
+
+👉 Bấm "🎁 Nhận Quà" để nhận ngay.
+
+👥 Người Đã Nhận
+Show:
+👥 NGƯỜI ĐÃ NHẬN
+
+Hôm nay: X
+Tuần này: X
+Tổng: X
+Đợt hiện tại: {round_id}
+
+📊 Thống Kê
+Show:
+📊 THỐNG KÊ BOT
+
+👥 Tổng người dùng: X
+🎁 Đã phát: X
+📦 Kho còn: X
+🚫 Đã bị chặn: X
+🎯 Đợt hiện tại: {round_id}
+⏰ Cooldown: {cooldown_hours} giờ
+
+🚫 Ban User
+Ask admin:
+Nhập user_id cần ban.
+Add to banned_users.json.
+
+✅ Bỏ Ban
+Ask admin:
+Nhập user_id cần bỏ ban.
+Remove from banned_users.json.
+
+⚙️ Cài Đặt
+Show settings menu:
+⏰ Đổi thời gian nhận lại
+🛍 Đổi link bán hàng
+💬 Đổi admin hỗ trợ
+🧹 Reset người nhận đợt này
+🔙 Quay lại
+
+⏰ Đổi thời gian nhận lại:
+Ask admin to send hours.
+Examples:
+0 = mỗi người nhận 1 lần mỗi đợt
+24 = nhận lại sau 1 ngày
+168 = nhận lại sau 1 tuần
+
+Update settings.cooldown_hours.
+
+🛍 Đổi link bán hàng:
+Ask admin to send new Telegram link.
+Update settings.shop_link.
+
+💬 Đổi admin hỗ trợ:
+Ask admin to send username.
+Update settings.support_username.
+
+🧹 Reset người nhận đợt này:
+Clear claimed_users for current round_id only.
+
+==================================================
+ADMIN COMMANDS
+==================================================
+
+Also support text commands:
+
+/admin
+/addaccount email password
+/addbulk
+/stock
+/claimed
+/stats
+/newround NAME
+/cooldown HOURS
+/resetclaims
+/ban USER_ID
+/unban USER_ID
+/notify message
+/broadcast message
+/myid
+
+/addbulk behavior:
+Admin sends /addbulk.
+Bot asks for list.
+Admin sends multiple lines.
+Bot parses and adds.
+
+==================================================
+ANTI-ABUSE
+==================================================
+
+- Save claimed records with:
+  user_id
+  username
+  first_name
+  claim_time
+  account_email
+  round_id
+
+- Check by user_id.
+- If username exists and was already claimed in same round, also block.
+
+==================================================
+ERROR HANDLING
+==================================================
+
+- If JSON file missing, create it automatically.
+- If JSON corrupted, back it up and create new empty file.
+- Never crash on bad user input.
+- Reply with clear Vietnamese messages.
+- Log errors to console.
+
+==================================================
+KEEP ALIVE
+==================================================
+
+Create Flask app with route "/":
+Return "Bot Quà Tặng AI is running"
+
+Run Flask server on port 8080 in a background thread.
+
+Start Telegram bot polling normally.
