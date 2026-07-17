@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Api
  * Bot Quà Tặng AI Admin API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 
 export interface BotStats {
@@ -12,4 +12,8 @@ export interface BotStats {
   claimed: number;
   banned: number;
   roundId: string;
+  totalOrders: number;
+  warrantyPending: number;
+  warrantyResolved: number;
+  warrantyRejected: number;
 }

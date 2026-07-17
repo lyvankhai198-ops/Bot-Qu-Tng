@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Api
  * Bot Quà Tặng AI Admin API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 
 export interface BotSettingsInput {
@@ -12,4 +12,10 @@ export interface BotSettingsInput {
   supportUsername?: string;
   cooldownHours?: number;
   roundId?: string;
+  giftEnabled?: boolean;
+  supportEnabled?: boolean;
+  introEnabled?: boolean;
+  maintenanceMode?: boolean;
+  refundFormula?: string;
+  refundCustomText?: string;
 }

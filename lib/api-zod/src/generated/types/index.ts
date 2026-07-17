@@ -3,11 +3,12 @@
  * Do not edit manually.
  * Api
  * Bot Quà Tặng AI Admin API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 
 export * from './account';
 export * from './accountsInput';
+export * from './accountUpdateInput';
 export * from './actionResult';
 export * from './addAccountsResult';
 export * from './botSettings';
@@ -16,9 +17,18 @@ export * from './botStats';
 export * from './botUser';
 export * from './broadcastInput';
 export * from './claimRecord';
+export * from './getBackup200';
 export * from './getBotLogsParams';
 export * from './healthStatus';
+export * from './introConfig';
+export * from './introConfigButtonsItem';
 export * from './logEntry';
 export * from './loginInput';
 export * from './loginResult';
 export * from './newRoundInput';
+export * from './order';
+export * from './orderInput';
+export * from './warrantyRefundInput';
+export * from './warrantyRejectInput';
+export * from './warrantyReplacementInput';
+export * from './warrantyRequest';

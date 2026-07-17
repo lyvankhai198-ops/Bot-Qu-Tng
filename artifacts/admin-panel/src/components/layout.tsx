@@ -1,107 +1,93 @@
-import { ReactNode } from "react";
-import { Link, useLocation } from "wouter";
-import {
-  LayoutDashboard,
-  Users,
-  KeyRound,
-  Radio,
-  Settings,
-  Gift,
+import * as React from "react"
+import { useLocation, Link } from "wouter"
+import { 
+  LayoutDashboard, 
+  Users, 
+  Package, 
+  ShoppingCart, 
+  ShieldAlert, 
+  Send, 
+  Settings as SettingsIcon, 
+  FileText, 
+  Gift, 
+  Activity,
   LogOut,
   Bot
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+} from "lucide-react"
+import { Button } from "./ui/button"
 
-interface LayoutProps {
-  children: ReactNode;
-}
+const navItems = [
+  { href: "/dashboard", label: "Tổng quan", icon: LayoutDashboard },
+  { href: "/accounts", label: "Kho tài khoản", icon: Package },
+  { href: "/users", label: "Người dùng", icon: Users },
+  { href: "/orders", label: "Đơn hàng", icon: ShoppingCart },
+  { href: "/warranty", label: "Bảo hành", icon: ShieldAlert },
+  { href: "/broadcast", label: "Gửi tin nhắn", icon: Send },
+  { href: "/intro", label: "Cấu hình Intro", icon: FileText },
+  { href: "/receivers", label: "Đã nhận quà", icon: Gift },
+  { href: "/logs", label: "Lịch sử hệ thống", icon: Activity },
+  { href: "/settings", label: "Cài đặt", icon: SettingsIcon },
+]
 
-export function Layout({ children }: LayoutProps) {
-  const [location, setLocation] = useLocation();
+export function Layout({ children }: { children: React.ReactNode }) {
+  const [location, setLocation] = useLocation()
 
   const handleLogout = () => {
-    localStorage.removeItem("admin_token");
-    setLocation("/login");
-  };
-
-  const navItems = [
-    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { href: "/accounts", label: "Accounts", icon: KeyRound },
-    { href: "/users", label: "Users", icon: Users },
-    { href: "/receivers", label: "Receivers", icon: Gift },
-    { href: "/broadcast", label: "Broadcast", icon: Radio },
-    { href: "/settings", label: "Settings", icon: Settings },
-  ];
+    localStorage.removeItem("admin_token")
+    setLocation("/login")
+  }
 
   return (
     <div className="flex min-h-[100dvh] bg-background">
       {/* Sidebar */}
-      <aside className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col shadow-2xl">
-        <div className="p-6 flex items-center gap-3">
-          <div className="bg-primary/10 text-primary p-2 rounded-xl">
-            <Bot className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="font-bold text-lg text-sidebar-foreground leading-tight tracking-tight">
-              Bot Quà Tặng AI
-            </h1>
-            <p className="text-xs text-sidebar-foreground/50 font-mono">
-              SYSTEM COCKPIT
-            </p>
-          </div>
+      <aside className="w-64 border-r border-border bg-sidebar flex-shrink-0 flex flex-col">
+        <div className="h-16 flex items-center px-6 border-b border-sidebar-border bg-sidebar-primary text-sidebar-primary-foreground">
+          <Bot className="h-6 w-6 mr-3" />
+          <h1 className="font-bold text-lg tracking-tight">Bot Quà Tặng AI</h1>
         </div>
-
-        <nav className="flex-1 px-4 space-y-1">
+        
+        <nav className="flex-1 py-4 flex flex-col gap-1 px-3 overflow-y-auto">
           {navItems.map((item) => {
-            const isActive = location === item.href;
-            const Icon = item.icon;
+            const isActive = location.startsWith(item.href)
             return (
-              <Link key={item.href} href={item.href} className="block">
-                <div
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 cursor-pointer ${
-                    isActive
-                      ? "bg-primary text-primary-foreground font-medium shadow-md shadow-primary/20"
-                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
-                  }`}
-                >
-                  <Icon className="w-5 h-5" />
-                  {item.label}
-                </div>
+              <Link key={item.href} href={item.href} className={
+                `flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors text-sm font-medium
+                ${isActive 
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground" 
+                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"}`
+              }>
+                <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : "opacity-70"}`} />
+                {item.label}
               </Link>
-            );
+            )
           })}
         </nav>
 
         <div className="p-4 border-t border-sidebar-border">
-          <Button
-            variant="ghost"
-            className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+          <Button 
+            variant="ghost" 
+            className="w-full justify-start text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent/50" 
             onClick={handleLogout}
           >
-            <LogOut className="w-5 h-5 mr-3" />
-            Logout
+            <LogOut className="h-4 w-4 mr-2 opacity-70" />
+            Đăng xuất
           </Button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col h-[100dvh] overflow-hidden">
-        <header className="h-16 flex items-center px-8 border-b border-border bg-card/50 backdrop-blur-sm z-10 sticky top-0">
-          <div className="flex-1" />
-          <div className="flex items-center gap-4 text-sm font-mono text-muted-foreground">
-            <span className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              SYSTEM ONLINE
-            </span>
-          </div>
+      <main className="flex-1 flex flex-col min-w-0">
+        <header className="h-16 border-b border-border bg-card/50 flex items-center px-8 backdrop-blur-sm sticky top-0 z-10">
+          <h2 className="font-semibold text-lg text-foreground">
+            {navItems.find(i => location.startsWith(i.href))?.label || "Trang quản trị"}
+          </h2>
         </header>
-        
-        <div className="flex-1 overflow-auto p-8">
+        <div className="flex-1 p-8 overflow-y-auto">
           <div className="max-w-6xl mx-auto">
             {children}
           </div>
         </div>
       </main>
     </div>
-  );
+  )
 }

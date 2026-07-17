@@ -1,0 +1,315 @@
+YÊU CẦU XÂY DỰNG WEB QUẢN LÝ BOT QUÀ TẶNG & SUPPORT (TIẾNG VIỆT)
+
+Mục tiêu là xây dựng một web quản trị để điều khiển toàn bộ bot Telegram. Mọi chức năng đều được quản lý trên web, bot chỉ là giao diện tương tác với người dùng.
+
+⸻
+
+1. Quản lý tài khoản quà tặng
+
+Admin có thể:
+
+* Thêm một hoặc nhiều tài khoản quà tặng.
+* Sửa hoặc xoá tài khoản.
+* Xem trạng thái từng tài khoản.
+* Xem lịch sử phát quà.
+
+Thông tin lưu gồm:
+
+* Loại tài khoản.
+* Email/Tài khoản.
+* Mật khẩu.
+* Ghi chú.
+* Ngày thêm.
+* Trạng thái (Còn hàng / Đã phát).
+
+Khi thêm tài khoản mới:
+
+* Bot tự động cập nhật số lượng quà.
+* Gửi thông báo đến toàn bộ người dùng rằng kho quà đã được cập nhật.
+* Khi người dùng nhấn Nhận quà, bot tự động lấy một tài khoản chưa phát và gửi.
+* Sau khi gửi phải đánh dấu Đã phát, không được phát lại.
+
+⸻
+
+2. Quản lý người dùng
+
+Lưu toàn bộ người dùng đã sử dụng bot.
+
+Thông tin gồm:
+
+* Telegram ID.
+* Username.
+* Họ tên.
+* Ngày tham gia.
+* Lần hoạt động gần nhất.
+* Số lần sử dụng bot.
+* Đã nhận quà hay chưa.
+* Quà đã nhận.
+* Trạng thái.
+
+Có thống kê:
+
+* Tổng người dùng.
+* Người dùng mới.
+* Người đã nhận quà.
+* Người chưa nhận.
+* Tìm kiếm nhanh.
+* Chặn hoặc mở chặn người dùng.
+* Reset quyền nhận quà.
+
+⸻
+
+3. Quản lý đơn hàng (Mới)
+
+Đây là chức năng quan trọng để bot có thể tự động kiểm tra bảo hành và hỗ trợ khách hàng.
+
+Admin có thể thêm đơn hàng trên web.
+
+Thông tin mỗi đơn gồm:
+
+* Mã đơn hàng (duy nhất).
+* Email tài khoản.
+* Tên sản phẩm.
+* Giá bán.
+* Giá nhập (nếu có).
+* Ngày mua.
+* Thời hạn sử dụng (ví dụ: 30 ngày, 3 tháng, 1 năm…).
+* Thời hạn bảo hành.
+* Ngày hết hạn.
+* Trạng thái (Đang hoạt động / Đã bảo hành / Đã hoàn tiền / Hết hạn).
+* Ghi chú.
+
+Hỗ trợ:
+
+* Thêm đơn.
+* Sửa đơn.
+* Xoá đơn.
+* Tìm kiếm nhanh.
+* Lọc theo trạng thái.
+* Lọc theo sản phẩm.
+* Lọc theo ngày.
+
+⸻
+
+Bot tra cứu đơn hàng
+
+Người dùng có thể tra cứu bằng:
+
+* Mã đơn hàng.
+* Hoặc email tài khoản đã mua.
+
+Bot sẽ tự động tìm đúng đơn hàng và hiển thị:
+
+* Mã đơn.
+* Email.
+* Sản phẩm.
+* Ngày mua.
+* Ngày hết hạn.
+* Thời gian còn lại.
+* Thời hạn bảo hành.
+* Trạng thái bảo hành.
+* Giá mua.
+* Số tiền hoàn dự kiến (bot tự động tính theo công thức do admin cấu hình).
+
+Bên dưới hiển thị hai nút:
+
+* Báo lỗi
+* Quay lại
+
+⸻
+
+4. Cài đặt bot
+
+Toàn bộ tính năng phải chỉnh được trên web.
+
+Bao gồm:
+
+* Bật/Tắt nhận quà.
+* Bật/Tắt Support.
+* Bật/Tắt giới thiệu.
+* Đổi nội dung tin nhắn.
+* Đổi tên nút.
+* Đổi token bot.
+* Thay đổi thời gian nhận quà lại.
+* Cấu hình công thức tính tiền hoàn (ví dụ tính theo số ngày còn lại của bảo hành hoặc theo quy định của shop).
+* Bật bảo trì.
+* Lưu và cập nhật ngay lên bot.
+
+⸻
+
+5. Thông báo
+
+Admin có thể gửi thông báo đến:
+
+* Tất cả người dùng.
+* Người đã nhận quà.
+* Người chưa nhận.
+
+Hỗ trợ:
+
+* Văn bản.
+* Ảnh.
+* Video.
+* File.
+* Nút bấm.
+* Lên lịch gửi.
+* Lưu lịch sử gửi.
+
+⸻
+
+6. Support (Không để lộ thông tin Admin)
+
+Quan trọng:
+
+Bot không được hiển thị Telegram, username hoặc bất kỳ thông tin liên hệ nào của Admin.
+
+Người dùng chỉ thao tác qua bot.
+
+Khi nhấn Support:
+
+Bot sẽ hỏi:
+
+Vui lòng nhập mã đơn hàng hoặc email tài khoản đã mua.
+
+Sau khi nhập đúng thông tin:
+
+Bot tự động hiển thị:
+
+* Mã đơn.
+* Email.
+* Tên sản phẩm.
+* Ngày mua.
+* Thời hạn sử dụng.
+* Thời hạn bảo hành.
+* Thời gian còn lại.
+* Giá mua.
+* Số tiền hoàn dự kiến.
+* Trạng thái đơn hàng.
+
+Bên dưới hiển thị:
+
+* Báo lỗi
+* Quay lại
+
+Chức năng Báo lỗi
+
+Khi nhấn Báo lỗi:
+
+Bot yêu cầu:
+
+Vui lòng mô tả ngắn gọn lỗi gặp phải.
+
+Ví dụ:
+
+* Die tài khoản.
+* Rớt gói.
+* Sai thông tin.
+* Không đăng nhập được.
+* Khác…
+
+Sau khi gửi:
+
+Bot thông báo:
+
+Yêu cầu hỗ trợ của bạn đã được gửi thành công.
+
+Đồng thời web Admin nhận được ngay thông báo.
+
+⸻
+
+7. Quản lý bảo hành trên Web
+
+Trang bảo hành hiển thị:
+
+* Người gửi.
+* Mã đơn.
+* Nội dung lỗi.
+* Ngày gửi.
+* Trạng thái.
+
+Admin kiểm tra và chọn một trong ba phương án:
+
+1. Gửi tài khoản thay thế
+
+Admin nhập:
+
+* Email.
+* Password.
+* Ghi chú.
+
+Bot tự gửi tài khoản mới cho khách.
+
+Đơn chuyển sang trạng thái Đã bảo hành.
+
+2. Hoàn tiền
+
+Admin nhập số tiền hoàn.
+
+Bot gửi thông báo cho khách biết yêu cầu đã được chấp nhận và số tiền được hoàn.
+
+3. Từ chối bảo hành
+
+Admin bắt buộc nhập lý do.
+
+Ví dụ:
+
+* Hết thời gian bảo hành.
+* Không đủ điều kiện.
+* Sai thông tin.
+* Lỗi do người dùng.
+
+Bot gửi đầy đủ lý do đến khách.
+
+⸻
+
+8. Giới thiệu
+
+Bot có thêm nút Giới thiệu.
+
+Nội dung giới thiệu được chỉnh sửa hoàn toàn trên web.
+
+Admin có thể:
+
+* Đổi tiêu đề.
+* Đổi nội dung.
+* Thêm ảnh.
+* Thêm video.
+* Thêm nút bấm.
+* Thêm liên kết.
+
+Không cần sửa code.
+
+⸻
+
+9. Dashboard
+
+Trang chủ hiển thị:
+
+* Tổng người dùng.
+* Người online.
+* Tổng tài khoản quà tặng.
+* Quà còn.
+* Quà đã phát.
+* Tổng đơn hàng.
+* Tổng yêu cầu bảo hành.
+* Đang chờ xử lý.
+* Đã xử lý.
+* Từ chối.
+* Thông báo gần nhất.
+* Trạng thái Bot (Online/Offline).
+
+⸻
+
+10. Yêu cầu chung
+
+* Giao diện hoàn toàn bằng tiếng Việt.
+* Tối ưu cho điện thoại và máy tính.
+* Có trang đăng nhập riêng cho Admin.
+* Phân quyền rõ ràng.
+* Không để lộ bất kỳ thông tin Admin nào trên bot.
+* Web và bot đồng bộ dữ liệu theo thời gian thực.
+* Dữ liệu được lưu trong cơ sở dữ liệu.
+* Có sao lưu và khôi phục dữ liệu.
+* Bot vẫn hoạt động sau khi khởi động lại server.
+* Có nhật ký (log) toàn bộ hoạt động của Admin và người dùng.
+* Mọi nội dung hiển thị trên bot đều có thể chỉnh sửa trực tiếp từ trang quản trị mà không cần sửa mã nguồn.

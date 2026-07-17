@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Api
  * Bot Quà Tặng AI Admin API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 import * as zod from 'zod';
 
@@ -36,7 +36,11 @@ export const GetBotStatsResponse = zod.object({
   "stock": zod.number(),
   "claimed": zod.number(),
   "banned": zod.number(),
-  "roundId": zod.string()
+  "roundId": zod.string(),
+  "totalOrders": zod.number(),
+  "warrantyPending": zod.number(),
+  "warrantyResolved": zod.number(),
+  "warrantyRejected": zod.number()
 })
 
 
@@ -44,11 +48,17 @@ export const GetBotStatsResponse = zod.object({
  * @summary Get bot settings
  */
 export const GetBotSettingsResponse = zod.object({
-  "shopLink": zod.string(),
-  "shopUsername": zod.string(),
-  "supportUsername": zod.string(),
-  "cooldownHours": zod.number(),
-  "roundId": zod.string()
+  "shopLink": zod.string().optional(),
+  "shopUsername": zod.string().optional(),
+  "supportUsername": zod.string().optional(),
+  "cooldownHours": zod.number().optional(),
+  "roundId": zod.string().optional(),
+  "giftEnabled": zod.boolean().optional(),
+  "supportEnabled": zod.boolean().optional(),
+  "introEnabled": zod.boolean().optional(),
+  "maintenanceMode": zod.boolean().optional(),
+  "refundFormula": zod.string().optional(),
+  "refundCustomText": zod.string().optional()
 })
 
 
@@ -60,15 +70,27 @@ export const UpdateBotSettingsBody = zod.object({
   "shopUsername": zod.string().optional(),
   "supportUsername": zod.string().optional(),
   "cooldownHours": zod.number().optional(),
-  "roundId": zod.string().optional()
+  "roundId": zod.string().optional(),
+  "giftEnabled": zod.boolean().optional(),
+  "supportEnabled": zod.boolean().optional(),
+  "introEnabled": zod.boolean().optional(),
+  "maintenanceMode": zod.boolean().optional(),
+  "refundFormula": zod.string().optional(),
+  "refundCustomText": zod.string().optional()
 })
 
 export const UpdateBotSettingsResponse = zod.object({
-  "shopLink": zod.string(),
-  "shopUsername": zod.string(),
-  "supportUsername": zod.string(),
-  "cooldownHours": zod.number(),
-  "roundId": zod.string()
+  "shopLink": zod.string().optional(),
+  "shopUsername": zod.string().optional(),
+  "supportUsername": zod.string().optional(),
+  "cooldownHours": zod.number().optional(),
+  "roundId": zod.string().optional(),
+  "giftEnabled": zod.boolean().optional(),
+  "supportEnabled": zod.boolean().optional(),
+  "introEnabled": zod.boolean().optional(),
+  "maintenanceMode": zod.boolean().optional(),
+  "refundFormula": zod.string().optional(),
+  "refundCustomText": zod.string().optional()
 })
 
 
@@ -76,8 +98,15 @@ export const UpdateBotSettingsResponse = zod.object({
  * @summary List all accounts in stock
  */
 export const ListAccountsResponseItem = zod.object({
+  "id": zod.string().optional(),
+  "type": zod.string().optional(),
   "email": zod.string(),
-  "password": zod.string()
+  "password": zod.string(),
+  "note": zod.string().optional(),
+  "addedAt": zod.string().optional(),
+  "status": zod.string().optional(),
+  "distributedTo": zod.string().nullish(),
+  "distributedAt": zod.string().nullish()
 })
 export const ListAccountsResponse = zod.array(ListAccountsResponseItem)
 
@@ -87,14 +116,41 @@ export const ListAccountsResponse = zod.array(ListAccountsResponseItem)
  */
 export const AddAccountsBody = zod.object({
   "accounts": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "type": zod.string().optional(),
   "email": zod.string(),
-  "password": zod.string()
+  "password": zod.string(),
+  "note": zod.string().optional(),
+  "addedAt": zod.string().optional(),
+  "status": zod.string().optional(),
+  "distributedTo": zod.string().nullish(),
+  "distributedAt": zod.string().nullish()
 }))
 })
 
 export const AddAccountsResponse = zod.object({
   "added": zod.number(),
   "total": zod.number()
+})
+
+
+/**
+ * @summary Update an account
+ */
+export const UpdateAccountParams = zod.object({
+  "email": zod.coerce.string()
+})
+
+export const UpdateAccountBody = zod.object({
+  "type": zod.string().optional(),
+  "password": zod.string().optional(),
+  "note": zod.string().optional(),
+  "status": zod.string().optional()
+})
+
+export const UpdateAccountResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
 })
 
 
@@ -119,6 +175,10 @@ export const ListUsersResponseItem = zod.object({
   "username": zod.string(),
   "firstName": zod.string(),
   "startedAt": zod.string(),
+  "lastActive": zod.string().optional(),
+  "usageCount": zod.number().optional(),
+  "hasReceivedGift": zod.boolean().optional(),
+  "giftReceived": zod.string().nullish(),
   "banned": zod.boolean()
 })
 export const ListUsersResponse = zod.array(ListUsersResponseItem)
@@ -145,6 +205,19 @@ export const UnbanUserParams = zod.object({
 })
 
 export const UnbanUserResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Reset a user gift claim so they can receive again
+ */
+export const ResetUserGiftParams = zod.object({
+  "userId": zod.coerce.string()
+})
+
+export const ResetUserGiftResponse = zod.object({
   "ok": zod.boolean(),
   "message": zod.string()
 })
@@ -181,10 +254,11 @@ export const GetReceiversResponse = zod.array(GetReceiversResponseItem)
 
 
 /**
- * @summary Queue a broadcast message to all users
+ * @summary Queue a broadcast message
  */
 export const QueueBroadcastBody = zod.object({
-  "message": zod.string()
+  "message": zod.string(),
+  "target": zod.string().optional().describe('all | has_received | no_received')
 })
 
 export const QueueBroadcastResponse = zod.object({
@@ -203,6 +277,246 @@ export const NewRoundBody = zod.object({
 export const NewRoundResponse = zod.object({
   "ok": zod.boolean(),
   "message": zod.string()
+})
+
+
+/**
+ * @summary List all orders
+ */
+export const ListOrdersResponseItem = zod.object({
+  "orderId": zod.string(),
+  "email": zod.string(),
+  "productName": zod.string(),
+  "price": zod.number().nullish(),
+  "costPrice": zod.number().nullish(),
+  "purchaseDate": zod.string().nullish(),
+  "usagePeriod": zod.string().nullish(),
+  "warrantyPeriod": zod.string().nullish(),
+  "warrantyExpiry": zod.string().nullish(),
+  "expiryDate": zod.string().nullish(),
+  "status": zod.string(),
+  "notes": zod.string().nullish(),
+  "createdAt": zod.string().nullish(),
+  "updatedAt": zod.string().nullish()
+})
+export const ListOrdersResponse = zod.array(ListOrdersResponseItem)
+
+
+/**
+ * @summary Create a new order
+ */
+export const CreateOrderBody = zod.object({
+  "orderId": zod.string().optional(),
+  "email": zod.string(),
+  "productName": zod.string(),
+  "price": zod.number().nullish(),
+  "costPrice": zod.number().nullish(),
+  "purchaseDate": zod.string().nullish(),
+  "usagePeriod": zod.string().nullish(),
+  "warrantyPeriod": zod.string().nullish(),
+  "warrantyExpiry": zod.string().nullish(),
+  "expiryDate": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "notes": zod.string().nullish()
+})
+
+export const CreateOrderResponse = zod.object({
+  "orderId": zod.string(),
+  "email": zod.string(),
+  "productName": zod.string(),
+  "price": zod.number().nullish(),
+  "costPrice": zod.number().nullish(),
+  "purchaseDate": zod.string().nullish(),
+  "usagePeriod": zod.string().nullish(),
+  "warrantyPeriod": zod.string().nullish(),
+  "warrantyExpiry": zod.string().nullish(),
+  "expiryDate": zod.string().nullish(),
+  "status": zod.string(),
+  "notes": zod.string().nullish(),
+  "createdAt": zod.string().nullish(),
+  "updatedAt": zod.string().nullish()
+})
+
+
+/**
+ * @summary Get a single order
+ */
+export const GetOrderParams = zod.object({
+  "orderId": zod.coerce.string()
+})
+
+export const GetOrderResponse = zod.object({
+  "orderId": zod.string(),
+  "email": zod.string(),
+  "productName": zod.string(),
+  "price": zod.number().nullish(),
+  "costPrice": zod.number().nullish(),
+  "purchaseDate": zod.string().nullish(),
+  "usagePeriod": zod.string().nullish(),
+  "warrantyPeriod": zod.string().nullish(),
+  "warrantyExpiry": zod.string().nullish(),
+  "expiryDate": zod.string().nullish(),
+  "status": zod.string(),
+  "notes": zod.string().nullish(),
+  "createdAt": zod.string().nullish(),
+  "updatedAt": zod.string().nullish()
+})
+
+
+/**
+ * @summary Update an order
+ */
+export const UpdateOrderParams = zod.object({
+  "orderId": zod.coerce.string()
+})
+
+export const UpdateOrderBody = zod.object({
+  "orderId": zod.string().optional(),
+  "email": zod.string(),
+  "productName": zod.string(),
+  "price": zod.number().nullish(),
+  "costPrice": zod.number().nullish(),
+  "purchaseDate": zod.string().nullish(),
+  "usagePeriod": zod.string().nullish(),
+  "warrantyPeriod": zod.string().nullish(),
+  "warrantyExpiry": zod.string().nullish(),
+  "expiryDate": zod.string().nullish(),
+  "status": zod.string().optional(),
+  "notes": zod.string().nullish()
+})
+
+export const UpdateOrderResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Delete an order
+ */
+export const DeleteOrderParams = zod.object({
+  "orderId": zod.coerce.string()
+})
+
+export const DeleteOrderResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary List all warranty requests
+ */
+export const ListWarrantyResponseItem = zod.object({
+  "id": zod.string(),
+  "userId": zod.string(),
+  "username": zod.string().optional(),
+  "firstName": zod.string().optional(),
+  "orderId": zod.string(),
+  "email": zod.string().optional(),
+  "description": zod.string(),
+  "submittedAt": zod.string(),
+  "status": zod.string(),
+  "resolution": zod.string().nullish(),
+  "resolvedAt": zod.string().nullish()
+})
+export const ListWarrantyResponse = zod.array(ListWarrantyResponseItem)
+
+
+/**
+ * @summary Resolve warranty by sending replacement account
+ */
+export const ResolveWarrantyReplacementParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ResolveWarrantyReplacementBody = zod.object({
+  "email": zod.string(),
+  "password": zod.string(),
+  "note": zod.string().optional()
+})
+
+export const ResolveWarrantyReplacementResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Resolve warranty by refund
+ */
+export const ResolveWarrantyRefundParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ResolveWarrantyRefundBody = zod.object({
+  "amount": zod.number(),
+  "note": zod.string().optional()
+})
+
+export const ResolveWarrantyRefundResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Reject a warranty request
+ */
+export const ResolveWarrantyRejectParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ResolveWarrantyRejectBody = zod.object({
+  "reason": zod.string()
+})
+
+export const ResolveWarrantyRejectResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Get introduction page config
+ */
+export const GetIntroResponse = zod.object({
+  "title": zod.string().optional(),
+  "content": zod.string().optional(),
+  "photoUrl": zod.string().optional(),
+  "videoUrl": zod.string().optional(),
+  "buttons": zod.array(zod.object({
+  "text": zod.string().optional(),
+  "url": zod.string().optional()
+})).optional()
+})
+
+
+/**
+ * @summary Update introduction page config
+ */
+export const UpdateIntroBody = zod.object({
+  "title": zod.string().optional(),
+  "content": zod.string().optional(),
+  "photoUrl": zod.string().optional(),
+  "videoUrl": zod.string().optional(),
+  "buttons": zod.array(zod.object({
+  "text": zod.string().optional(),
+  "url": zod.string().optional()
+})).optional()
+})
+
+export const UpdateIntroResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Download a full JSON backup of all data
+ */
+export const GetBackupResponse = zod.object({
+
 })
 
 

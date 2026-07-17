@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Api
-  version: 0.1.0
+  version: 0.2.0
   description: Bot Quà Tặng AI Admin API
 servers:
   - url: /api
@@ -132,6 +132,31 @@ paths:
                 $ref: "#/components/schemas/AddAccountsResult"
 
   /bot/accounts/{email}:
+    put:
+      operationId: updateAccount
+      tags: [bot]
+      summary: Update an account
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: email
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountUpdateInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
     delete:
       operationId: deleteAccount
       tags: [bot]
@@ -213,6 +238,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/ActionResult"
 
+  /bot/users/{userId}/reset-gift:
+    post:
+      operationId: resetUserGift
+      tags: [bot]
+      summary: Reset a user gift claim so they can receive again
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Reset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
   /bot/logs:
     get:
       operationId: getBotLogs
@@ -257,7 +303,7 @@ paths:
     post:
       operationId: queueBroadcast
       tags: [bot]
-      summary: Queue a broadcast message to all users
+      summary: Queue a broadcast message
       security:
         - bearerAuth: []
       requestBody:
@@ -295,6 +341,256 @@ paths:
               schema:
                 $ref: "#/components/schemas/ActionResult"
 
+  /bot/orders:
+    get:
+      operationId: listOrders
+      tags: [bot]
+      summary: List all orders
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+    post:
+      operationId: createOrder
+      tags: [bot]
+      summary: Create a new order
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderInput"
+      responses:
+        "200":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  /bot/orders/{orderId}:
+    get:
+      operationId: getOrder
+      tags: [bot]
+      summary: Get a single order
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          description: Not found
+    put:
+      operationId: updateOrder
+      tags: [bot]
+      summary: Update an order
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+    delete:
+      operationId: deleteOrder
+      tags: [bot]
+      summary: Delete an order
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/warranty:
+    get:
+      operationId: listWarranty
+      tags: [bot]
+      summary: List all warranty requests
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Warranty requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WarrantyRequest"
+
+  /bot/warranty/{id}/replacement:
+    post:
+      operationId: resolveWarrantyReplacement
+      tags: [bot]
+      summary: Resolve warranty by sending replacement account
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyReplacementInput"
+      responses:
+        "200":
+          description: Resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/warranty/{id}/refund:
+    post:
+      operationId: resolveWarrantyRefund
+      tags: [bot]
+      summary: Resolve warranty by refund
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyRefundInput"
+      responses:
+        "200":
+          description: Resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/warranty/{id}/reject:
+    post:
+      operationId: resolveWarrantyReject
+      tags: [bot]
+      summary: Reject a warranty request
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyRejectInput"
+      responses:
+        "200":
+          description: Rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/intro:
+    get:
+      operationId: getIntro
+      tags: [bot]
+      summary: Get introduction page config
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Intro config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntroConfig"
+    put:
+      operationId: updateIntro
+      tags: [bot]
+      summary: Update introduction page config
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntroConfig"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/backup:
+    get:
+      operationId: getBackup
+      tags: [bot]
+      summary: Download a full JSON backup of all data
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Backup JSON
+          content:
+            application/json:
+              schema:
+                type: object
+
 components:
   securitySchemes:
     bearerAuth:
@@ -307,8 +603,7 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
     LoginInput:
       type: object
@@ -326,7 +621,7 @@ components:
 
     BotStats:
       type: object
-      required: [totalUsers, stock, claimed, banned, roundId]
+      required: [totalUsers, stock, claimed, banned, roundId, totalOrders, warrantyPending, warrantyResolved, warrantyRejected]
       properties:
         totalUsers:
           type: integer
@@ -338,10 +633,17 @@ components:
           type: integer
         roundId:
           type: string
+        totalOrders:
+          type: integer
+        warrantyPending:
+          type: integer
+        warrantyResolved:
+          type: integer
+        warrantyRejected:
+          type: integer
 
     BotSettings:
       type: object
-      required: [shopLink, shopUsername, supportUsername, cooldownHours, roundId]
       properties:
         shopLink:
           type: string
@@ -352,6 +654,18 @@ components:
         cooldownHours:
           type: integer
         roundId:
+          type: string
+        giftEnabled:
+          type: boolean
+        supportEnabled:
+          type: boolean
+        introEnabled:
+          type: boolean
+        maintenanceMode:
+          type: boolean
+        refundFormula:
+          type: string
+        refundCustomText:
           type: string
 
     BotSettingsInput:
@@ -367,15 +681,43 @@ components:
           type: integer
         roundId:
           type: string
+        giftEnabled:
+          type: boolean
+        supportEnabled:
+          type: boolean
+        introEnabled:
+          type: boolean
+        maintenanceMode:
+          type: boolean
+        refundFormula:
+          type: string
+        refundCustomText:
+          type: string
 
     Account:
       type: object
       required: [email, password]
       properties:
+        id:
+          type: string
+        type:
+          type: string
         email:
           type: string
         password:
           type: string
+        note:
+          type: string
+        addedAt:
+          type: string
+        status:
+          type: string
+        distributedTo:
+          type: string
+          nullable: true
+        distributedAt:
+          type: string
+          nullable: true
 
     AccountsInput:
       type: object
@@ -385,6 +727,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Account"
+
+    AccountUpdateInput:
+      type: object
+      properties:
+        type:
+          type: string
+        password:
+          type: string
+        note:
+          type: string
+        status:
+          type: string
 
     AddAccountsResult:
       type: object
@@ -407,6 +761,15 @@ components:
           type: string
         startedAt:
           type: string
+        lastActive:
+          type: string
+        usageCount:
+          type: integer
+        hasReceivedGift:
+          type: boolean
+        giftReceived:
+          type: string
+          nullable: true
         banned:
           type: boolean
 
@@ -446,6 +809,9 @@ components:
       properties:
         message:
           type: string
+        target:
+          type: string
+          description: "all | has_received | no_received"
 
     NewRoundInput:
       type: object
@@ -462,3 +828,160 @@ components:
           type: boolean
         message:
           type: string
+
+    Order:
+      type: object
+      required: [orderId, email, productName, status]
+      properties:
+        orderId:
+          type: string
+        email:
+          type: string
+        productName:
+          type: string
+        price:
+          type: number
+          nullable: true
+        costPrice:
+          type: number
+          nullable: true
+        purchaseDate:
+          type: string
+          nullable: true
+        usagePeriod:
+          type: string
+          nullable: true
+        warrantyPeriod:
+          type: string
+          nullable: true
+        warrantyExpiry:
+          type: string
+          nullable: true
+        expiryDate:
+          type: string
+          nullable: true
+        status:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          nullable: true
+
+    OrderInput:
+      type: object
+      required: [email, productName]
+      properties:
+        orderId:
+          type: string
+        email:
+          type: string
+        productName:
+          type: string
+        price:
+          type: number
+          nullable: true
+        costPrice:
+          type: number
+          nullable: true
+        purchaseDate:
+          type: string
+          nullable: true
+        usagePeriod:
+          type: string
+          nullable: true
+        warrantyPeriod:
+          type: string
+          nullable: true
+        warrantyExpiry:
+          type: string
+          nullable: true
+        expiryDate:
+          type: string
+          nullable: true
+        status:
+          type: string
+        notes:
+          type: string
+          nullable: true
+
+    WarrantyRequest:
+      type: object
+      required: [id, userId, orderId, description, submittedAt, status]
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        username:
+          type: string
+        firstName:
+          type: string
+        orderId:
+          type: string
+        email:
+          type: string
+        description:
+          type: string
+        submittedAt:
+          type: string
+        status:
+          type: string
+        resolution:
+          type: string
+          nullable: true
+        resolvedAt:
+          type: string
+          nullable: true
+
+    WarrantyReplacementInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        note:
+          type: string
+
+    WarrantyRefundInput:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: number
+        note:
+          type: string
+
+    WarrantyRejectInput:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+
+    IntroConfig:
+      type: object
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        photoUrl:
+          type: string
+        videoUrl:
+          type: string
+        buttons:
+          type: array
+          items:
+            type: object
+            properties:
+              text:
+                type: string
+              url:
+                type: string

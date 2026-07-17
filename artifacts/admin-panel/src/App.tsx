@@ -10,9 +10,13 @@ import Login from "@/pages/login";
 import Dashboard from "@/pages/dashboard";
 import Accounts from "@/pages/accounts";
 import Users from "@/pages/users";
+import Orders from "@/pages/orders";
+import Warranty from "@/pages/warranty";
 import Broadcast from "@/pages/broadcast";
 import Settings from "@/pages/settings";
 import Receivers from "@/pages/receivers";
+import Intro from "@/pages/intro";
+import Logs from "@/pages/logs";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -60,9 +64,13 @@ function Router() {
       <Route path="/dashboard"><ProtectedRoute component={Dashboard} /></Route>
       <Route path="/accounts"><ProtectedRoute component={Accounts} /></Route>
       <Route path="/users"><ProtectedRoute component={Users} /></Route>
+      <Route path="/orders"><ProtectedRoute component={Orders} /></Route>
+      <Route path="/warranty"><ProtectedRoute component={Warranty} /></Route>
       <Route path="/broadcast"><ProtectedRoute component={Broadcast} /></Route>
       <Route path="/settings"><ProtectedRoute component={Settings} /></Route>
+      <Route path="/intro"><ProtectedRoute component={Intro} /></Route>
       <Route path="/receivers"><ProtectedRoute component={Receivers} /></Route>
+      <Route path="/logs"><ProtectedRoute component={Logs} /></Route>
       <Route component={NotFound} />
     </Switch>
   );

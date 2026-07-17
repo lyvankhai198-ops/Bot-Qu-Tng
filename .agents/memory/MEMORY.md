@@ -1,0 +1,3 @@
+- [Bot architecture](bot-architecture.md) — bot.py (5 buttons, no admin info exposed), api-server (Node.js REST), admin-panel (React), share data/ JSON files
+- [Zod codegen fix](zod-codegen-fix.md) — after codegen, patch lib/api-zod/src/generated/api.ts: replace zod.looseObject → zod.object (Zod v3 compat)
+- [Broadcast targeting](broadcast-targeting.md) — pending_broadcasts.json supports target: "all"|"has_received"|"no_received"|"user:<id>"; bot worker polls every 30s

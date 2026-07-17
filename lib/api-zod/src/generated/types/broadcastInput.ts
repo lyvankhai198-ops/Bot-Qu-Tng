@@ -3,9 +3,11 @@
  * Do not edit manually.
  * Api
  * Bot Quà Tặng AI Admin API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 
 export interface BroadcastInput {
   message: string;
+  /** all | has_received | no_received */
+  target?: string;
 }

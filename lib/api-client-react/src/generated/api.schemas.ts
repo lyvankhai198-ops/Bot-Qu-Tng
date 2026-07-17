@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Api
  * Bot Quà Tặng AI Admin API
- * OpenAPI spec version: 0.1.0
+ * OpenAPI spec version: 0.2.0
  */
 export interface HealthStatus {
   status: string;
@@ -23,14 +23,24 @@ export interface BotStats {
   claimed: number;
   banned: number;
   roundId: string;
+  totalOrders: number;
+  warrantyPending: number;
+  warrantyResolved: number;
+  warrantyRejected: number;
 }
 
 export interface BotSettings {
-  shopLink: string;
-  shopUsername: string;
-  supportUsername: string;
-  cooldownHours: number;
-  roundId: string;
+  shopLink?: string;
+  shopUsername?: string;
+  supportUsername?: string;
+  cooldownHours?: number;
+  roundId?: string;
+  giftEnabled?: boolean;
+  supportEnabled?: boolean;
+  introEnabled?: boolean;
+  maintenanceMode?: boolean;
+  refundFormula?: string;
+  refundCustomText?: string;
 }
 
 export interface BotSettingsInput {
@@ -39,15 +49,35 @@ export interface BotSettingsInput {
   supportUsername?: string;
   cooldownHours?: number;
   roundId?: string;
+  giftEnabled?: boolean;
+  supportEnabled?: boolean;
+  introEnabled?: boolean;
+  maintenanceMode?: boolean;
+  refundFormula?: string;
+  refundCustomText?: string;
 }
 
 export interface Account {
+  id?: string;
+  type?: string;
   email: string;
   password: string;
+  note?: string;
+  addedAt?: string;
+  status?: string;
+  distributedTo?: string | null;
+  distributedAt?: string | null;
 }
 
 export interface AccountsInput {
   accounts: Account[];
+}
+
+export interface AccountUpdateInput {
+  type?: string;
+  password?: string;
+  note?: string;
+  status?: string;
 }
 
 export interface AddAccountsResult {
@@ -60,6 +90,10 @@ export interface BotUser {
   username: string;
   firstName: string;
   startedAt: string;
+  lastActive?: string;
+  usageCount?: number;
+  hasReceivedGift?: boolean;
+  giftReceived?: string | null;
   banned: boolean;
 }
 
@@ -81,6 +115,8 @@ export interface ClaimRecord {
 
 export interface BroadcastInput {
   message: string;
+  /** all | has_received | no_received */
+  target?: string;
 }
 
 export interface NewRoundInput {
@@ -92,7 +128,83 @@ export interface ActionResult {
   message: string;
 }
 
+export interface Order {
+  orderId: string;
+  email: string;
+  productName: string;
+  price?: number | null;
+  costPrice?: number | null;
+  purchaseDate?: string | null;
+  usagePeriod?: string | null;
+  warrantyPeriod?: string | null;
+  warrantyExpiry?: string | null;
+  expiryDate?: string | null;
+  status: string;
+  notes?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface OrderInput {
+  orderId?: string;
+  email: string;
+  productName: string;
+  price?: number | null;
+  costPrice?: number | null;
+  purchaseDate?: string | null;
+  usagePeriod?: string | null;
+  warrantyPeriod?: string | null;
+  warrantyExpiry?: string | null;
+  expiryDate?: string | null;
+  status?: string;
+  notes?: string | null;
+}
+
+export interface WarrantyRequest {
+  id: string;
+  userId: string;
+  username?: string;
+  firstName?: string;
+  orderId: string;
+  email?: string;
+  description: string;
+  submittedAt: string;
+  status: string;
+  resolution?: string | null;
+  resolvedAt?: string | null;
+}
+
+export interface WarrantyReplacementInput {
+  email: string;
+  password: string;
+  note?: string;
+}
+
+export interface WarrantyRefundInput {
+  amount: number;
+  note?: string;
+}
+
+export interface WarrantyRejectInput {
+  reason: string;
+}
+
+export type IntroConfigButtonsItem = {
+  text?: string;
+  url?: string;
+};
+
+export interface IntroConfig {
+  title?: string;
+  content?: string;
+  photoUrl?: string;
+  videoUrl?: string;
+  buttons?: IntroConfigButtonsItem[];
+}
+
 export type GetBotLogsParams = {
 limit?: number;
 };
+
+export type GetBackup200 = { [key: string]: unknown };
 

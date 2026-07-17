@@ -24,14 +24,68 @@ LANG = {
         "btn_support": "💬 Hỗ Trợ",
         "btn_shop": "🛍 Kênh Bán Hàng",
         "btn_check_order": "📦 Kiểm Tra Đơn Hàng",
+        "btn_intro": "📋 Giới Thiệu",
         "btn_home": "🏠 Trang chủ",
         "btn_open_shop": "🛍 MỞ KÊNH BÁN HÀNG",
+        "btn_report_issue": "⚠️ Báo Lỗi",
+        "btn_back_menu": "🔙 Quay lại",
 
-        # Check order
+        # Check order / Support — order lookup
         "check_order_ask": (
             "📦 <b>KIỂM TRA ĐƠN HÀNG</b>\n\n"
-            "Vui lòng nhập <b>email tài khoản</b> bạn đã nhận để kiểm tra:"
+            "Vui lòng nhập <b>mã đơn hàng</b> hoặc <b>email tài khoản</b> đã mua:"
         ),
+        "support_ask": (
+            "💬 <b>HỖ TRỢ KHÁCH HÀNG</b>\n\n"
+            "Vui lòng nhập <b>mã đơn hàng</b> hoặc <b>email tài khoản</b> đã mua:"
+        ),
+        "order_not_found": (
+            "❌ <b>Không tìm thấy đơn hàng.</b>\n\n"
+            "Vui lòng kiểm tra lại mã đơn hoặc email và thử lại."
+        ),
+        "order_display": (
+            "📦 <b>THÔNG TIN ĐƠN HÀNG</b>\n\n"
+            "🔖 Mã đơn: <code>{order_id}</code>\n"
+            "📧 Email: <code>{email}</code>\n"
+            "📦 Sản phẩm: <b>{product}</b>\n"
+            "📅 Ngày mua: <b>{purchase}</b>\n"
+            "⏰ Ngày hết hạn: <b>{expiry}</b>\n"
+            "⏳ Còn lại: <b>{remaining}</b>\n"
+            "🛡 Bảo hành đến: <b>{warranty_exp}</b>\n"
+            "🔰 Trạng thái BH: {warranty}\n"
+            "💰 Giá mua: <b>{price}</b>\n"
+            "💵 Hoàn dự kiến: <b>{refund}</b>\n"
+            "📊 Trạng thái: <b>{status}</b>"
+        ),
+
+        # Report issue / Warranty
+        "report_ask": (
+            "⚠️ <b>BÁO LỖI</b>\n\n"
+            "Vui lòng mô tả ngắn gọn lỗi bạn gặp phải:\n\n"
+            "Ví dụ: Die tài khoản / Rớt gói / Không đăng nhập được / Sai thông tin..."
+        ),
+        "report_sent": (
+            "✅ <b>Yêu cầu hỗ trợ của bạn đã được gửi thành công!</b>\n\n"
+            "Chúng tôi sẽ xử lý trong thời gian sớm nhất. Cảm ơn bạn!"
+        ),
+
+        # Order status labels
+        "days_left": "{n} ngày",
+        "expired": "Đã hết hạn",
+        "warranty_valid": "✅ Còn bảo hành",
+        "warranty_expired": "❌ Hết bảo hành",
+        "status_active": "Đang hoạt động",
+        "status_warranted": "Đã bảo hành",
+        "status_refunded": "Đã hoàn tiền",
+        "status_expired": "Hết hạn",
+
+        # Feature toggles
+        "gift_disabled": "🔒 Tính năng nhận quà hiện đang tạm dừng. Vui lòng quay lại sau.",
+        "support_disabled": "🔒 Tính năng hỗ trợ hiện đang tạm dừng.",
+        "feature_disabled": "🔒 Tính năng này hiện đang tạm dừng.",
+        "maintenance": "🔧 <b>Bot đang bảo trì.</b>\n\nVui lòng quay lại sau. Xin lỗi vì sự bất tiện!",
+
+        # Check order
         "check_order_found": (
             "✅ <b>ĐÃ TÌM THẤY ĐƠN HÀNG</b>\n\n"
             "📧 Email: <code>{email}</code>\n"
@@ -286,14 +340,68 @@ LANG = {
         "btn_support": "💬 Support",
         "btn_shop": "🛍 Shop Channel",
         "btn_check_order": "📦 Check Order",
+        "btn_intro": "📋 Introduction",
         "btn_home": "🏠 Home",
         "btn_open_shop": "🛍 OPEN SHOP CHANNEL",
+        "btn_report_issue": "⚠️ Report Issue",
+        "btn_back_menu": "🔙 Back",
 
-        # Check order
+        # Check order / Support
         "check_order_ask": (
             "📦 <b>CHECK YOUR ORDER</b>\n\n"
-            "Please enter the <b>account email</b> you received to look it up:"
+            "Please enter your <b>order ID</b> or <b>account email</b>:"
         ),
+        "support_ask": (
+            "💬 <b>CUSTOMER SUPPORT</b>\n\n"
+            "Please enter your <b>order ID</b> or <b>account email</b>:"
+        ),
+        "order_not_found": (
+            "❌ <b>Order not found.</b>\n\n"
+            "Please check your order ID or email and try again."
+        ),
+        "order_display": (
+            "📦 <b>ORDER DETAILS</b>\n\n"
+            "🔖 Order ID: <code>{order_id}</code>\n"
+            "📧 Email: <code>{email}</code>\n"
+            "📦 Product: <b>{product}</b>\n"
+            "📅 Purchase date: <b>{purchase}</b>\n"
+            "⏰ Expiry date: <b>{expiry}</b>\n"
+            "⏳ Remaining: <b>{remaining}</b>\n"
+            "🛡 Warranty until: <b>{warranty_exp}</b>\n"
+            "🔰 Warranty status: {warranty}\n"
+            "💰 Price paid: <b>{price}</b>\n"
+            "💵 Est. refund: <b>{refund}</b>\n"
+            "📊 Status: <b>{status}</b>"
+        ),
+
+        # Report issue / Warranty
+        "report_ask": (
+            "⚠️ <b>REPORT ISSUE</b>\n\n"
+            "Please briefly describe the issue you're experiencing:\n\n"
+            "E.g. Account dead / Plan dropped / Can't login / Wrong info..."
+        ),
+        "report_sent": (
+            "✅ <b>Your support request has been submitted!</b>\n\n"
+            "We will process it as soon as possible. Thank you!"
+        ),
+
+        # Order status labels
+        "days_left": "{n} days",
+        "expired": "Expired",
+        "warranty_valid": "✅ Under warranty",
+        "warranty_expired": "❌ Warranty expired",
+        "status_active": "Active",
+        "status_warranted": "Warranted",
+        "status_refunded": "Refunded",
+        "status_expired": "Expired",
+
+        # Feature toggles
+        "gift_disabled": "🔒 Gift receiving is currently paused. Please check back later.",
+        "support_disabled": "🔒 Support is currently unavailable.",
+        "feature_disabled": "🔒 This feature is currently unavailable.",
+        "maintenance": "🔧 <b>Bot is under maintenance.</b>\n\nPlease check back later. Sorry for the inconvenience!",
+
+        # Check order
         "check_order_found": (
             "✅ <b>ORDER FOUND</b>\n\n"
             "📧 Email: <code>{email}</code>\n"

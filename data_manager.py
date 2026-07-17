@@ -1,307 +1,468 @@
-
-# data_manager.py — JSON file I/O with auto-create and corruption recovery
-
+"""
+data_manager.py — Centralized data layer for Bot Quà Tặng AI
+All JSON files live in DATA_DIR (default: ./data/)
+"""
 import json
 import os
 import shutil
-import logging
-from datetime import datetime
+import uuid
+from datetime import datetime, date
+from pathlib import Path
 
-logger = logging.getLogger(__name__)
+DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-DATA_DIR = "data"
-FILES = {
-    "accounts": os.path.join(DATA_DIR, "accounts.json"),
-    "claimed_users": os.path.join(DATA_DIR, "claimed_users.json"),
-    "users": os.path.join(DATA_DIR, "users.json"),
-    "banned_users": os.path.join(DATA_DIR, "banned_users.json"),
-    "settings": os.path.join(DATA_DIR, "settings.json"),
-    "logs": os.path.join(DATA_DIR, "logs.json"),
-    "user_states": os.path.join(DATA_DIR, "user_states.json"),
-    "announcements": os.path.join(DATA_DIR, "announcements.json"),
-    "pending_broadcasts": os.path.join(DATA_DIR, "pending_broadcasts.json"),
-}
+# ─── Low-level I/O ─────────────────────────────────────────────────────────
 
-DEFAULT_SETTINGS = {
-    "shop_link": "https://t.me/shoptaikhoanaibot",
-    "shop_username": "@shoptaikhoanaibot",
-    "support_username": "@YOUR_USERNAME",
-    "cooldown_hours": 0,
-    "round_id": "dot1",
-}
+def _path(name: str) -> Path:
+    return DATA_DIR / f"{name}.json"
 
-DEFAULTS = {
-    "accounts": [],
-    "claimed_users": {},
-    "users": {},
-    "banned_users": [],
-    "settings": DEFAULT_SETTINGS,
-    "logs": [],
-    "user_states": {},
-    "announcements": [],
-    "pending_broadcasts": [],
-}
-
-os.makedirs(DATA_DIR, exist_ok=True)
-
-
-def load(name: str):
-    path = FILES[name]
-    if not os.path.exists(path):
-        save(name, DEFAULTS[name])
-        return DEFAULTS[name]
+def load(name: str, default=None):
+    if default is None:
+        default = {}
+    p = _path(name)
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, Exception) as e:
-        logger.error(f"Corrupted {path}: {e}. Backing up and resetting.")
-        backup_path = path + f".bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        shutil.copy2(path, backup_path)
-        save(name, DEFAULTS[name])
-        return DEFAULTS[name]
+        if p.exists():
+            text = p.read_text(encoding="utf-8").strip()
+            if text:
+                return json.loads(text)
+    except Exception:
+        backup = DATA_DIR / f"{name}.bak.json"
+        try:
+            if backup.exists():
+                return json.loads(backup.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return default
 
+def save(name: str, data):
+    p = _path(name)
+    backup = DATA_DIR / f"{name}.bak.json"
+    try:
+        if p.exists():
+            shutil.copy2(p, backup)
+    except Exception:
+        pass
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def save(name: str, data) -> None:
-    path = FILES[name]
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+# ─── Users ─────────────────────────────────────────────────────────────────
 
-
-# ── Users ──────────────────────────────────────────────────────────────────────
-
-def save_user(user_id: int, username: str, first_name: str) -> None:
-    users = load("users")
+def save_user(user_id: int, username: str, first_name: str):
+    users = load("users", {})
     uid = str(user_id)
-    if uid not in users:
-        users[uid] = {
-            "user_id": user_id,
-            "username": username or "",
-            "first_name": first_name or "",
-            "started_at": datetime.now().isoformat(),
-        }
-    else:
-        users[uid]["username"] = username or ""
-        users[uid]["first_name"] = first_name or ""
+    now = datetime.now().isoformat()
+    existing = users.get(uid, {})
+    users[uid] = {
+        "user_id": user_id,
+        "username": username or "",
+        "first_name": first_name or "",
+        "started_at": existing.get("started_at", now),
+        "last_active": now,
+        "usage_count": existing.get("usage_count", 0) + 1,
+        "has_received_gift": existing.get("has_received_gift", False),
+        "gift_received": existing.get("gift_received", None),
+        "lang": existing.get("lang", "vi"),
+        "banned": existing.get("banned", False),
+    }
     save("users", users)
 
-
 def get_all_users() -> dict:
-    return load("users")
+    return load("users", {})
 
+def get_user(user_id: int):
+    return load("users", {}).get(str(user_id))
 
-# ── Language / State ───────────────────────────────────────────────────────────
+def reset_user_gift(user_id: int):
+    users = load("users", {})
+    uid = str(user_id)
+    if uid in users:
+        users[uid]["has_received_gift"] = False
+        users[uid]["gift_received"] = None
+        save("users", users)
+
+# ─── Lang / State ──────────────────────────────────────────────────────────
 
 def get_user_lang(user_id: int) -> str:
-    states = load("user_states")
-    return states.get(str(user_id), {}).get("lang", None)
+    return load("user_states", {}).get(str(user_id), {}).get("lang")
 
-
-def set_user_lang(user_id: int, lang: str) -> None:
-    states = load("user_states")
+def set_user_lang(user_id: int, lang: str):
+    states = load("user_states", {})
     uid = str(user_id)
     if uid not in states:
         states[uid] = {}
     states[uid]["lang"] = lang
     save("user_states", states)
-
+    # mirror into users
+    users = load("users", {})
+    if uid in users:
+        users[uid]["lang"] = lang
+        save("users", users)
 
 def get_user_state(user_id: int) -> dict:
-    states = load("user_states")
-    return states.get(str(user_id), {})
+    return load("user_states", {}).get(str(user_id), {})
 
-
-def set_user_state(user_id: int, key: str, value) -> None:
-    states = load("user_states")
+def set_user_state(user_id: int, key: str, value):
+    states = load("user_states", {})
     uid = str(user_id)
     if uid not in states:
         states[uid] = {}
     states[uid][key] = value
     save("user_states", states)
 
-
-def clear_user_state(user_id: int, *keys) -> None:
-    states = load("user_states")
+def clear_user_state(user_id: int, key: str):
+    states = load("user_states", {})
     uid = str(user_id)
-    if uid in states:
-        for k in keys:
-            states[uid].pop(k, None)
-    save("user_states", states)
+    if uid in states and key in states[uid]:
+        del states[uid][key]
+        save("user_states", states)
 
+# ─── Accounts ──────────────────────────────────────────────────────────────
 
-# ── Accounts ──────────────────────────────────────────────────────────────────
+def _normalize_account(acc) -> dict:
+    if not isinstance(acc, dict):
+        acc = {"email": str(acc), "password": ""}
+    acc.setdefault("id", str(uuid.uuid4())[:8])
+    acc.setdefault("type", "")
+    acc.setdefault("note", "")
+    acc.setdefault("addedAt", datetime.now().isoformat())
+    acc.setdefault("status", "available")
+    acc.setdefault("distributedTo", None)
+    acc.setdefault("distributedAt", None)
+    return acc
 
 def get_accounts() -> list:
-    return load("accounts")
+    return [_normalize_account(a) for a in load("accounts", [])]
 
-
-def add_accounts(new_accounts: list) -> int:
-    accounts = load("accounts")
-    existing_emails = {a["email"] for a in accounts}
-    added = 0
-    for acc in new_accounts:
-        if acc["email"] not in existing_emails:
-            accounts.append(acc)
-            existing_emails.add(acc["email"])
-            added += 1
+def add_accounts(accounts_list: list):
+    """accounts_list: list of dicts with at minimum {email, password}"""
+    accounts = get_accounts()
+    now = datetime.now().isoformat()
+    for acc in accounts_list:
+        accounts.append(_normalize_account({
+            "id": str(uuid.uuid4())[:8],
+            "type": acc.get("type", ""),
+            "email": acc.get("email", ""),
+            "password": acc.get("password", ""),
+            "note": acc.get("note", ""),
+            "addedAt": now,
+            "status": "available",
+            "distributedTo": None,
+            "distributedAt": None,
+        }))
     save("accounts", accounts)
-    return added
-
 
 def pop_account():
-    accounts = load("accounts")
-    if not accounts:
-        return None
-    account = accounts.pop(0)
+    """Get and mark-as-distributed the next available account."""
+    accounts = [_normalize_account(a) for a in load("accounts", [])]
+    for i, acc in enumerate(accounts):
+        if acc.get("status", "available") == "available":
+            accounts[i]["status"] = "distributed"
+            accounts[i]["distributedAt"] = datetime.now().isoformat()
+            save("accounts", accounts)
+            return acc
+    return None
+
+def mark_account_distributed(email: str, user_id: int):
+    accounts = [_normalize_account(a) for a in load("accounts", [])]
+    for acc in accounts:
+        if acc.get("email") == email:
+            acc["status"] = "distributed"
+            acc["distributedTo"] = str(user_id)
+            acc["distributedAt"] = datetime.now().isoformat()
     save("accounts", accounts)
-    return account
 
+def delete_account(email: str):
+    accounts = [a for a in load("accounts", []) if not (isinstance(a, dict) and a.get("email") == email)]
+    save("accounts", accounts)
 
-def delete_account(email: str) -> bool:
-    accounts = load("accounts")
-    original = len(accounts)
-    accounts = [a for a in accounts if a["email"] != email]
-    if len(accounts) < original:
-        save("accounts", accounts)
-        return True
-    return False
-
+def update_account(email: str, fields: dict):
+    accounts = [_normalize_account(a) for a in load("accounts", [])]
+    for acc in accounts:
+        if acc.get("email") == email:
+            acc.update(fields)
+    save("accounts", accounts)
 
 def stock_count() -> int:
-    return len(load("accounts"))
+    return sum(1 for a in load("accounts", []) if isinstance(a, dict) and a.get("status", "available") == "available")
 
-
-# ── Claimed users ─────────────────────────────────────────────────────────────
+# ─── Claims ────────────────────────────────────────────────────────────────
 
 def get_claimed(round_id: str) -> dict:
-    claimed = load("claimed_users")
-    return claimed.get(round_id, {})
+    return load("claimed_users", {}).get(round_id, {})
 
-
-def add_claim(round_id: str, user_id: int, username: str, first_name: str,
-              email: str, claim_time: str) -> None:
-    claimed = load("claimed_users")
-    if round_id not in claimed:
-        claimed[round_id] = {}
-    claimed[round_id][str(user_id)] = {
+def add_claim(round_id: str, user_id: int, username: str, first_name: str, account_email: str, claim_time: str):
+    claimed = load("claimed_users", {})
+    claimed.setdefault(round_id, {})[str(user_id)] = {
         "user_id": user_id,
         "username": username or "",
         "first_name": first_name or "",
+        "account_email": account_email,
         "claim_time": claim_time,
-        "account_email": email,
         "round_id": round_id,
     }
     save("claimed_users", claimed)
+    # update user record
+    users = load("users", {})
+    uid = str(user_id)
+    if uid in users:
+        users[uid]["has_received_gift"] = True
+        users[uid]["gift_received"] = account_email
+        save("users", users)
 
+def reset_round_claims(new_round_id: str):
+    settings = load("settings", {})
+    settings["round_id"] = new_round_id
+    save("settings", settings)
 
-def reset_round_claims(round_id: str) -> None:
-    claimed = load("claimed_users")
-    claimed.pop(round_id, None)
-    save("claimed_users", claimed)
-
-
-def find_claim_by_email(email: str) -> dict | None:
-    claimed = load("claimed_users")
-    for round_data in claimed.values():
+def find_claim_by_email(email: str):
+    for round_id, round_data in load("claimed_users", {}).items():
         for record in round_data.values():
             if record.get("account_email", "").lower() == email.lower():
                 return record
     return None
 
+def get_receivers() -> list:
+    settings = get_settings()
+    round_id = settings.get("round_id", "")
+    claimed = load("claimed_users", {})
+    return list(claimed.get(round_id, {}).values())
 
-# ── Banned users ──────────────────────────────────────────────────────────────
+# ─── Ban ───────────────────────────────────────────────────────────────────
 
 def is_banned(user_id: int) -> bool:
-    return str(user_id) in load("banned_users")
+    return str(user_id) in [str(b) for b in load("banned_users", [])]
 
-
-def ban_user(user_id: int) -> bool:
-    banned = load("banned_users")
+def ban_user(user_id: int):
+    banned = load("banned_users", [])
     uid = str(user_id)
-    if uid in banned:
-        return False
-    banned.append(uid)
-    save("banned_users", banned)
-    return True
+    if uid not in [str(b) for b in banned]:
+        banned.append(uid)
+        save("banned_users", banned)
+    users = load("users", {})
+    if uid in users:
+        users[uid]["banned"] = True
+        save("users", users)
 
-
-def unban_user(user_id: int) -> bool:
-    banned = load("banned_users")
+def unban_user(user_id: int):
+    save("banned_users", [b for b in load("banned_users", []) if str(b) != str(user_id)])
+    users = load("users", {})
     uid = str(user_id)
-    if uid not in banned:
-        return False
-    banned.remove(uid)
-    save("banned_users", banned)
-    return True
+    if uid in users:
+        users[uid]["banned"] = False
+        save("users", users)
 
+# ─── Settings ──────────────────────────────────────────────────────────────
 
-def banned_count() -> int:
-    return len(load("banned_users"))
-
-
-# ── Settings ──────────────────────────────────────────────────────────────────
+SETTINGS_DEFAULTS = {
+    "shop_link": "https://t.me/shoptaikhoanaibot",
+    "shop_username": "@shoptaikhoanaibot",
+    "support_username": "@admin",
+    "cooldown_hours": 0,
+    "round_id": "dot1",
+    "gift_enabled": True,
+    "support_enabled": True,
+    "intro_enabled": True,
+    "maintenance_mode": False,
+    "refund_formula": "remaining_days",
+    "refund_custom_text": "",
+}
 
 def get_settings() -> dict:
-    s = load("settings")
-    for k, v in DEFAULT_SETTINGS.items():
-        if k not in s:
-            s[k] = v
-    return s
+    return {**SETTINGS_DEFAULTS, **load("settings", {})}
 
+def update_setting(key: str, value):
+    settings = load("settings", {})
+    settings[key] = value
+    save("settings", settings)
 
-def update_setting(key: str, value) -> None:
-    s = load("settings")
-    s[key] = value
-    save("settings", s)
+def update_settings(fields: dict):
+    settings = load("settings", {})
+    settings.update(fields)
+    save("settings", settings)
 
+# ─── Orders ────────────────────────────────────────────────────────────────
 
-# ── Logs ──────────────────────────────────────────────────────────────────────
+def get_orders() -> dict:
+    return load("orders", {})
 
-def add_log(action: str, user: str, admin: str = "") -> None:
-    logs = load("logs")
+def get_order(order_id: str):
+    return load("orders", {}).get(order_id)
+
+def add_order(order: dict) -> str:
+    orders = load("orders", {})
+    order_id = order.get("orderId") or ("ORD" + str(uuid.uuid4())[:6].upper())
+    order["orderId"] = order_id
+    order.setdefault("createdAt", datetime.now().isoformat())
+    order.setdefault("status", "active")
+    orders[order_id] = order
+    save("orders", orders)
+    return order_id
+
+def update_order(order_id: str, fields: dict) -> bool:
+    orders = load("orders", {})
+    if order_id not in orders:
+        return False
+    orders[order_id].update(fields)
+    orders[order_id]["updatedAt"] = datetime.now().isoformat()
+    save("orders", orders)
+    return True
+
+def delete_order(order_id: str) -> bool:
+    orders = load("orders", {})
+    if order_id not in orders:
+        return False
+    del orders[order_id]
+    save("orders", orders)
+    return True
+
+def find_order_by_email(email: str):
+    email_lower = email.lower()
+    for order in load("orders", {}).values():
+        if order.get("email", "").lower() == email_lower:
+            return order
+    return None
+
+def find_order(query: str):
+    """Find by order ID or email."""
+    return get_order(query) or find_order_by_email(query)
+
+# ─── Warranty Requests ────────────────────────────────────────────────────
+
+def get_warranty_requests() -> list:
+    return load("warranty_requests", [])
+
+def add_warranty_request(user_id: int, username: str, first_name: str,
+                          order_id: str, email: str, description: str) -> str:
+    requests = load("warranty_requests", [])
+    req = {
+        "id": str(uuid.uuid4())[:12],
+        "userId": str(user_id),
+        "username": username or "",
+        "firstName": first_name or "",
+        "orderId": order_id,
+        "email": email,
+        "description": description,
+        "submittedAt": datetime.now().isoformat(),
+        "status": "pending",
+        "resolution": None,
+        "resolvedAt": None,
+        "resolvedBy": None,
+    }
+    requests.append(req)
+    save("warranty_requests", requests)
+    return req["id"]
+
+def update_warranty_request(req_id: str, fields: dict) -> bool:
+    requests = load("warranty_requests", [])
+    for req in requests:
+        if req.get("id") == req_id:
+            req.update(fields)
+            req.setdefault("resolvedAt", datetime.now().isoformat())
+            save("warranty_requests", requests)
+            return True
+    return False
+
+def get_warranty_request(req_id: str):
+    for req in load("warranty_requests", []):
+        if req.get("id") == req_id:
+            return req
+    return None
+
+# ─── Introduction ─────────────────────────────────────────────────────────
+
+INTRO_DEFAULTS = {
+    "title": "Giới thiệu Bot Quà Tặng AI",
+    "content": "Bot nhận quà tặng tài khoản AI miễn phí từ AI Center.",
+    "photoUrl": "",
+    "videoUrl": "",
+    "buttons": [],
+}
+
+def get_intro() -> dict:
+    return {**INTRO_DEFAULTS, **load("intro", {})}
+
+def save_intro(data: dict):
+    save("intro", data)
+
+# ─── Logs ──────────────────────────────────────────────────────────────────
+
+def add_log(action: str, user: str = "", admin: str = ""):
+    logs = load("logs", [])
     logs.append({
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "time": datetime.now().isoformat(),
         "action": action,
         "user": user,
         "admin": admin,
     })
-    if len(logs) > 500:
-        logs = logs[-500:]
+    if len(logs) > 1000:
+        logs = logs[-1000:]
     save("logs", logs)
 
+def get_logs(limit: int = 100) -> list:
+    return list(reversed(load("logs", [])[-limit:]))
 
-def get_logs(limit: int = 50) -> list:
-    return load("logs")[-limit:]
-
-
-# ── Announcements ─────────────────────────────────────────────────────────────
-
-def get_announcements() -> list:
-    return load("announcements")
-
-
-def add_announcement(msg: str) -> None:
-    ann = load("announcements")
-    ann.append({
-        "msg": msg,
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    })
-    save("announcements", ann)
-
-
-# ── Pending Broadcasts (written by web, consumed by bot) ──────────────────────
+# ─── Broadcast ────────────────────────────────────────────────────────────
 
 def get_pending_broadcasts() -> list:
-    return load("pending_broadcasts")
+    return load("pending_broadcasts", [])
 
-
-def queue_broadcast(message: str) -> None:
-    pending = load("pending_broadcasts")
+def queue_broadcast(message: str, target: str = "all"):
+    pending = load("pending_broadcasts", [])
     pending.append({
         "message": message,
-        "queued_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "target": target,
+        "queued_at": datetime.now().isoformat(),
     })
     save("pending_broadcasts", pending)
 
-
-def clear_pending_broadcasts() -> None:
+def clear_pending_broadcasts():
     save("pending_broadcasts", [])
+
+# ─── Order display helper ─────────────────────────────────────────────────
+
+def calc_order_display(order: dict, settings: dict) -> dict:
+    """Calculate remaining days, warranty status, and refund estimate."""
+    from datetime import datetime, date
+    result = dict(order)
+    today = date.today()
+
+    expiry_str = order.get("expiryDate", "")
+    remaining_days = None
+    if expiry_str:
+        try:
+            expiry = date.fromisoformat(expiry_str[:10])
+            remaining_days = max(0, (expiry - today).days)
+        except Exception:
+            pass
+
+    warranty_str = order.get("warrantyExpiry", "") or order.get("warrantyDate", "")
+    warranty_ok = None
+    if warranty_str:
+        try:
+            warranty_date = date.fromisoformat(warranty_str[:10])
+            warranty_ok = warranty_date >= today
+        except Exception:
+            pass
+
+    # Refund calculation
+    refund_amount = None
+    price = order.get("price", 0) or 0
+    if remaining_days is not None and price:
+        purchase_str = order.get("purchaseDate", "")
+        if purchase_str:
+            try:
+                purchase = date.fromisoformat(purchase_str[:10])
+                expiry = date.fromisoformat(expiry_str[:10])
+                total_days = max(1, (expiry - purchase).days)
+                if settings.get("refund_formula") == "remaining_days":
+                    refund_amount = round(price * remaining_days / total_days)
+            except Exception:
+                pass
+        custom_text = settings.get("refund_custom_text", "")
+        if settings.get("refund_formula") == "custom" and custom_text:
+            refund_amount = custom_text
+
+    result["_remaining_days"] = remaining_days
+    result["_warranty_ok"] = warranty_ok
+    result["_refund_amount"] = refund_amount
+    return result
