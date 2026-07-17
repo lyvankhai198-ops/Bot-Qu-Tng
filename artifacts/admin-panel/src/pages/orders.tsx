@@ -15,6 +15,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { OrderInput, Order } from "@workspace/api-client-react"
 import { format } from "date-fns"
 
+const statusLabel = (s?: string) => ({ active: "Hoạt động", expired: "Hết hạn", refunded: "Hoàn tiền" }[s || ""] || s || "-")
+const statusVariant = (s?: string): "default" | "secondary" | "destructive" =>
+  s === "active" ? "default" : s === "expired" ? "secondary" : "destructive"
+
 export default function Orders() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -102,51 +106,94 @@ export default function Orders() {
   const formatDate = (val?: string | null) => val ? format(new Date(val), 'dd/MM/yyyy') : "-"
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+    <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Đơn hàng</h1>
-          <p className="text-muted-foreground mt-1">Quản lý giao dịch mua bán</p>
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Đơn hàng</h1>
+          <p className="text-muted-foreground mt-1 text-sm">Quản lý giao dịch mua bán</p>
         </div>
-        <Button onClick={handleOpenAdd} className="hover-elevate">
+        <Button onClick={handleOpenAdd} className="w-full sm:w-auto min-h-[44px]">
           <Plus className="w-4 h-4 mr-2" /> Thêm đơn hàng
         </Button>
       </div>
 
       <Card>
         <CardContent className="p-0">
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-b border-border/50 bg-muted/20">
-            <div className="relative w-full sm:w-96">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          {/* Filter bar */}
+          <div className="flex flex-col gap-3 p-4 border-b border-border/50 bg-muted/20">
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Tìm mã đơn, email, sản phẩm..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-9 bg-background"
+                className="pl-9 bg-background min-h-[44px]"
               />
             </div>
-            <div className="w-full sm:w-48">
-              <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="bg-background">
-                  <SelectValue placeholder="Trạng thái" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tất cả trạng thái</SelectItem>
-                  <SelectItem value="active">Hoạt động</SelectItem>
-                  <SelectItem value="expired">Hết hạn</SelectItem>
-                  <SelectItem value="refunded">Đã hoàn tiền</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <Select value={filterStatus} onValueChange={setFilterStatus}>
+              <SelectTrigger className="bg-background min-h-[44px]">
+                <SelectValue placeholder="Trạng thái" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tất cả trạng thái</SelectItem>
+                <SelectItem value="active">Hoạt động</SelectItem>
+                <SelectItem value="expired">Hết hạn</SelectItem>
+                <SelectItem value="refunded">Đã hoàn tiền</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          
-          <div className="overflow-x-auto">
+
+          {/* Mobile card view */}
+          <div className="md:hidden divide-y divide-border/50">
+            {isLoading ? (
+              Array(3).fill(0).map((_, i) => (
+                <div key={i} className="p-4 space-y-2">
+                  <div className="h-4 bg-muted animate-pulse rounded w-2/3" />
+                  <div className="h-3 bg-muted animate-pulse rounded w-1/2" />
+                </div>
+              ))
+            ) : filteredOrders.length > 0 ? (
+              filteredOrders.map(order => (
+                <div key={order.orderId} className="p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm truncate">{order.productName}</p>
+                      <code className="text-xs text-muted-foreground font-mono break-all">{order.email}</code>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => handleOpenEdit(order)}>
+                        <Edit2 className="w-4 h-4 text-muted-foreground" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => setDeleteId(order.orderId)}>
+                        <Trash2 className="w-4 h-4 text-destructive/70" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={statusVariant(order.status)}>{statusLabel(order.status)}</Badge>
+                    <span className="text-sm font-medium">{formatCurrency(order.price)}</span>
+                    {order.warrantyExpiry && (
+                      <span className="text-xs text-muted-foreground ml-auto">BH: {formatDate(order.warrantyExpiry)}</span>
+                    )}
+                  </div>
+                  <code className="text-xs text-muted-foreground font-mono">{order.orderId.slice(0, 8)}...</code>
+                </div>
+              ))
+            ) : (
+              <div className="p-10 text-center text-muted-foreground text-sm">
+                Không tìm thấy đơn hàng.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto">
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>
                   <TableHead>Mã đơn</TableHead>
                   <TableHead>Sản phẩm</TableHead>
-                  <TableHead>Khách hàng (Email)</TableHead>
+                  <TableHead>Email khách hàng</TableHead>
                   <TableHead>Giá bán</TableHead>
                   <TableHead>Hết hạn BH</TableHead>
                   <TableHead>Trạng thái</TableHead>
@@ -171,9 +218,7 @@ export default function Orders() {
                       <TableCell>{formatCurrency(order.price)}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{formatDate(order.warrantyExpiry)}</TableCell>
                       <TableCell>
-                        <Badge variant={order.status === "active" ? "default" : order.status === "expired" ? "secondary" : "destructive"}>
-                          {order.status === "active" ? "Hoạt động" : order.status === "expired" ? "Hết hạn" : "Hoàn tiền"}
-                        </Badge>
+                        <Badge variant={statusVariant(order.status)}>{statusLabel(order.status)}</Badge>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
@@ -200,14 +245,14 @@ export default function Orders() {
         </CardContent>
       </Card>
 
-      {/* Save Dialog */}
+      {/* Save Dialog — single-column on mobile */}
       <Dialog open={!!dialogMode} onOpenChange={(open) => !open && setDialogOpen(null)}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90dvh] overflow-y-auto">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[600px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{dialogMode === "add" ? "Thêm đơn hàng" : "Chỉnh sửa đơn hàng"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Email khách hàng *</Label>
                 <Input value={currentOrder.email || ""} onChange={e => setCurrentOrder({...currentOrder, email: e.target.value})} />
@@ -217,7 +262,7 @@ export default function Orders() {
                 <Input value={currentOrder.productName || ""} onChange={e => setCurrentOrder({...currentOrder, productName: e.target.value})} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Giá bán (VNĐ)</Label>
                 <Input type="number" value={currentOrder.price || ""} onChange={e => setCurrentOrder({...currentOrder, price: Number(e.target.value)})} />
@@ -227,7 +272,7 @@ export default function Orders() {
                 <Input type="number" value={currentOrder.costPrice || ""} onChange={e => setCurrentOrder({...currentOrder, costPrice: Number(e.target.value)})} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Ngày mua</Label>
                 <Input type="date" value={currentOrder.purchaseDate?.split('T')[0] || ""} onChange={e => setCurrentOrder({...currentOrder, purchaseDate: e.target.value ? new Date(e.target.value).toISOString() : undefined})} />
@@ -237,7 +282,7 @@ export default function Orders() {
                 <Input type="date" value={currentOrder.expiryDate?.split('T')[0] || ""} onChange={e => setCurrentOrder({...currentOrder, expiryDate: e.target.value ? new Date(e.target.value).toISOString() : undefined})} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Thời hạn BH (VD: 6 tháng)</Label>
                 <Input value={currentOrder.warrantyPeriod || ""} onChange={e => setCurrentOrder({...currentOrder, warrantyPeriod: e.target.value})} />
@@ -263,9 +308,9 @@ export default function Orders() {
               <Textarea value={currentOrder.notes || ""} onChange={e => setCurrentOrder({...currentOrder, notes: e.target.value})} />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(null)}>Hủy</Button>
-            <Button onClick={handleSave} disabled={createOrder.isPending || updateOrder.isPending}>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDialogOpen(null)}>Hủy</Button>
+            <Button className="w-full sm:w-auto" onClick={handleSave} disabled={createOrder.isPending || updateOrder.isPending}>
               {createOrder.isPending || updateOrder.isPending ? "Đang lưu..." : "Lưu"}
             </Button>
           </DialogFooter>
@@ -274,16 +319,16 @@ export default function Orders() {
 
       {/* Delete Confirm */}
       <Dialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Xác nhận xóa</DialogTitle>
             <DialogDescription>
               Bạn có chắc muốn xóa đơn hàng này không? Dữ liệu không thể khôi phục.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => setDeleteId(null)}>Hủy</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={deleteOrder.isPending}>
+          <DialogFooter className="mt-4 flex-col sm:flex-row gap-2">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDeleteId(null)}>Hủy</Button>
+            <Button variant="destructive" className="w-full sm:w-auto" onClick={handleDelete} disabled={deleteOrder.isPending}>
               {deleteOrder.isPending ? "Đang xóa..." : "Xóa"}
             </Button>
           </DialogFooter>

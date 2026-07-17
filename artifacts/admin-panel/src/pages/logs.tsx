@@ -10,15 +10,15 @@ export default function Logs() {
   const { data: logs, isLoading } = useGetBotLogs({ limit }, { query: { queryKey: getGetBotLogsQueryKey({ limit }) } })
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+    <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Lịch sử hệ thống</h1>
-          <p className="text-muted-foreground mt-1">Ghi log các hoạt động và thao tác của bot & admin</p>
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Lịch sử hệ thống</h1>
+          <p className="text-muted-foreground mt-1 text-sm">Ghi log các hoạt động và thao tác của bot & admin</p>
         </div>
-        <div className="w-40">
+        <div className="w-full sm:w-44">
           <Select value={limit.toString()} onValueChange={v => setLimit(Number(v))}>
-            <SelectTrigger>
+            <SelectTrigger className="min-h-[44px]">
               <SelectValue placeholder="Số lượng hiển thị" />
             </SelectTrigger>
             <SelectContent>
@@ -33,7 +33,53 @@ export default function Logs() {
 
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          {/* Mobile card view */}
+          <div className="md:hidden divide-y divide-border/50">
+            {isLoading ? (
+              Array(6).fill(0).map((_, i) => (
+                <div key={i} className="p-4 space-y-2">
+                  <div className="h-4 bg-muted animate-pulse rounded w-3/4" />
+                  <div className="h-3 bg-muted animate-pulse rounded w-1/3" />
+                </div>
+              ))
+            ) : logs && logs.length > 0 ? (
+              logs.map((log, idx) => (
+                <div key={idx} className="p-4 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <Activity className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                    <p className="font-medium text-sm leading-snug">{log.action}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 pl-6 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {new Date(log.time).toLocaleString('vi-VN')}
+                    </span>
+                    {log.user && (
+                      <span className="flex items-center gap-1">
+                        <User className="w-3 h-3" />
+                        <code className="font-mono">{log.user}</code>
+                      </span>
+                    )}
+                    {log.admin && (
+                      <span className="flex items-center gap-1">
+                        <Shield className="w-3 h-3 text-orange-500" />
+                        <span className="bg-orange-500/10 text-orange-600 px-1.5 py-0.5 rounded font-mono">
+                          {log.admin}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="p-10 text-center text-muted-foreground text-sm">
+                Không có lịch sử hoạt động.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto">
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>

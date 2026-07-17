@@ -166,11 +166,35 @@
     @apply border-border;
   }
 
+  html {
+    /* Prevent horizontal scroll globally */
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     @apply font-sans antialiased bg-background text-foreground tracking-tight;
+    overflow-x: hidden;
+    /* Smooth momentum scrolling on iOS */
+    -webkit-overflow-scrolling: touch;
   }
   
   h1, h2, h3, h4, h5, h6 {
     @apply font-semibold tracking-normal;
+  }
+
+  /* Ensure all interactive elements meet 44px touch target minimum */
+  button, [role="button"] {
+    min-height: 36px;
+  }
+
+  /* Prevent table overflow from breaking layout */
+  table {
+    width: 100%;
+  }
+
+  /* Dialog overlay fix for mobile */
+  [data-radix-dialog-content] {
+    max-width: calc(100vw - 2rem);
   }
 }

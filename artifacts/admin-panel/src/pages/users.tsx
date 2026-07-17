@@ -51,27 +51,94 @@ export default function Users() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex flex-col justify-between items-start gap-2">
-        <h1 className="text-2xl font-bold tracking-tight">Người dùng</h1>
-        <p className="text-muted-foreground mt-1">Quản lý người dùng bot Telegram</p>
+    <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div>
+        <h1 className="text-xl md:text-2xl font-bold tracking-tight">Người dùng</h1>
+        <p className="text-muted-foreground mt-1 text-sm">Quản lý người dùng bot Telegram</p>
       </div>
 
       <Card>
         <CardContent className="p-0">
           <div className="p-4 border-b border-border/50 bg-muted/20">
-            <div className="relative w-full max-w-md">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Tìm ID, username hoặc tên..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-9 bg-background"
+                className="pl-9 bg-background min-h-[44px]"
               />
             </div>
           </div>
-          
-          <div className="overflow-x-auto">
+
+          {/* Mobile card view */}
+          <div className="md:hidden divide-y divide-border/50">
+            {isLoading ? (
+              Array(4).fill(0).map((_, i) => (
+                <div key={i} className="p-4 space-y-2">
+                  <div className="h-4 bg-muted animate-pulse rounded w-1/2" />
+                  <div className="h-3 bg-muted animate-pulse rounded w-1/3" />
+                </div>
+              ))
+            ) : filteredUsers.length > 0 ? (
+              filteredUsers.map(user => (
+                <div key={user.userId} className={`p-4 space-y-2 ${user.banned ? "opacity-60" : ""}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                        <User className="h-4 w-4 text-primary" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm truncate">{user.firstName}</div>
+                        {user.username && <div className="text-xs text-muted-foreground">@{user.username}</div>}
+                      </div>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" className="h-10 w-10 p-0 shrink-0">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleAction('reset', user.userId)}>
+                          <RotateCcw className="h-4 w-4 mr-2" /> Reset quà
+                        </DropdownMenuItem>
+                        {user.banned ? (
+                          <DropdownMenuItem onClick={() => handleAction('unban', user.userId)}>
+                            <Unlock className="h-4 w-4 mr-2" /> Bỏ cấm
+                          </DropdownMenuItem>
+                        ) : (
+                          <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => handleAction('ban', user.userId)}>
+                            <Ban className="h-4 w-4 mr-2" /> Cấm user
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pl-12">
+                    <code className="text-xs text-muted-foreground font-mono">{user.userId}</code>
+                    <Badge variant={user.hasReceivedGift ? "default" : "outline"} className="font-normal text-xs">
+                      {user.hasReceivedGift ? "Đã nhận quà" : "Chưa nhận quà"}
+                    </Badge>
+                    {user.banned && <Badge variant="destructive" className="text-xs">Đã cấm</Badge>}
+                  </div>
+                  <div className="flex gap-4 text-xs text-muted-foreground pl-12">
+                    <span>Dùng: {user.usageCount || 0} lần</span>
+                    {user.lastActive && (
+                      <span>{formatDistanceToNow(new Date(user.lastActive), { addSuffix: true, locale: vi })}</span>
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="p-10 text-center text-muted-foreground text-sm">
+                Không tìm thấy người dùng nào.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop table view */}
+          <div className="hidden md:block overflow-x-auto">
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>

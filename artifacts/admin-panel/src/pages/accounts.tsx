@@ -48,6 +48,13 @@ export default function Accounts() {
     })
   }, [accounts, search, filterStatus])
 
+  const openEdit = (acc: Account) => {
+    setEditAccount(acc)
+    setEditType(acc.type || "")
+    setEditNote(acc.note || "")
+    setEditStatus(acc.status || "available")
+  }
+
   const handleAddSubmit = async () => {
     if (!addText.trim()) return
     const lines = addText.split("\n").filter(l => l.trim().includes(":"))
@@ -104,44 +111,88 @@ export default function Accounts() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+    <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Kho tài khoản</h1>
-          <p className="text-muted-foreground mt-1">Quản lý kho tài khoản dùng để phát quà</p>
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Kho tài khoản</h1>
+          <p className="text-muted-foreground mt-1 text-sm">Quản lý kho tài khoản dùng để phát quà</p>
         </div>
-        <Button onClick={() => setAddDialogOpen(true)} className="hover-elevate">
+        <Button onClick={() => setAddDialogOpen(true)} className="w-full sm:w-auto min-h-[44px]">
           <Plus className="w-4 h-4 mr-2" /> Thêm tài khoản
         </Button>
       </div>
 
       <Card>
         <CardContent className="p-0">
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-b border-border/50 bg-muted/20">
-            <div className="relative w-full sm:w-96">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          {/* Filter bar */}
+          <div className="flex flex-col gap-3 p-4 border-b border-border/50 bg-muted/20">
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Tìm kiếm email hoặc ghi chú..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-9 bg-background"
+                className="pl-9 bg-background min-h-[44px]"
               />
             </div>
-            <div className="w-full sm:w-48">
-              <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="bg-background">
-                  <SelectValue placeholder="Trạng thái" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tất cả trạng thái</SelectItem>
-                  <SelectItem value="available">Còn hàng</SelectItem>
-                  <SelectItem value="distributed">Đã phát</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <Select value={filterStatus} onValueChange={setFilterStatus}>
+              <SelectTrigger className="bg-background min-h-[44px]">
+                <SelectValue placeholder="Trạng thái" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tất cả trạng thái</SelectItem>
+                <SelectItem value="available">Còn hàng</SelectItem>
+                <SelectItem value="distributed">Đã phát</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          
-          <div className="overflow-x-auto">
+
+          {/* Mobile card view */}
+          <div className="md:hidden divide-y divide-border/50">
+            {isLoading ? (
+              Array(4).fill(0).map((_, i) => (
+                <div key={i} className="p-4">
+                  <div className="h-4 bg-muted animate-pulse rounded w-3/4 mb-2" />
+                  <div className="h-3 bg-muted animate-pulse rounded w-1/2" />
+                </div>
+              ))
+            ) : filteredAccounts.length > 0 ? (
+              filteredAccounts.map(acc => (
+                <div key={acc.email} className="p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <code className="text-xs font-mono break-all leading-relaxed">{acc.email}</code>
+                    <div className="flex gap-1 shrink-0">
+                      <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => openEdit(acc)}>
+                        <Edit2 className="w-4 h-4 text-muted-foreground" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => setDeleteAccountEmail(acc.email)}>
+                        <Trash2 className="w-4 h-4 text-destructive/70" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={acc.status === "available" ? "default" : "secondary"}>
+                      {acc.status === "available" ? "Còn hàng" : "Đã phát"}
+                    </Badge>
+                    {acc.type && <span className="bg-muted px-2 py-0.5 rounded text-xs">{acc.type}</span>}
+                    {acc.addedAt && (
+                      <span className="text-xs text-muted-foreground ml-auto">
+                        {new Date(acc.addedAt).toLocaleDateString('vi-VN')}
+                      </span>
+                    )}
+                  </div>
+                  {acc.note && <p className="text-xs text-muted-foreground">{acc.note}</p>}
+                </div>
+              ))
+            ) : (
+              <div className="p-10 text-center text-muted-foreground text-sm">
+                Không tìm thấy tài khoản nào.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop table view */}
+          <div className="hidden md:block overflow-x-auto">
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>
@@ -180,12 +231,7 @@ export default function Accounts() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => {
-                            setEditAccount(acc)
-                            setEditType(acc.type || "")
-                            setEditNote(acc.note || "")
-                            setEditStatus(acc.status || "available")
-                          }}>
+                          <Button variant="ghost" size="icon" onClick={() => openEdit(acc)}>
                             <Edit2 className="w-4 h-4 text-muted-foreground hover:text-primary" />
                           </Button>
                           <Button variant="ghost" size="icon" onClick={() => setDeleteAccountEmail(acc.email)}>
@@ -210,7 +256,7 @@ export default function Accounts() {
 
       {/* Add Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[500px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Thêm tài khoản mới</DialogTitle>
             <DialogDescription>
@@ -228,7 +274,7 @@ export default function Accounts() {
                 onChange={e => setAddText(e.target.value)}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="type">Loại tài khoản</Label>
                 <Input id="type" placeholder="VD: Premium" value={addType} onChange={e => setAddType(e.target.value)} />
@@ -239,9 +285,9 @@ export default function Accounts() {
               </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddDialogOpen(false)}>Hủy</Button>
-            <Button onClick={handleAddSubmit} disabled={addAccounts.isPending}>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setAddDialogOpen(false)}>Hủy</Button>
+            <Button className="w-full sm:w-auto" onClick={handleAddSubmit} disabled={addAccounts.isPending}>
               {addAccounts.isPending ? "Đang lưu..." : "Lưu tài khoản"}
             </Button>
           </DialogFooter>
@@ -250,7 +296,7 @@ export default function Accounts() {
 
       {/* Edit Dialog */}
       <Dialog open={!!editAccount} onOpenChange={(open) => !open && setEditAccount(null)}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[425px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Chỉnh sửa tài khoản</DialogTitle>
             <DialogDescription>
@@ -279,9 +325,9 @@ export default function Accounts() {
               <Textarea id="edit-note" value={editNote} onChange={e => setEditNote(e.target.value)} />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditAccount(null)}>Hủy</Button>
-            <Button onClick={handleEditSubmit} disabled={updateAccount.isPending}>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setEditAccount(null)}>Hủy</Button>
+            <Button className="w-full sm:w-auto" onClick={handleEditSubmit} disabled={updateAccount.isPending}>
               {updateAccount.isPending ? "Đang lưu..." : "Cập nhật"}
             </Button>
           </DialogFooter>
@@ -290,16 +336,16 @@ export default function Accounts() {
 
       {/* Delete Confirm */}
       <Dialog open={!!deleteAccountEmail} onOpenChange={(open) => !open && setDeleteAccountEmail(null)}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Xác nhận xóa</DialogTitle>
             <DialogDescription>
-              Bạn có chắc chắn muốn xóa tài khoản <span className="font-bold text-foreground">{deleteAccountEmail}</span> không? Hành động này không thể hoàn tác.
+              Bạn có chắc chắn muốn xóa tài khoản <span className="font-bold text-foreground break-all">{deleteAccountEmail}</span> không? Hành động này không thể hoàn tác.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => setDeleteAccountEmail(null)}>Hủy</Button>
-            <Button variant="destructive" onClick={handleDeleteSubmit} disabled={deleteAccount.isPending}>
+          <DialogFooter className="mt-4 flex-col sm:flex-row gap-2">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDeleteAccountEmail(null)}>Hủy</Button>
+            <Button variant="destructive" className="w-full sm:w-auto" onClick={handleDeleteSubmit} disabled={deleteAccount.isPending}>
               {deleteAccount.isPending ? "Đang xóa..." : "Xóa tài khoản"}
             </Button>
           </DialogFooter>

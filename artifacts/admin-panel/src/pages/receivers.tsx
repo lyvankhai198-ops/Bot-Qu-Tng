@@ -21,12 +21,10 @@ export default function Receivers() {
 
   const handleExport = () => {
     if (!receivers || receivers.length === 0) return
-    
     const csvHeader = "ID,Username,Name,Thời gian nhận,Tài khoản đã nhận,Đợt(Round)\n"
     const csvContent = receivers.map(r => 
       `${r.userId},${r.username || ''},"${r.firstName || ''}",${r.claimTime},${r.accountEmail},${r.roundId}`
     ).join("\n")
-    
     const blob = new Blob([csvHeader + csvContent], { type: 'text/csv;charset=utf-8;' })
     const link = document.createElement("a")
     const url = URL.createObjectURL(blob)
@@ -39,13 +37,13 @@ export default function Receivers() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+    <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Lịch sử phát quà</h1>
-          <p className="text-muted-foreground mt-1">Danh sách người dùng đã nhận quà trong đợt hiện tại</p>
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Lịch sử phát quà</h1>
+          <p className="text-muted-foreground mt-1 text-sm">Danh sách người dùng đã nhận quà trong đợt hiện tại</p>
         </div>
-        <Button variant="outline" onClick={handleExport} disabled={!receivers || receivers.length === 0}>
+        <Button variant="outline" className="w-full sm:w-auto min-h-[44px]" onClick={handleExport} disabled={!receivers || receivers.length === 0}>
           <Download className="w-4 h-4 mr-2" /> Xuất CSV
         </Button>
       </div>
@@ -53,18 +51,55 @@ export default function Receivers() {
       <Card>
         <CardContent className="p-0">
           <div className="p-4 border-b border-border/50 bg-muted/20">
-            <div className="relative w-full max-w-md">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Tìm user ID, username hoặc email đã nhận..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-9 bg-background"
+                className="pl-9 bg-background min-h-[44px]"
               />
             </div>
           </div>
-          
-          <div className="overflow-x-auto">
+
+          {/* Mobile card view */}
+          <div className="md:hidden divide-y divide-border/50">
+            {isLoading ? (
+              Array(4).fill(0).map((_, i) => (
+                <div key={i} className="p-4 space-y-2">
+                  <div className="h-4 bg-muted animate-pulse rounded w-1/2" />
+                  <div className="h-3 bg-muted animate-pulse rounded w-2/3" />
+                </div>
+              ))
+            ) : filtered.length > 0 ? (
+              filtered.map((record, idx) => (
+                <div key={idx} className="p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm">{record.firstName}</div>
+                      {record.username && <div className="text-xs text-muted-foreground">@{record.username}</div>}
+                    </div>
+                    <Gift className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                  </div>
+                  <code className="block text-xs font-mono break-all text-muted-foreground">{record.accountEmail}</code>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <code className="text-xs font-mono text-muted-foreground">ID: {record.userId}</code>
+                    <span className="bg-muted px-2 py-0.5 rounded text-xs">{record.roundId}</span>
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      {new Date(record.claimTime).toLocaleString('vi-VN')}
+                    </span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="p-10 text-center text-muted-foreground text-sm">
+                Không có bản ghi nào.
+              </div>
+            )}
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto">
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>
