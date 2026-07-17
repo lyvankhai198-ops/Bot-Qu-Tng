@@ -1016,7 +1016,7 @@ def health():
 
 
 def run_flask():
-    flask_app.run(host="0.0.0.0", port=8080, debug=False, use_reloader=False)
+    flask_app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
