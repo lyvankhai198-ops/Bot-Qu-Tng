@@ -62769,6 +62769,16 @@ var _openai = null;
 var _model = "gpt-5.6-luna";
 async function getOpenAI() {
   if (!_openai) {
+    const googleKey = process.env.GOOGLE_AI_API_KEY;
+    if (googleKey) {
+      const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
+      _openai = new OpenAI2({
+        apiKey: googleKey,
+        baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/"
+      });
+      _model = "gemini-2.0-flash";
+      return _openai;
+    }
     const groqKey = process.env.GROQ_API_KEY;
     if (groqKey) {
       const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));

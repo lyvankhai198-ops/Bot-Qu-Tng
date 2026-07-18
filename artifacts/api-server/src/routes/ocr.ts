@@ -7,7 +7,18 @@ let _model: string = "gpt-5.6-luna";
 
 async function getOpenAI(): Promise<any> {
   if (!_openai) {
-    // 1. Groq (free, works on VPS)
+    // 1. Google Gemini (free tier, OpenAI-compatible, works on VPS)
+    const googleKey = process.env.GOOGLE_AI_API_KEY;
+    if (googleKey) {
+      const { default: OpenAI } = await import("openai");
+      _openai = new OpenAI({
+        apiKey:  googleKey,
+        baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+      });
+      _model = "gemini-2.0-flash";
+      return _openai;
+    }
+    // 2. Groq (free, works on VPS)
     const groqKey = process.env.GROQ_API_KEY;
     if (groqKey) {
       const { default: OpenAI } = await import("openai");
@@ -15,7 +26,7 @@ async function getOpenAI(): Promise<any> {
       _model  = "llama-4-scout-17b-16e-instruct";
       return _openai;
     }
-    // 2. Replit AI Integration (only works inside Replit environment)
+    // 3. Replit AI Integration (only works inside Replit environment)
     const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
     const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
     if (baseURL && apiKey) {
