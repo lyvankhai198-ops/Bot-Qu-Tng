@@ -1,8 +1,7 @@
 /**
  * ImageImportDialog — Thêm đơn hàng từ ảnh
- * Viết lại hoàn toàn, tối ưu cho iOS Safari.
- * Dùng FormData multipart thay vì base64 JSON.
- * Không dùng Radix Dialog để tránh event interception trên iOS.
+ * OCR Engine: Tesseract.js (cục bộ, không cần API key)
+ * Parser: Rule-based regex cho layout "Chi tiết đơn hàng"
  */
 import { useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
@@ -23,33 +22,39 @@ import type { Order } from "@workspace/api-client-react"
 type FileStatus = "selected" | "error"
 type DupStatus  = "none" | "exists" | "update" | "skip"
 type Stage      = "upload" | "extracting" | "review" | "done"
+type Conf       = "high" | "medium" | "low"
 
 interface FileItem {
   id: string
-  file: File          // Real File object stored immediately in onChange
-  previewUrl: string  // createObjectURL for thumbnail
+  file: File
+  previewUrl: string
   status: FileStatus
   error?: string
 }
 
-interface OrderDraft {
-  id: string
-  fileItem: FileItem
-  ocrSuccess: boolean
-  ocrError?: string
-  // Form fields
+// confidence cho từng trường — dùng để highlight vàng
+type ConfMap = Partial<Record<keyof OrderDraftFields, Conf>>
+
+interface OrderDraftFields {
   email: string
   password: string
   twoFA: string
   productName: string
   price: string
   customerName: string
-  purchaseDate: string  // YYYY-MM-DD
+  purchaseDate: string
   warrantyDays: string
   status: string
   paymentMethod: string
   notes: string
-  // Duplicate
+}
+
+interface OrderDraft extends OrderDraftFields {
+  id: string
+  fileItem: FileItem
+  ocrSuccess: boolean
+  ocrError?: string
+  confidence: ConfMap    // per-field confidence từ OCR
   dupStatus: DupStatus
 }
 
@@ -72,7 +77,6 @@ function isHeic(file: File): boolean {
   return /heic|heif/i.test(file.type) || /\.(heic|heif)$/i.test(file.name)
 }
 
-/** Convert HEIC → JPEG via Canvas (Safari iOS decodes HEIC natively) */
 function convertToJpeg(file: File): Promise<File> {
   return new Promise((resolve, reject) => {
     const img  = new Image()
@@ -116,7 +120,6 @@ function getProductNames(orders: Order[]): string[] {
   return Array.from(s).sort()
 }
 
-/** Fuzzy match: ignore case, spaces, dashes; return best match or null */
 function fuzzyMatch(query: string, names: string[]): string | null {
   const norm = (s: string) => s.toLowerCase().replace(/[\s\-_]+/g, "")
   const q = norm(query)
@@ -132,6 +135,7 @@ function defaultDraft(fileItem: FileItem): OrderDraft {
     email: "", password: "", twoFA: "", productName: "",
     price: "", customerName: "", purchaseDate: "",
     warrantyDays: "0", status: "active", paymentMethod: "", notes: "",
+    confidence: {},
     dupStatus: "none",
   }
 }
@@ -147,30 +151,25 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
-  const [stage, setStage]         = useState<Stage>("upload")
-  const [items, setItems]         = useState<FileItem[]>([])
-  const [drafts, setDrafts]       = useState<OrderDraft[]>([])
-  const [curIdx, setCurIdx]       = useState(0)
+  const [stage, setStage]           = useState<Stage>("upload")
+  const [items, setItems]           = useState<FileItem[]>([])
+  const [drafts, setDrafts]         = useState<OrderDraft[]>([])
+  const [curIdx, setCurIdx]         = useState(0)
   const [extracting, setExtracting] = useState(false)
-  const [saving, setSaving]       = useState(false)
+  const [saving, setSaving]         = useState(false)
   const [doneResult, setDoneResult] = useState<DoneResult | null>(null)
+  const [extractProgress, setExtractProgress] = useState<string>("")
 
   const productNames = getProductNames(existingOrders)
 
-  // ── File selection — READ FILES IMMEDIATELY in onChange ────────────────────
+  // ── File selection ─────────────────────────────────────────────────────────
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    // Must convert FileList → Array synchronously before any async/re-render
     const fileArray = Array.from(e.target.files ?? [])
     if (!fileArray.length) return
 
     const newItems: FileItem[] = fileArray
       .filter(f => f.size <= 15 * 1024 * 1024)
-      .map(f => ({
-        id: uid(),
-        file: f,
-        previewUrl: URL.createObjectURL(f),
-        status: "selected" as FileStatus,
-      }))
+      .map(f => ({ id: uid(), file: f, previewUrl: URL.createObjectURL(f), status: "selected" as FileStatus }))
 
     const oversize = fileArray.filter(f => f.size > 15 * 1024 * 1024)
     if (oversize.length) {
@@ -179,13 +178,9 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
 
     setItems(prev => {
       const combined = [...prev, ...newItems]
-      if (combined.length > 20) {
-        combined.slice(20).forEach(i => { try { URL.revokeObjectURL(i.previewUrl) } catch {} })
-      }
+      if (combined.length > 20) combined.slice(20).forEach(i => { try { URL.revokeObjectURL(i.previewUrl) } catch {} })
       return combined.slice(0, 20)
     })
-
-    // Reset AFTER state update so same file can be selected again after removal
     requestAnimationFrame(() => { try { e.target.value = "" } catch {} })
   }, [toast])
 
@@ -202,6 +197,7 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
     if (!items.length) return
     setExtracting(true)
     setStage("extracting")
+    setExtractProgress("Đang khởi động OCR engine...")
 
     try {
       const fd = new FormData()
@@ -216,12 +212,12 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
         fd.append("images", file)
       }
 
+      setExtractProgress(`Đang đọc ${items.length} ảnh bằng Tesseract OCR...`)
       const token = localStorage.getItem("admin_token") ?? ""
-      const resp  = await fetch("/api/bot/orders/ocr-extract", {
+      const resp  = await fetch("/api/orders/ocr", {
         method:  "POST",
         headers: { Authorization: `Bearer ${token}` },
         body:    fd,
-        // DO NOT set Content-Type — browser auto-sets multipart/form-data with boundary
       })
 
       if (!resp.ok) {
@@ -229,7 +225,15 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
         throw new Error(err.error || `Lỗi server ${resp.status}`)
       }
 
-      const data = await resp.json() as { results: Array<{ filename: string; success: boolean; extracted?: any; error?: string }> }
+      const data = await resp.json() as {
+        results: Array<{
+          filename: string
+          success: boolean
+          extracted?: Record<string, { value: any; confidence: Conf }>
+          confidence?: number
+          error?: string
+        }>
+      }
 
       const newDrafts: OrderDraft[] = items.map((item, i) => {
         const result = data.results[i]
@@ -241,20 +245,39 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
         }
 
         const ex = result.extracted
-        draft.ocrSuccess    = true
-        draft.email         = ex.email?.value        ?? ""
-        draft.password      = ex.password?.value     ?? ""
-        draft.twoFA         = ex.twoFA?.value        ?? ""
-        draft.customerName  = ex.customerName?.value ?? ""
+        draft.ocrSuccess = true
+
+        // Gán giá trị + lưu confidence per field để highlight
+        const confMap: ConfMap = {}
+
+        function pick(key: string): string {
+          const v = ex[key]?.value
+          confMap[key as keyof ConfMap] = ex[key]?.confidence ?? "low"
+          return v != null ? String(v) : ""
+        }
+
+        draft.email         = pick("email")
+        draft.password      = pick("password")
+        draft.twoFA         = pick("twoFA")
+        draft.customerName  = pick("customerName")
+        draft.purchaseDate  = pick("purchaseDate")
+        draft.paymentMethod = pick("paymentMethod")
+        draft.status        = ex.status?.value ?? "active"
+        confMap.status      = ex.status?.confidence ?? "low"
         draft.price         = ex.price?.value != null ? String(ex.price.value) : ""
-        draft.purchaseDate  = ex.purchaseDate?.value ?? ""
-        draft.paymentMethod = ex.paymentMethod?.value ?? ""
+        confMap.price       = ex.price?.confidence ?? "low"
         draft.warrantyDays  = ex.warrantyDays?.value != null ? String(ex.warrantyDays.value) : "0"
-        draft.status        = ex.status?.value       ?? "active"
+        confMap.warrantyDays = ex.warrantyDays?.confidence ?? "low"
 
         // Product matching
-        const rawProd  = ex.productName?.value ?? ""
-        draft.productName = fuzzyMatch(rawProd, productNames) ?? rawProd
+        const rawProd     = ex.productName?.value ?? ""
+        const matched     = fuzzyMatch(rawProd, productNames) ?? rawProd
+        draft.productName = matched
+        confMap.productName = matched === rawProd && !productNames.includes(rawProd)
+          ? "medium"
+          : (ex.productName?.confidence ?? "low")
+
+        draft.confidence = confMap
 
         // Duplicate check
         if (draft.email) {
@@ -273,6 +296,7 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
       setStage("upload")
     } finally {
       setExtracting(false)
+      setExtractProgress("")
     }
   }
 
@@ -280,7 +304,10 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
   const setField = (idx: number, field: keyof OrderDraft, value: string) => {
     setDrafts(prev => {
       const next = [...prev]
-      next[idx]  = { ...next[idx], [field]: value }
+      const draft = { ...next[idx], [field]: value }
+      // Khi admin sửa tay → xóa highlight (coi như high)
+      draft.confidence = { ...draft.confidence, [field]: "high" as Conf }
+      next[idx] = draft
       return next
     })
   }
@@ -292,18 +319,18 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
     let added = 0, updated = 0, skipped = 0, errors = 0
 
     for (const draft of drafts) {
-      if (draft.dupStatus === "skip")                       { skipped++; continue }
+      if (draft.dupStatus === "skip")                            { skipped++; continue }
       if (!draft.ocrSuccess || !draft.email || !draft.productName) { errors++;  continue }
 
       const wdays  = parseInt(draft.warrantyDays) || 0
       const expiry = calcExpiry(draft.purchaseDate, wdays)
 
       const body: Record<string, any> = {
-        email:         draft.email,
-        productName:   draft.productName,
-        price:         parseInt(draft.price) || 0,
-        warrantyDays:  wdays,
-        status:        draft.status || "active",
+        email:        draft.email,
+        productName:  draft.productName,
+        price:        parseInt(draft.price) || 0,
+        warrantyDays: wdays,
+        status:       draft.status || "active",
       }
       if (draft.password)      body.password      = draft.password
       if (draft.twoFA)         body.twoFA         = draft.twoFA
@@ -318,17 +345,17 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
           const existing = existingOrders.find(o => o.email?.toLowerCase() === draft.email.toLowerCase())
           if (!existing) { errors++; continue }
           const r = await fetch(`/api/bot/orders/${existing.orderId}`, {
-            method: "PUT",
+            method:  "PUT",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify(body),
+            body:    JSON.stringify(body),
           })
           if (!r.ok) throw new Error("Update failed")
           updated++
         } else {
           const r = await fetch("/api/bot/orders", {
-            method: "POST",
+            method:  "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify(body),
+            body:    JSON.stringify(body),
           })
           if (!r.ok) throw new Error("Create failed")
           added++
@@ -356,15 +383,9 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
   const expiry     = cur ? calcExpiry(cur.purchaseDate, parseInt(cur.warrantyDays) || 0) : ""
 
   return (
-    /* Overlay — custom div, NOT Radix Dialog, avoids iOS Safari event interception */
-    <div
-      style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "0.5rem", overflowY: "auto" }}
-    >
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "0.5rem", overflowY: "auto" }}>
       {/* Backdrop */}
-      <div
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)" }}
-        onClick={() => { handleReset(); onClose() }}
-      />
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)" }} onClick={() => { handleReset(); onClose() }} />
 
       {/* Panel */}
       <div style={{
@@ -386,11 +407,6 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
         {/* ── UPLOAD ── */}
         {stage === "upload" && (
           <div className="space-y-4">
-            {/*
-              File inputs use sr-only inside <label> — the MOST reliable iOS Safari pattern.
-              sr-only keeps the input in the accessibility tree and interactive on iOS.
-              No opacity-0 overlay, no JS .click(), no portal.
-            */}
             <div className="space-y-3">
               <label className="flex items-center justify-center gap-3 w-full py-5 rounded-xl border-2 border-dashed border-border bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors text-sm font-medium select-none">
                 <Upload className="w-5 h-5 shrink-0" />
@@ -407,31 +423,18 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
               <label className="flex items-center justify-center gap-3 w-full py-4 rounded-xl border border-border bg-card cursor-pointer hover:bg-muted/30 transition-colors text-sm font-medium select-none">
                 <Camera className="w-5 h-5 shrink-0" />
                 <span>Dùng camera</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="sr-only"
-                  onChange={handleFileChange}
-                />
+                <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={handleFileChange} />
               </label>
             </div>
 
-            {/* File list */}
             {items.length > 0 && (
               <div className="space-y-2">
                 <p className="text-sm font-medium">{items.length}/20 ảnh đã chọn</p>
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                   {items.map(item => (
                     <div key={item.id} className="flex items-center gap-3 p-3 rounded-lg border bg-card">
-                      {/* Thumbnail */}
                       <div className="w-12 h-12 rounded-md overflow-hidden bg-muted shrink-0 flex items-center justify-center">
-                        <img
-                          src={item.previewUrl}
-                          alt=""
-                          className="w-full h-full object-cover"
-                          onError={e => { (e.target as HTMLImageElement).style.display = "none" }}
-                        />
+                        <img src={item.previewUrl} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = "none" }} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{item.file.name}</p>
@@ -464,7 +467,9 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
           <div className="py-16 flex flex-col items-center gap-4 text-center">
             <Loader2 className="w-10 h-10 animate-spin text-primary" />
             <p className="font-medium">Đang đọc dữ liệu từ {items.length} ảnh...</p>
-            <p className="text-sm text-muted-foreground">AI đang phân tích, vui lòng đợi</p>
+            <p className="text-sm text-muted-foreground">
+              {extractProgress || "Tesseract OCR đang xử lý cục bộ, không cần internet"}
+            </p>
           </div>
         )}
 
@@ -501,6 +506,15 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
                   </div>
                 )}
 
+                {/* Legend khi có highlight */}
+                {cur.ocrSuccess && Object.values(cur.confidence).some(c => c === "medium" || c === "low") && (
+                  <div className="rounded-lg bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 p-2.5">
+                    <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                      🟡 <strong>Highlight vàng</strong> = OCR không chắc chắn, vui lòng kiểm tra lại
+                    </p>
+                  </div>
+                )}
+
                 {cur.dupStatus === "exists" && (
                   <div className="rounded-lg bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-300 dark:border-yellow-700 p-3 space-y-2">
                     <p className="text-sm font-medium text-yellow-700 dark:text-yellow-400">⚠ Tài khoản này đã tồn tại trong đơn hàng</p>
@@ -516,17 +530,19 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
 
               {/* Right: edit form */}
               <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-                <F label="Email / Tài khoản *" value={cur.email}         onChange={v => setField(curIdx, "email", v)} />
-                <F label="Mật khẩu"            value={cur.password}      onChange={v => setField(curIdx, "password", v)} type="password" />
-                <F label="Mã 2FA"              value={cur.twoFA}         onChange={v => setField(curIdx, "twoFA", v)} />
-                <F label="Sản phẩm *"          value={cur.productName}   onChange={v => setField(curIdx, "productName", v)} list={productNames} />
-                <F label="Giá bán (VNĐ)"       value={cur.price}         onChange={v => setField(curIdx, "price", v)} type="number" />
-                <F label="Khách hàng"          value={cur.customerName}  onChange={v => setField(curIdx, "customerName", v)} />
-                <F label="Ngày mua"            value={cur.purchaseDate}  onChange={v => setField(curIdx, "purchaseDate", v)} type="date" />
+                <F label="Email / Tài khoản *" value={cur.email}         onChange={v => setField(curIdx, "email", v)}         confidence={cur.confidence.email} />
+                <F label="Mật khẩu"            value={cur.password}      onChange={v => setField(curIdx, "password", v)}      type="password" confidence={cur.confidence.password} />
+                <F label="Mã 2FA"              value={cur.twoFA}         onChange={v => setField(curIdx, "twoFA", v)}         confidence={cur.confidence.twoFA} />
+                <F label="Sản phẩm *"          value={cur.productName}   onChange={v => setField(curIdx, "productName", v)}   list={productNames} confidence={cur.confidence.productName} />
+                <F label="Giá bán (VNĐ)"       value={cur.price}         onChange={v => setField(curIdx, "price", v)}         type="number" confidence={cur.confidence.price} />
+                <F label="Khách hàng"          value={cur.customerName}  onChange={v => setField(curIdx, "customerName", v)}  confidence={cur.confidence.customerName} />
+                <F label="Ngày mua"            value={cur.purchaseDate}  onChange={v => setField(curIdx, "purchaseDate", v)}  type="date" confidence={cur.confidence.purchaseDate} />
                 <div className="grid gap-1">
                   <Label className="text-xs">Trạng thái</Label>
                   <Select value={cur.status} onValueChange={v => setField(curIdx, "status", v)}>
-                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className={`h-9 ${cur.confidence.status === "low" ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20" : ""}`}>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="active">Hoạt động</SelectItem>
                       <SelectItem value="expired">Hết hạn</SelectItem>
@@ -534,10 +550,10 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
                     </SelectContent>
                   </Select>
                 </div>
-                <F label="Số ngày bảo hành"   value={cur.warrantyDays}  onChange={v => setField(curIdx, "warrantyDays", v)} type="number" />
+                <F label="Số ngày bảo hành"  value={cur.warrantyDays}  onChange={v => setField(curIdx, "warrantyDays", v)} type="number" confidence={cur.confidence.warrantyDays} />
                 {expiry && <p className="text-xs text-muted-foreground px-0.5">Hết bảo hành: {fmtDate(expiry)}</p>}
-                <F label="Phương thức TT"     value={cur.paymentMethod} onChange={v => setField(curIdx, "paymentMethod", v)} />
-                <F label="Ghi chú"            value={cur.notes}         onChange={v => setField(curIdx, "notes", v)} />
+                <F label="Phương thức TT"    value={cur.paymentMethod} onChange={v => setField(curIdx, "paymentMethod", v)} confidence={cur.confidence.paymentMethod} />
+                <F label="Ghi chú"           value={cur.notes}         onChange={v => setField(curIdx, "notes", v)} />
               </div>
             </div>
 
@@ -585,15 +601,34 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
   )
 }
 
-// ── Field helper ───────────────────────────────────────────────────────────────
-function F({ label, value, onChange, type = "text", list }: {
-  label: string; value: string; onChange: (v: string) => void; type?: string; list?: string[]
+// ── Field helper — highlight vàng nếu confidence medium/low ───────────────────
+function F({ label, value, onChange, type = "text", list, confidence }: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  type?: string
+  list?: string[]
+  confidence?: Conf
 }) {
-  const listId = list?.length ? `fl-${label.replace(/\W/g, "")}` : undefined
+  const listId    = list?.length ? `fl-${label.replace(/\W/g, "")}` : undefined
+  const uncertain = confidence === "low" || confidence === "medium"
   return (
     <div className="grid gap-1">
-      <Label className="text-xs">{label}</Label>
-      <Input type={type} value={value} onChange={e => onChange(e.target.value)} className="h-9 text-sm" list={listId} />
+      <Label className="text-xs flex items-center gap-1">
+        {label}
+        {uncertain && <span title="OCR không chắc chắn" style={{ fontSize: 10, color: "#b45309" }}>●</span>}
+      </Label>
+      <Input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className={`h-9 text-sm transition-colors ${
+          uncertain
+            ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20 focus:border-yellow-500"
+            : ""
+        }`}
+        list={listId}
+      />
       {listId && <datalist id={listId}>{list!.map(n => <option key={n} value={n} />)}</datalist>}
     </div>
   )
