@@ -133,20 +133,73 @@ function parseDate(text: string): string | null {
 
 function inferWarrantyDays(productName: string): number | null {
   const p = productName.toUpperCase();
-  const m1 = p.match(/(\d+)\s*D(?:AY|AYS)?(?:\b|$)/);   if (m1) return parseInt(m1[1], 10);
-  const m2 = p.match(/(\d+)\s*NG[ÀA]Y/);                 if (m2) return parseInt(m2[1], 10);
-  const m3 = p.match(/(\d+)\s*(?:TH[ÁA]NG|MONTHS?|MO\b)/); if (m3) return parseInt(m3[1], 10) * 30;
-  const m4 = p.match(/(\d+)\s*(?:N[ĂA]M|YEARS?|YR)/);   if (m4) return parseInt(m4[1], 10) * 365;
+  // No warranty
+  if (/\bKBH\b|NO[\s_-]*WARRANTY/.test(p)) return 0;
+  // Days: 30D, 30 DAY, 30 DAYS
+  const mD = p.match(/(\d+)\s*D(?:AY|AYS)?(?:\b|_|$)/);  if (mD) return parseInt(mD[1], 10);
+  // Ngày (Vietnamese)
+  const mN = p.match(/(\d+)\s*NG[ÀA]Y/);                  if (mN) return parseInt(mN[1], 10);
+  // Months: 1M, 3M, 1 MONTH, 3 MONTHS, 1 THANG
+  const mM = p.match(/(\d+)\s*(?:TH[ÁA]NG|MONTHS?|MO\b|M\b)/); if (mM) return parseInt(mM[1], 10) * 30;
+  // Years: 1Y, 1YR, 1 YEAR, 1 NAM
+  const mY = p.match(/(\d+)\s*(?:N[ĂA]M|YEARS?|YR\b|Y\b)/); if (mY) return parseInt(mY[1], 10) * 365;
   return null;
 }
 
+/**
+ * Strict product matching: only exact or near-exact.
+ * Avoids false positives like matching "Grok" inside "GROK SUPER 30D BHF".
+ */
 function fuzzyMatchProduct(query: string, names: string[]): string | null {
   if (!query || !names.length) return null;
   const norm = (s: string) => s.toLowerCase().replace(/[\s\-_]+/g, "");
   const q = norm(query);
-  return names.find(n => norm(n) === q)
-      ?? names.find(n => norm(n).includes(q) || q.includes(norm(n)))
-      ?? null;
+  // 1. Exact match
+  const exact = names.find(n => norm(n) === q);
+  if (exact) return exact;
+  // 2. Query starts with the product name (e.g. OCR has extra suffix)
+  const startsWith = names.find(n => q.startsWith(norm(n)) && norm(n).length >= 4);
+  if (startsWith) return startsWith;
+  // 3. Product name starts with query (OCR truncated)
+  const nameStartsWithQ = names.find(n => norm(n).startsWith(q) && q.length >= 4);
+  if (nameStartsWithQ) return nameStartsWithQ;
+  return null;
+}
+
+/**
+ * Core helper: find a label in lines (ignoring case, colons, bullet points, extra spaces)
+ * and return the value — either inline (after ":") or on the very next non-empty line.
+ * Skips up to 1 blank line between label and value.
+ */
+function getValueAfterLabel(lines: string[], labels: string[]): string | null {
+  const normLabel = (s: string) =>
+    s.toLowerCase()
+      .replace(/^[•·●\-\*\s]+/, "")  // strip leading bullets/dashes
+      .replace(/:\s*$/, "")           // strip trailing colon
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const normLabels = labels.map(normLabel);
+
+  for (let i = 0; i < lines.length; i++) {
+    const lineNorm = normLabel(lines[i]);
+    const isLabel  = normLabels.some(lbl => lineNorm === lbl);
+    if (!isLabel) continue;
+
+    // Try inline value (after colon)
+    const colonIdx = lines[i].indexOf(":");
+    if (colonIdx >= 0) {
+      const inline = lines[i].slice(colonIdx + 1).trim();
+      if (inline && inline !== "-") return inline;
+    }
+
+    // Take next non-empty line (skip up to 1 blank)
+    for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
+      const next = lines[j]?.trim().replace(/^[•·●]\s*/, ""); // strip bullet
+      if (next && next !== "-") return next;
+    }
+  }
+  return null;
 }
 
 // ── Rule-based parser ─────────────────────────────────────────────────────────
@@ -157,7 +210,8 @@ interface ParsedOrder {
   email:         OcrField<string | null>;
   password:      OcrField<string | null>;
   twoFA:         OcrField<string | null>;
-  productName:   OcrField<string | null>;
+  productName:   OcrField<string | null>;  // fuzzy-matched name (or raw if no match)
+  productRaw:    OcrField<string | null>;  // full OCR text, unmodified
   price:         OcrField<number | null>;
   customerName:  OcrField<string | null>;
   status:        OcrField<string>;
@@ -168,104 +222,112 @@ interface ParsedOrder {
 
 function parseRules(text: string, existingProducts: string[] = []): ParsedOrder {
   const result: ParsedOrder = {
-    email:         { value: null,     confidence: "low" },
-    password:      { value: null,     confidence: "low" },
-    twoFA:         { value: null,     confidence: "high" },  // null là bình thường
-    productName:   { value: null,     confidence: "low" },
-    price:         { value: null,     confidence: "low" },
-    customerName:  { value: null,     confidence: "low" },
-    status:        { value: "active", confidence: "low" },
-    purchaseDate:  { value: null,     confidence: "low" },
-    paymentMethod: { value: null,     confidence: "low" },
-    warrantyDays:  { value: null,     confidence: "low" },
+    email:         { value: null,        confidence: "low" },
+    password:      { value: null,        confidence: "low" },
+    twoFA:         { value: null,        confidence: "high" }, // null is normal
+    productName:   { value: null,        confidence: "low" },
+    productRaw:    { value: null,        confidence: "low" },
+    price:         { value: null,        confidence: "low" },
+    customerName:  { value: null,        confidence: "low" },
+    status:        { value: "active",    confidence: "low" },
+    purchaseDate:  { value: null,        confidence: "low" },
+    paymentMethod: { value: null,        confidence: "low" },
+    warrantyDays:  { value: null,        confidence: "low" },
   };
 
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  // ── Email / Tài khoản ──────────────────────────────────────────────────────
+  const emailRaw = getValueAfterLabel(lines, [
+    "email/tài khoản", "email / tài khoản", "email/tai khoan",
+    "email", "tài khoản", "tai khoan",
+  ]);
+  if (emailRaw && emailRaw !== "-") {
+    result.email = {
+      value:      emailRaw.toLowerCase(),
+      confidence: emailRaw.includes("@") ? "high" : "medium",
+    };
+  }
 
-    // ── Email / Tài khoản ─────────────────────────────────────────────────────
-    if (/email\s*[\/|]?\s*t[àa]i\s*kho[ảa]n\s*:/i.test(line) || /^email\s*:/i.test(line)) {
-      const val = extractAfterColon(line) || lines[i + 1]?.trim() || "";
-      if (val && val !== "-") {
-        result.email = {
-          value:      val.toLowerCase(),
-          confidence: val.includes("@") ? "high" : "medium",
-        };
-      }
-    }
+  // ── Mật khẩu ──────────────────────────────────────────────────────────────
+  const passRaw = getValueAfterLabel(lines, ["mật khẩu", "mat khau", "password"]);
+  if (passRaw && passRaw !== "-") result.password = { value: passRaw, confidence: "high" };
 
-    // ── Mật khẩu ─────────────────────────────────────────────────────────────
-    if (/m[aậ]t\s*kh[aẩ]u\s*:/i.test(line)) {
-      const val = extractAfterColon(line) || lines[i + 1]?.trim() || "";
-      if (val && val !== "-") result.password = { value: val, confidence: "high" };
-    }
+  // ── Mã 2FA ─────────────────────────────────────────────────────────────────
+  const tfaRaw = getValueAfterLabel(lines, ["2fa", "mã 2fa", "ma 2fa", "xác thực", "xac thuc"]);
+  if (tfaRaw && tfaRaw !== "-") result.twoFA = { value: tfaRaw, confidence: "high" };
 
-    // ── Mã 2FA ────────────────────────────────────────────────────────────────
-    if (/(?:2fa|m[aã]\s*2fa|x[aá]c\s*th[uự]c)\s*:/i.test(line)) {
-      const val = extractAfterColon(line);
-      if (val && val !== "-") result.twoFA = { value: val, confidence: "high" };
-    }
+  // ── Sản phẩm ───────────────────────────────────────────────────────────────
+  const prodRaw = getValueAfterLabel(lines, ["sản phẩm", "san pham", "product", "tên sản phẩm"]);
+  if (prodRaw && prodRaw !== "-") {
+    result.productRaw = { value: prodRaw, confidence: "high" };
+    // Strict fuzzy match — keep full raw name if no confident match found
+    const matched = fuzzyMatchProduct(prodRaw, existingProducts);
+    result.productName = matched
+      ? { value: matched, confidence: "high" }
+      : { value: prodRaw, confidence: "medium" }; // show full raw to admin
+  }
 
-    // ── Sản phẩm ─────────────────────────────────────────────────────────────
-    if (/s[aả]n\s*ph[aẩ]m\s*:/i.test(line)) {
-      const val = extractAfterColon(line);
-      if (val && val !== "-") {
-        const matched = fuzzyMatchProduct(val, existingProducts);
-        result.productName = { value: matched ?? val, confidence: matched ? "high" : "medium" };
-      }
-    }
+  // ── Số tiền / Giá ──────────────────────────────────────────────────────────
+  const priceRaw = getValueAfterLabel(lines, [
+    "số tiền", "so tien", "tổng tiền", "tong tien",
+    "giá", "gia", "giá tiền", "gia tien", "thanh toán", "thanh toan",
+  ]);
+  if (priceRaw) {
+    const num = parsePrice(priceRaw);
+    if (num !== null) result.price = { value: num, confidence: "high" };
+  }
 
-    // ── Số tiền / Giá ─────────────────────────────────────────────────────────
-    if (/s[oố]\s*ti[eề]n\s*:/i.test(line) || /gi[aá]\s*(?:ti[eề]n)?\s*:/i.test(line)) {
-      const num = parsePrice(extractAfterColon(line));
-      if (num !== null) result.price = { value: num, confidence: "high" };
-    }
+  // ── Khách hàng ─────────────────────────────────────────────────────────────
+  const custRaw = getValueAfterLabel(lines, [
+    "khách hàng", "khach hang", "người mua", "nguoi mua", "tên khách", "ten khach",
+  ]);
+  if (custRaw && custRaw !== "-") result.customerName = { value: custRaw, confidence: "high" };
 
-    // ── Khách hàng ───────────────────────────────────────────────────────────
-    if (/kh[aá]ch\s*h[aà]ng\s*:/i.test(line)) {
-      const val = extractAfterColon(line);
-      if (val && val !== "-") result.customerName = { value: val, confidence: "high" };
-    }
+  // ── Trạng thái ─────────────────────────────────────────────────────────────
+  const statusRaw = getValueAfterLabel(lines, ["trạng thái", "trang thai", "status"]);
+  if (statusRaw && statusRaw !== "-") {
+    const v = statusRaw.toLowerCase();
+    if      (/[đd][aã]\s*giao|delivered/i.test(v))              result.status = { value: "delivered", confidence: "high" };
+    else if (/ho[aạ]t\s*[đd][oộ]ng|active/i.test(v))           result.status = { value: "active",    confidence: "high" };
+    else if (/ho[aà]n\s*ti[eề]n|refund/i.test(v))              result.status = { value: "refunded",  confidence: "high" };
+    else if (/h[eế]t\s*h[aạ]n|expired/i.test(v))               result.status = { value: "expired",   confidence: "high" };
+    else if (/[đd]ang\s*x[uử]\s*l[yý]|processing/i.test(v))    result.status = { value: "processing",confidence: "high" };
+    else                                                         result.status = { value: "active",    confidence: "medium" };
+  }
 
-    // ── Trạng thái ───────────────────────────────────────────────────────────
-    if (/tr[aạ]ng\s*th[aá]i\s*:/i.test(line)) {
-      const val = extractAfterColon(line).toLowerCase();
-      if      (/[đd][aã]\s*giao|active|ho[aạ]t\s*[đd][oộ]ng/i.test(val))  result.status = { value: "active",   confidence: "high" };
-      else if (/ho[aà]n\s*ti[eề]n|refund/i.test(val))                      result.status = { value: "refunded", confidence: "high" };
-      else if (/h[eế]t\s*h[aạ]n|expired/i.test(val))                       result.status = { value: "expired",  confidence: "high" };
-      else if (val && val !== "-")                                           result.status = { value: "active",   confidence: "medium" };
-    }
-
-    // ── Thanh toán (ưu tiên cao nhất cho purchaseDate) ───────────────────────
-    if (/thanh\s*to[aá]n\s*:/i.test(line)) {
-      const dt = parseDate(extractAfterColon(line));
-      if (dt) result.purchaseDate = { value: dt, confidence: "high" };
-    }
-
-    // ── Giao lúc (ưu tiên thứ 2) ─────────────────────────────────────────────
-    if (/giao\s*l[uú]c\s*:/i.test(line) && result.purchaseDate.confidence !== "high") {
-      const dt = parseDate(extractAfterColon(line));
+  // ── Ngày mua: ưu tiên Thanh toán > Giao lúc > Tạo lúc ────────────────────
+  const thanhToanRaw = getValueAfterLabel(lines, ["thanh toán", "thanh toan", "payment"]);
+  if (thanhToanRaw) {
+    const dt = parseDate(thanhToanRaw);
+    if (dt) result.purchaseDate = { value: dt, confidence: "high" };
+  }
+  if (!result.purchaseDate.value) {
+    const giaoLucRaw = getValueAfterLabel(lines, ["giao lúc", "giao luc", "delivered at"]);
+    if (giaoLucRaw) {
+      const dt = parseDate(giaoLucRaw);
       if (dt) result.purchaseDate = { value: dt, confidence: "medium" };
     }
-
-    // ── Tạo lúc (fallback) ────────────────────────────────────────────────────
-    if (/t[aạ]o\s*l[uú]c\s*:/i.test(line) && result.purchaseDate.value === null) {
-      const dt = parseDate(extractAfterColon(line));
-      if (dt) result.purchaseDate = { value: dt, confidence: "medium" };
-    }
-
-    // ── Phương thức thanh toán ────────────────────────────────────────────────
-    if (/ph[uư][oơ]ng\s*th[uứ]c\s*:/i.test(line)) {
-      const val = extractAfterColon(line);
-      if (val && val !== "-") result.paymentMethod = { value: val, confidence: "high" };
+  }
+  if (!result.purchaseDate.value) {
+    const taoLucRaw = getValueAfterLabel(lines, ["tạo lúc", "tao luc", "created at", "tạo"]);
+    if (taoLucRaw) {
+      const dt = parseDate(taoLucRaw);
+      if (dt) result.purchaseDate = { value: dt, confidence: "low" };
     }
   }
 
-  // ── Suy ra warrantyDays từ tên sản phẩm ─────────────────────────────────────
-  if (result.productName.value) {
-    const wd = inferWarrantyDays(String(result.productName.value));
+  // ── Phương thức thanh toán ─────────────────────────────────────────────────
+  const pmRaw = getValueAfterLabel(lines, [
+    "phương thức", "phuong thuc", "phương thức thanh toán",
+    "payment method", "thanh toán bằng",
+  ]);
+  if (pmRaw && pmRaw !== "-") result.paymentMethod = { value: pmRaw, confidence: "high" };
+
+  // ── Suy ra warrantyDays từ tên sản phẩm ───────────────────────────────────
+  const prodForWarranty = result.productRaw.value ?? result.productName.value;
+  if (prodForWarranty) {
+    const wd = inferWarrantyDays(String(prodForWarranty));
     if (wd !== null) result.warrantyDays = { value: wd, confidence: "high" };
   }
 
@@ -337,14 +399,16 @@ async function runOCR(req: any, res: any) {
       const fields     = parseRules(normalized, existingProducts);
       const confidence = calcOverallConfidence(fields);
 
-      console.info(`OCR done: ${filename} | email=${fields.email.value ?? "—"} | conf=${confidence}`);
+      // Never log passwords/2FA in production
+      const safeLog = { email: fields.email.value ?? "—", product: fields.productRaw.value ?? fields.productName.value ?? "—", price: fields.price.value ?? "—", purchaseDate: fields.purchaseDate.value ?? "—" };
+      console.info(`OCR done: ${filename} | conf=${confidence} |`, safeLog);
 
       if (!fields.email.value) {
-        results.push({ filename, success: false, error: "Không tìm thấy email/tài khoản trong ảnh", rawText: normalized.slice(0, 500) });
+        results.push({ filename, success: false, error: "Không tìm thấy email/tài khoản trong ảnh", rawLines: normalized.split("\n").map((l: string) => l.trim()).filter(Boolean) });
         continue;
       }
 
-      results.push({ filename, success: true, extracted: fields, confidence });
+      results.push({ filename, success: true, extracted: fields, confidence, rawLines: normalized.split("\n").map((l: string) => l.trim()).filter(Boolean) });
     } catch (err: any) {
       console.error(`OCR error ${filename}:`, err.message);
       results.push({ filename, success: false, error: err.message });

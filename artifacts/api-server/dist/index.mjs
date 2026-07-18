@@ -50228,6 +50228,9 @@ function _recomputeGroupStatus(req) {
   if (statuses.length > 0 && statuses.every((s) => ["resolved", "rejected"].includes(s))) {
     req.status = "resolved";
     if (!req.resolvedAt) req.resolvedAt = now();
+    req.reminderEnabled = false;
+    req.nextReminderAt = null;
+    req.reminderProcessing = false;
   } else if (req.acknowledgedAt || statuses.some((s) => s === "processing")) {
     if (req.status !== "resolved") req.status = "processing";
   }
@@ -50315,13 +50318,14 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
     orders[req_.orderId].status = "warranted";
     writeJson("orders", orders);
   }
+  const reminderOff = { reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   if (result.ok) {
-    requests[idx] = { ...req_, ...replacementData, status: "resolved", resolution: `replacement:${email}`, sentStatus: "sent", sentAt: now(), sentError: null };
+    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "resolved", resolution: `replacement:${email}`, sentStatus: "sent", sentAt: now(), sentError: null };
     writeJson("warranty_requests", requests);
     addLog("WARRANTY_REPLACEMENT", `${id} \u2192 ${email} | sent OK`, "web-admin");
     res.json({ ok: true, sentStatus: "sent", message: "\u0110\xE3 g\u1EEDi t\xE0i kho\u1EA3n thay th\u1EBF cho kh\xE1ch" });
   } else {
-    requests[idx] = { ...req_, ...replacementData, status: "send_failed", resolution: `replacement:${email}`, sentStatus: "failed", sentError: result.error, sentAt: null };
+    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "send_failed", resolution: `replacement:${email}`, sentStatus: "failed", sentError: result.error, sentAt: null };
     writeJson("warranty_requests", requests);
     addLog("WARRANTY_REPLACEMENT_FAIL", `${id} \u2192 ${email} | ${result.error}`, "web-admin");
     res.json({ ok: false, sentStatus: "failed", message: `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
@@ -50535,7 +50539,7 @@ router2.post("/bot/warranty/:id/refund", requireAuth, async (req, res) => {
     return;
   }
   const req_ = requests[idx];
-  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: now(), resolvedBy: "web-admin" };
+  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: now(), resolvedBy: "web-admin", reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   writeJson("warranty_requests", requests);
   const orders = readJson("orders", {}) ?? {};
   if (req_.orderId && orders[req_.orderId]) {
@@ -50565,7 +50569,7 @@ router2.post("/bot/warranty/:id/reject", requireAuth, async (req, res) => {
     return;
   }
   const req_ = requests[idx];
-  requests[idx] = { ...req_, status: "rejected", resolution: `reject:${reason}`, resolvedAt: now(), resolvedBy: "web-admin" };
+  requests[idx] = { ...req_, status: "rejected", resolution: `reject:${reason}`, resolvedAt: now(), resolvedBy: "web-admin", reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   writeJson("warranty_requests", requests);
   const msg = `\u274C <b>Y\xEAu c\u1EA7u b\u1EA3o h\xE0nh kh\xF4ng \u0111\u01B0\u1EE3c ch\u1EA5p nh\u1EADn.</b>
 
@@ -50669,10 +50673,6 @@ async function runTesseract(buffer, mimeType) {
 function normalizeOCR(raw) {
   return raw.replace(/[|¦]/g, "I").replace(/[`'']/g, "'").replace(/(\d)O(\d)/g, "$10$2").replace(/^O(\d)/gm, "0$1").replace(/\s*:\s*/g, ": ").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
-function extractAfterColon(line) {
-  const idx = line.indexOf(":");
-  return idx >= 0 ? line.slice(idx + 1).trim() : "";
-}
 function parsePrice(text) {
   if (!text) return null;
   const digits = text.replace(/[^\d]/g, "");
@@ -50697,29 +50697,56 @@ function parseDate(text) {
 }
 function inferWarrantyDays(productName) {
   const p = productName.toUpperCase();
-  const m1 = p.match(/(\d+)\s*D(?:AY|AYS)?(?:\b|$)/);
-  if (m1) return parseInt(m1[1], 10);
-  const m2 = p.match(/(\d+)\s*NG[ÀA]Y/);
-  if (m2) return parseInt(m2[1], 10);
-  const m3 = p.match(/(\d+)\s*(?:TH[ÁA]NG|MONTHS?|MO\b)/);
-  if (m3) return parseInt(m3[1], 10) * 30;
-  const m4 = p.match(/(\d+)\s*(?:N[ĂA]M|YEARS?|YR)/);
-  if (m4) return parseInt(m4[1], 10) * 365;
+  if (/\bKBH\b|NO[\s_-]*WARRANTY/.test(p)) return 0;
+  const mD = p.match(/(\d+)\s*D(?:AY|AYS)?(?:\b|_|$)/);
+  if (mD) return parseInt(mD[1], 10);
+  const mN = p.match(/(\d+)\s*NG[ÀA]Y/);
+  if (mN) return parseInt(mN[1], 10);
+  const mM = p.match(/(\d+)\s*(?:TH[ÁA]NG|MONTHS?|MO\b|M\b)/);
+  if (mM) return parseInt(mM[1], 10) * 30;
+  const mY = p.match(/(\d+)\s*(?:N[ĂA]M|YEARS?|YR\b|Y\b)/);
+  if (mY) return parseInt(mY[1], 10) * 365;
   return null;
 }
 function fuzzyMatchProduct(query, names) {
   if (!query || !names.length) return null;
   const norm = (s) => s.toLowerCase().replace(/[\s\-_]+/g, "");
   const q = norm(query);
-  return names.find((n) => norm(n) === q) ?? names.find((n) => norm(n).includes(q) || q.includes(norm(n))) ?? null;
+  const exact = names.find((n) => norm(n) === q);
+  if (exact) return exact;
+  const startsWith = names.find((n) => q.startsWith(norm(n)) && norm(n).length >= 4);
+  if (startsWith) return startsWith;
+  const nameStartsWithQ = names.find((n) => norm(n).startsWith(q) && q.length >= 4);
+  if (nameStartsWithQ) return nameStartsWithQ;
+  return null;
+}
+function getValueAfterLabel(lines, labels) {
+  const normLabel = (s) => s.toLowerCase().replace(/^[•·●\-\*\s]+/, "").replace(/:\s*$/, "").replace(/\s+/g, " ").trim();
+  const normLabels = labels.map(normLabel);
+  for (let i = 0; i < lines.length; i++) {
+    const lineNorm = normLabel(lines[i]);
+    const isLabel = normLabels.some((lbl) => lineNorm === lbl);
+    if (!isLabel) continue;
+    const colonIdx = lines[i].indexOf(":");
+    if (colonIdx >= 0) {
+      const inline = lines[i].slice(colonIdx + 1).trim();
+      if (inline && inline !== "-") return inline;
+    }
+    for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
+      const next = lines[j]?.trim().replace(/^[•·●]\s*/, "");
+      if (next && next !== "-") return next;
+    }
+  }
+  return null;
 }
 function parseRules(text, existingProducts = []) {
   const result = {
     email: { value: null, confidence: "low" },
     password: { value: null, confidence: "low" },
     twoFA: { value: null, confidence: "high" },
-    // null là bình thường
+    // null is normal
     productName: { value: null, confidence: "low" },
+    productRaw: { value: null, confidence: "low" },
     price: { value: null, confidence: "low" },
     customerName: { value: null, confidence: "low" },
     status: { value: "active", confidence: "low" },
@@ -50728,66 +50755,95 @@ function parseRules(text, existingProducts = []) {
     warrantyDays: { value: null, confidence: "low" }
   };
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/email\s*[\/|]?\s*t[àa]i\s*kho[ảa]n\s*:/i.test(line) || /^email\s*:/i.test(line)) {
-      const val = extractAfterColon(line) || lines[i + 1]?.trim() || "";
-      if (val && val !== "-") {
-        result.email = {
-          value: val.toLowerCase(),
-          confidence: val.includes("@") ? "high" : "medium"
-        };
-      }
-    }
-    if (/m[aậ]t\s*kh[aẩ]u\s*:/i.test(line)) {
-      const val = extractAfterColon(line) || lines[i + 1]?.trim() || "";
-      if (val && val !== "-") result.password = { value: val, confidence: "high" };
-    }
-    if (/(?:2fa|m[aã]\s*2fa|x[aá]c\s*th[uự]c)\s*:/i.test(line)) {
-      const val = extractAfterColon(line);
-      if (val && val !== "-") result.twoFA = { value: val, confidence: "high" };
-    }
-    if (/s[aả]n\s*ph[aẩ]m\s*:/i.test(line)) {
-      const val = extractAfterColon(line);
-      if (val && val !== "-") {
-        const matched = fuzzyMatchProduct(val, existingProducts);
-        result.productName = { value: matched ?? val, confidence: matched ? "high" : "medium" };
-      }
-    }
-    if (/s[oố]\s*ti[eề]n\s*:/i.test(line) || /gi[aá]\s*(?:ti[eề]n)?\s*:/i.test(line)) {
-      const num = parsePrice(extractAfterColon(line));
-      if (num !== null) result.price = { value: num, confidence: "high" };
-    }
-    if (/kh[aá]ch\s*h[aà]ng\s*:/i.test(line)) {
-      const val = extractAfterColon(line);
-      if (val && val !== "-") result.customerName = { value: val, confidence: "high" };
-    }
-    if (/tr[aạ]ng\s*th[aá]i\s*:/i.test(line)) {
-      const val = extractAfterColon(line).toLowerCase();
-      if (/[đd][aã]\s*giao|active|ho[aạ]t\s*[đd][oộ]ng/i.test(val)) result.status = { value: "active", confidence: "high" };
-      else if (/ho[aà]n\s*ti[eề]n|refund/i.test(val)) result.status = { value: "refunded", confidence: "high" };
-      else if (/h[eế]t\s*h[aạ]n|expired/i.test(val)) result.status = { value: "expired", confidence: "high" };
-      else if (val && val !== "-") result.status = { value: "active", confidence: "medium" };
-    }
-    if (/thanh\s*to[aá]n\s*:/i.test(line)) {
-      const dt = parseDate(extractAfterColon(line));
-      if (dt) result.purchaseDate = { value: dt, confidence: "high" };
-    }
-    if (/giao\s*l[uú]c\s*:/i.test(line) && result.purchaseDate.confidence !== "high") {
-      const dt = parseDate(extractAfterColon(line));
+  const emailRaw = getValueAfterLabel(lines, [
+    "email/t\xE0i kho\u1EA3n",
+    "email / t\xE0i kho\u1EA3n",
+    "email/tai khoan",
+    "email",
+    "t\xE0i kho\u1EA3n",
+    "tai khoan"
+  ]);
+  if (emailRaw && emailRaw !== "-") {
+    result.email = {
+      value: emailRaw.toLowerCase(),
+      confidence: emailRaw.includes("@") ? "high" : "medium"
+    };
+  }
+  const passRaw = getValueAfterLabel(lines, ["m\u1EADt kh\u1EA9u", "mat khau", "password"]);
+  if (passRaw && passRaw !== "-") result.password = { value: passRaw, confidence: "high" };
+  const tfaRaw = getValueAfterLabel(lines, ["2fa", "m\xE3 2fa", "ma 2fa", "x\xE1c th\u1EF1c", "xac thuc"]);
+  if (tfaRaw && tfaRaw !== "-") result.twoFA = { value: tfaRaw, confidence: "high" };
+  const prodRaw = getValueAfterLabel(lines, ["s\u1EA3n ph\u1EA9m", "san pham", "product", "t\xEAn s\u1EA3n ph\u1EA9m"]);
+  if (prodRaw && prodRaw !== "-") {
+    result.productRaw = { value: prodRaw, confidence: "high" };
+    const matched = fuzzyMatchProduct(prodRaw, existingProducts);
+    result.productName = matched ? { value: matched, confidence: "high" } : { value: prodRaw, confidence: "medium" };
+  }
+  const priceRaw = getValueAfterLabel(lines, [
+    "s\u1ED1 ti\u1EC1n",
+    "so tien",
+    "t\u1ED5ng ti\u1EC1n",
+    "tong tien",
+    "gi\xE1",
+    "gia",
+    "gi\xE1 ti\u1EC1n",
+    "gia tien",
+    "thanh to\xE1n",
+    "thanh toan"
+  ]);
+  if (priceRaw) {
+    const num = parsePrice(priceRaw);
+    if (num !== null) result.price = { value: num, confidence: "high" };
+  }
+  const custRaw = getValueAfterLabel(lines, [
+    "kh\xE1ch h\xE0ng",
+    "khach hang",
+    "ng\u01B0\u1EDDi mua",
+    "nguoi mua",
+    "t\xEAn kh\xE1ch",
+    "ten khach"
+  ]);
+  if (custRaw && custRaw !== "-") result.customerName = { value: custRaw, confidence: "high" };
+  const statusRaw = getValueAfterLabel(lines, ["tr\u1EA1ng th\xE1i", "trang thai", "status"]);
+  if (statusRaw && statusRaw !== "-") {
+    const v = statusRaw.toLowerCase();
+    if (/[đd][aã]\s*giao|delivered/i.test(v)) result.status = { value: "delivered", confidence: "high" };
+    else if (/ho[aạ]t\s*[đd][oộ]ng|active/i.test(v)) result.status = { value: "active", confidence: "high" };
+    else if (/ho[aà]n\s*ti[eề]n|refund/i.test(v)) result.status = { value: "refunded", confidence: "high" };
+    else if (/h[eế]t\s*h[aạ]n|expired/i.test(v)) result.status = { value: "expired", confidence: "high" };
+    else if (/[đd]ang\s*x[uử]\s*l[yý]|processing/i.test(v)) result.status = { value: "processing", confidence: "high" };
+    else result.status = { value: "active", confidence: "medium" };
+  }
+  const thanhToanRaw = getValueAfterLabel(lines, ["thanh to\xE1n", "thanh toan", "payment"]);
+  if (thanhToanRaw) {
+    const dt = parseDate(thanhToanRaw);
+    if (dt) result.purchaseDate = { value: dt, confidence: "high" };
+  }
+  if (!result.purchaseDate.value) {
+    const giaoLucRaw = getValueAfterLabel(lines, ["giao l\xFAc", "giao luc", "delivered at"]);
+    if (giaoLucRaw) {
+      const dt = parseDate(giaoLucRaw);
       if (dt) result.purchaseDate = { value: dt, confidence: "medium" };
-    }
-    if (/t[aạ]o\s*l[uú]c\s*:/i.test(line) && result.purchaseDate.value === null) {
-      const dt = parseDate(extractAfterColon(line));
-      if (dt) result.purchaseDate = { value: dt, confidence: "medium" };
-    }
-    if (/ph[uư][oơ]ng\s*th[uứ]c\s*:/i.test(line)) {
-      const val = extractAfterColon(line);
-      if (val && val !== "-") result.paymentMethod = { value: val, confidence: "high" };
     }
   }
-  if (result.productName.value) {
-    const wd = inferWarrantyDays(String(result.productName.value));
+  if (!result.purchaseDate.value) {
+    const taoLucRaw = getValueAfterLabel(lines, ["t\u1EA1o l\xFAc", "tao luc", "created at", "t\u1EA1o"]);
+    if (taoLucRaw) {
+      const dt = parseDate(taoLucRaw);
+      if (dt) result.purchaseDate = { value: dt, confidence: "low" };
+    }
+  }
+  const pmRaw = getValueAfterLabel(lines, [
+    "ph\u01B0\u01A1ng th\u1EE9c",
+    "phuong thuc",
+    "ph\u01B0\u01A1ng th\u1EE9c thanh to\xE1n",
+    "payment method",
+    "thanh to\xE1n b\u1EB1ng"
+  ]);
+  if (pmRaw && pmRaw !== "-") result.paymentMethod = { value: pmRaw, confidence: "high" };
+  const prodForWarranty = result.productRaw.value ?? result.productName.value;
+  if (prodForWarranty) {
+    const wd = inferWarrantyDays(String(prodForWarranty));
     if (wd !== null) result.warrantyDays = { value: wd, confidence: "high" };
   }
   return result;
@@ -50849,12 +50905,13 @@ async function runOCR(req, res) {
       const normalized = normalizeOCR(rawText);
       const fields = parseRules(normalized, existingProducts);
       const confidence = calcOverallConfidence(fields);
-      console.info(`OCR done: ${filename} | email=${fields.email.value ?? "\u2014"} | conf=${confidence}`);
+      const safeLog = { email: fields.email.value ?? "\u2014", product: fields.productRaw.value ?? fields.productName.value ?? "\u2014", price: fields.price.value ?? "\u2014", purchaseDate: fields.purchaseDate.value ?? "\u2014" };
+      console.info(`OCR done: ${filename} | conf=${confidence} |`, safeLog);
       if (!fields.email.value) {
-        results.push({ filename, success: false, error: "Kh\xF4ng t\xECm th\u1EA5y email/t\xE0i kho\u1EA3n trong \u1EA3nh", rawText: normalized.slice(0, 500) });
+        results.push({ filename, success: false, error: "Kh\xF4ng t\xECm th\u1EA5y email/t\xE0i kho\u1EA3n trong \u1EA3nh", rawLines: normalized.split("\n").map((l) => l.trim()).filter(Boolean) });
         continue;
       }
-      results.push({ filename, success: true, extracted: fields, confidence });
+      results.push({ filename, success: true, extracted: fields, confidence, rawLines: normalized.split("\n").map((l) => l.trim()).filter(Boolean) });
     } catch (err) {
       console.error(`OCR error ${filename}:`, err.message);
       results.push({ filename, success: false, error: err.message });

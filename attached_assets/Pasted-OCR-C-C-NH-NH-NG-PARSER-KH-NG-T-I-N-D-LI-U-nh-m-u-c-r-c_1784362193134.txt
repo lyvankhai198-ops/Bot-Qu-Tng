@@ -1,0 +1,221 @@
+OCR ĐÃ ĐỌC ĐƯỢC ẢNH NHƯNG PARSER KHÔNG TỰ ĐIỀN ĐỦ DỮ LIỆU
+
+Ảnh mẫu đọc rõ các trường:
+
+Số tiền:
+90.000đ
+
+Khách hàng:
+Tự Mã Trọng Đạt
+
+Tạo lúc:
+10:35:59 18/7/2026
+
+Thanh toán:
+10:37:12 18/7/2026
+
+Giao lúc:
+10:37:14 18/7/2026
+
+Sản phẩm:
+GROK SUPER 30D BHF
+
+Nhưng form hiện chỉ tự điền:
+- Email
+- Mật khẩu
+- Sản phẩm thành “Grok”
+
+Còn bỏ trống:
+- Giá bán
+- Khách hàng
+- Ngày mua
+- Số ngày bảo hành
+
+Đây là lỗi parser, không phải OCR.
+
+Hãy sửa rule parser như sau:
+
+1. Parse theo cặp nhãn và dòng kế tiếp
+
+Ví dụ OCR trả về:
+
+"Số tiền"
+"90.000đ"
+
+thì lấy dòng ngay sau “Số tiền” làm giá bán.
+
+Tương tự:
+
+"Khách hàng"
+"Tự Mã Trọng Đạt"
+
+"Tạo lúc"
+"10:35:59 18/7/2026"
+
+"Thanh toán"
+"10:37:12 18/7/2026"
+
+"Giao lúc"
+"10:37:14 18/7/2026"
+
+Không được yêu cầu nhãn và giá trị phải nằm trên cùng một dòng.
+
+2. Giá bán
+
+Tìm nhãn:
+- Số tiền
+- Tổng tiền
+- Giá
+
+Lấy giá trị ở dòng kế tiếp.
+
+Chuẩn hóa:
+
+90.000đ
+90,000đ
+90 000 đ
+90000 VND
+
+thành số nguyên:
+
+90000
+
+Không để trường Giá bán trống nếu ảnh đã có “90.000đ”.
+
+3. Khách hàng
+
+Tìm nhãn:
+- Khách hàng
+- Người mua
+- Tên khách
+
+Lấy toàn bộ dòng ngay sau nhãn.
+
+Ví dụ:
+
+Khách hàng
+Tự Mã Trọng Đạt
+
+=> customer = "Tự Mã Trọng Đạt"
+
+Phải hỗ trợ tiếng Việt có dấu.
+
+4. Ngày mua
+
+Ưu tiên:
+
+- Thanh toán
+- Giao lúc
+- Tạo lúc
+
+Lấy dòng ngay sau nhãn và trích ngày bằng regex.
+
+Ví dụ:
+
+10:37:12 18/7/2026
+
+=> purchaseDate = "2026-07-18"
+
+Regex phải hỗ trợ:
+
+\d{1,2}:\d{2}:\d{2}\s+\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}
+
+và:
+
+\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}
+
+Không tự dùng ngày hiện tại.
+
+5. Sản phẩm
+
+Không được rút:
+
+"GROK SUPER 30D BHF"
+
+thành:
+
+"Grok"
+
+Phải giữ tên OCR đầy đủ trước:
+
+productRaw = "GROK SUPER 30D BHF"
+
+Sau đó fuzzy match với danh sách sản phẩm trong database.
+
+Nếu chưa khớp được thì hiển thị nguyên tên OCR để admin chọn, không tự cắt còn một từ.
+
+6. Số ngày bảo hành
+
+Tự suy ra từ tên sản phẩm:
+
+GROK SUPER 30D BHF
+=> warrantyDays = 30
+
+Hỗ trợ:
+
+- 7D = 7 ngày
+- 10D = 10 ngày
+- 30D = 30 ngày
+- 90D = 90 ngày
+- 1M = 30 ngày
+- 3M = 90 ngày
+- 1 YEAR hoặc 1Y = 365 ngày
+- KBH hoặc NO WARRANTY = 0 ngày
+
+Ưu tiên warranty_days trong cấu hình sản phẩm nếu đã map được sản phẩm.
+
+7. Ngày hết bảo hành
+
+Sau khi có:
+
+purchaseDate = 2026-07-18
+warrantyDays = 30
+
+tự tính warrantyEndDate theo quy tắc hiện tại của hệ thống.
+
+8. Sửa parser theo vị trí nhãn
+
+Tạo hàm dùng chung:
+
+getValueAfterLabel(lines, labels)
+
+Hàm này:
+- Normalize chữ hoa/thường
+- Bỏ dấu hai chấm
+- Bỏ khoảng trắng thừa
+- Tìm nhãn gần đúng
+- Lấy dòng hợp lệ ngay sau nhãn
+- Bỏ qua dòng rỗng
+
+9. Trả thêm raw OCR để debug
+
+API OCR tạm thời trả:
+
+{
+  rawLines: [...],
+  parsedFields: {...}
+}
+
+Chỉ cho admin xem trong chế độ debug.
+
+Không log mật khẩu và 2FA trên server production.
+
+10. Test bắt buộc với đúng ảnh mẫu
+
+Kết quả mong muốn:
+
+{
+  "email": "robertyteog@outlook.com",
+  "password": "GrokSuperPro123#",
+  "productRaw": "GROK SUPER 30D BHF",
+  "price": 90000,
+  "customer": "Tự Mã Trọng Đạt",
+  "purchaseDate": "2026-07-18",
+  "warrantyDays": 30,
+  "paymentMethod": "vietqr",
+  "status": "delivered"
+}
+
+Sau khi OCR xong, các trường này phải tự xuất hiện ngay trên form.
+
+Không bắt admin nhập thủ công những dữ liệu ảnh đã thể hiện rõ.
