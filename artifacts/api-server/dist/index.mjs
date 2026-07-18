@@ -62776,7 +62776,7 @@ async function getOpenAI() {
         apiKey: googleKey,
         baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/"
       });
-      _model = "gemini-2.5-pro";
+      _model = "gemini-2.0-flash";
       return _openai;
     }
     const groqKey = process.env.GROQ_API_KEY;
