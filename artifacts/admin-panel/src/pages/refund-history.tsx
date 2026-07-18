@@ -5,9 +5,6 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Search, RefreshCw, DollarSign, Calendar, Mail, Hash } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-
-const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? ""
-
 interface RefundRecord {
   id: string
   warrantyRequestId: string
@@ -19,11 +16,16 @@ interface RefundRecord {
   refundedBy: string
 }
 
+function authHeader() {
+  return { Authorization: `Bearer ${localStorage.getItem("admin_token") ?? ""}` }
+}
+
 async function fetchHistory(params: Record<string, string>): Promise<RefundRecord[]> {
-  const token = localStorage.getItem("admin_token") ?? ""
-  const qs = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([,v]) => v))).toString()
-  const res = await fetch(`${BASE}/api/bot/refund-history${qs ? `?${qs}` : ""}`, {
-    headers: { Authorization: `Bearer ${token}` },
+  const qs = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => Boolean(v)))
+  ).toString()
+  const res = await fetch(`/api/bot/refund-history${qs ? `?${qs}` : ""}`, {
+    headers: authHeader(),
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
