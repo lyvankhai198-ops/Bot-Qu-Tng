@@ -397,9 +397,29 @@ async def handle_intro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 # ─── Menu router ─────────────────────────────────────────────────────────────
 
+# All button keys used in menus — used to auto-detect language from button press
+_MENU_KEYS = ["btn_home", "btn_support", "btn_gift", "btn_check_order", "btn_shop", "btn_intro"]
+
+def detect_lang_from_text(text: str) -> str | None:
+    """Return 'vi' or 'en' if text matches a known menu button, else None."""
+    for key in _MENU_KEYS:
+        if text == t("en", key):
+            return "en"
+        if text == t("vi", key):
+            return "vi"
+    return None
+
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     text = update.message.text.strip()
+
+    # Auto-detect and save language from which button the user pressed
+    detected = detect_lang_from_text(text)
+    if detected:
+        current = db.get_user_lang(user.id)
+        if current != detected:
+            db.set_user_lang(user.id, detected)
+
     L = lang(user.id)
 
     # Home button (always works even in maintenance)
