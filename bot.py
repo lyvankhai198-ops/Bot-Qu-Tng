@@ -614,6 +614,9 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
     not_found: list = []
     blocked: list = []
 
+    # Keep full order+item for card rendering
+    found_full: list = []   # list of (order_dict, matched_item_or_None, canonical_email)
+
     for e in emails:
         # Use find_order_with_items so emails stored in order_items (new multi-account model)
         # are resolved correctly, not just legacy orders.json header emails.
@@ -632,6 +635,7 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
         if matched_item and not order.get("email"):
             order = {**order, "email": canonical_email}
         found.append(_mw_compute_account(order, settings))
+        found_full.append((order, matched_item))
 
     if not found:
         summary = _mw_summary_text(L, found, not_found, blocked)
@@ -644,6 +648,13 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
     db.set_user_state(user.id, "_mw_not_found", _json.dumps(not_found, ensure_ascii=False))
     db.set_user_state(user.id, "_mw_sel", ",".join(str(i) for i in range(len(found))))
     db.clear_user_state(user.id, "conv_state")
+
+    # Send full order card(s) for up to 3 found accounts; beyond that keep summary only
+    _CARD_THRESHOLD = 3
+    if len(found_full) <= _CARD_THRESHOLD:
+        for (ord_, mit_) in found_full:
+            card_text = _fmt_order(L, ord_, settings, item=mit_)
+            await update.message.reply_text(card_text, parse_mode=ParseMode.HTML)
 
     await update.message.reply_text(
         _mw_summary_text(L, found, not_found, blocked),
