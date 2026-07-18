@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef } from "react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -362,14 +361,28 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
   // ── Current image for review ────────────────────────────────────────────────
   const cur = images[currentIdx]
 
+  if (!open) return null
+
   return (
-    <Dialog open={open} onOpenChange={o => { if (!o) { handleReset(); onClose() } }}>
-      <DialogContent className="w-[calc(100vw-1rem)] max-w-[860px] max-h-[94dvh] overflow-y-auto p-4 sm:p-6">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+    // Custom modal — NOT Radix Dialog — avoids iOS Safari event interception inside fixed modals
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: "0.5rem" }}
+      onClick={e => { if (e.target === e.currentTarget) { handleReset(); onClose() } }}
+    >
+      {/* Backdrop */}
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: -1 }} />
+
+      {/* Panel */}
+      <div style={{ background: "var(--background)", border: "1px solid var(--border)", borderRadius: "12px", width: "min(calc(100vw - 1rem), 860px)", maxHeight: "94dvh", overflowY: "auto", padding: "1rem", position: "relative" }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 600, fontSize: "1rem" }}>
             <Camera className="w-5 h-5" /> Thêm đơn hàng từ ảnh
-          </DialogTitle>
-        </DialogHeader>
+          </div>
+          <button onClick={() => { handleReset(); onClose() }} style={{ padding: "4px", borderRadius: "4px", cursor: "pointer", background: "none", border: "none", color: "var(--foreground)" }}>
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
         {/* ── STAGE: UPLOAD ─────────────────────────────────────────────────── */}
         {stage === "upload" && (
@@ -629,8 +642,8 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
             <Button className="w-full min-h-[44px]" onClick={() => { handleReset(); onClose() }}>Đóng</Button>
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   )
 }
 
