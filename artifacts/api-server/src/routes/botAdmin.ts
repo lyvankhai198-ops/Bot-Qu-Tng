@@ -548,6 +548,158 @@ router.post("/bot/orders/bulk", requireAuth, (req: any, res: any) => {
   res.json({ added, skipped, errors });
 });
 
+// ── POST /bot/orders/xlsx-import ─────────────────────────────────────────────
+// Receives pre-parsed, validated rows from the admin panel XLSX import dialog.
+router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
+  const { rows } = req.body ?? {};
+  if (!Array.isArray(rows) || rows.length === 0) {
+    res.status(400).json({ ok: false, message: "rows is required" }); return;
+  }
+
+  const orders: any     = readJson("orders", {}) ?? {};
+  const orderItems: any = readJson("order_items", {}) ?? {};
+
+  // Build global set of account emails already in the system
+  const existingItemEmails = new Set<string>();
+  for (const itemList of Object.values(orderItems) as any[][]) {
+    for (const it of itemList) {
+      const e = (it.email || it.original_account || "").toLowerCase().trim();
+      if (e) existingItemEmails.add(e);
+    }
+  }
+
+  const results: any[] = [];
+  let successCount = 0, failCount = 0, skippedCount = 0;
+  let accountsAdded = 0, dupOrders = 0, dupAccountsTotal = 0;
+
+  for (const row of rows) {
+    const {
+      rowIndex, orderCode, productNameMapped, quantity,
+      totalPrice, unitPrice, status, customerName, customerEmail,
+      purchaseDate, originalDeliveredAt, expiryDate, warrantyEndDate,
+      warrantyDays, usageDays, accounts,
+      conflictAction = "skip",
+    } = row;
+
+    try {
+      const orderId = String(orderCode || "").trim().toUpperCase();
+      if (!orderId) {
+        failCount++;
+        results.push({ rowIndex, status: "error", message: "Thiếu mã đơn" });
+        continue;
+      }
+
+      const existingOrder = orders[orderId];
+      if (existingOrder) {
+        dupOrders++;
+        if (conflictAction === "skip") {
+          skippedCount++;
+          results.push({ rowIndex, status: "skipped", message: "Mã đơn đã tồn tại, bỏ qua" });
+          continue;
+        }
+      }
+
+      const wd = Number(warrantyDays || 0);
+      const ud = Number(usageDays || 0);
+      const tp = Number(totalPrice || 0);
+      const up = Number(unitPrice || 0) || (tp && quantity > 1 ? Math.round(tp / quantity) : tp);
+
+      const orderObj: any = {
+        orderId,
+        email: customerEmail || "",
+        productName: productNameMapped || "",
+        price: up || null,
+        totalPrice: tp || null,
+        quantity: Number(quantity || 0) || 1,
+        purchaseDate: purchaseDate || null,
+        expiryDate: expiryDate || null,
+        warrantyExpiry: warrantyEndDate || null,
+        warrantyDays: wd || null,
+        usageDays: ud || null,
+        customerName: customerName || null,
+        status: status || "active",
+        createdAt: existingOrder?.createdAt ?? now(),
+        updatedAt: now(),
+      };
+
+      if (!existingOrder) {
+        orders[orderId] = orderObj;
+      } else if (conflictAction === "update") {
+        orders[orderId] = { ...existingOrder, ...orderObj };
+      }
+      // conflictAction === "add_missing" → keep existing order header untouched
+
+      if (!orderItems[orderId]) orderItems[orderId] = [];
+      let itemsAddedThisRow = 0, dupThisRow = 0;
+
+      if (Array.isArray(accounts)) {
+        const orderEmailSet = new Set(
+          (orderItems[orderId] as any[]).map((it: any) =>
+            (it.email || it.original_account || "").toLowerCase().trim()
+          )
+        );
+
+        for (const acc of accounts) {
+          const email: string = (acc.email || "").trim();
+          if (!email) continue;
+          const emailLower = email.toLowerCase();
+
+          if (existingOrder && conflictAction === "add_missing" && orderEmailSet.has(emailLower)) {
+            dupThisRow++; continue;
+          }
+          if (existingItemEmails.has(emailLower)) {
+            dupThisRow++; dupAccountsTotal++; continue;
+          }
+
+          const delAt = (originalDeliveredAt || purchaseDate || "").slice(0, 10) || now().slice(0, 10);
+          let warrantyEnd = (warrantyEndDate || "").slice(0, 10) || null;
+          if (!warrantyEnd && delAt && wd) {
+            try {
+              const d = new Date(delAt);
+              d.setDate(d.getDate() + wd);
+              warrantyEnd = d.toISOString().slice(0, 10);
+            } catch {}
+          }
+
+          orderItems[orderId].push({
+            itemId:                       crypto.randomUUID().slice(0, 8).toUpperCase(),
+            email,
+            original_account:             email,
+            current_account:              email,
+            current_replacement_number:   0,
+            original_delivered_at:        delAt,
+            warranty_days:                wd || null,
+            warranty_end_date:            warrantyEnd,
+            item_status:                  "active",
+            password:                     acc.password || null,
+            twoFA:                        acc.twoFA    || null,
+            status:                       "active",
+            createdAt:                    now(),
+          });
+          existingItemEmails.add(emailLower);
+          orderEmailSet.add(emailLower);
+          itemsAddedThisRow++;
+        }
+      }
+
+      orders[orderId].quantity = orderItems[orderId].length;
+      writeJson("orders", orders);
+      writeJson("order_items", orderItems);
+      addLog("XLSX_IMPORT_ORDER", orderId, "web-admin");
+
+      successCount++;
+      accountsAdded += itemsAddedThisRow;
+      results.push({ rowIndex, status: "ok", orderId, itemsAdded: itemsAddedThisRow, dupAccounts: dupThisRow });
+
+    } catch (err: any) {
+      failCount++;
+      results.push({ rowIndex, status: "error", message: String(err?.message ?? "Lỗi không xác định") });
+    }
+  }
+
+  res.json({ ok: true, success: successCount, failed: failCount, skipped: skippedCount, accountsAdded, dupOrders, dupAccounts: dupAccountsTotal, results });
+});
+
 // ── GET /bot/orders/:orderId ─────────────────────────────────────────────────
 router.get("/bot/orders/:orderId", requireAuth, (req: any, res: any) => {
   const orders: any = readJson("orders", {}) ?? {};
