@@ -17,8 +17,6 @@ import { Badge } from "@/components/ui/badge"
 import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link } from "lucide-react"
 import type { BotSettings, NotificationSettings } from "@workspace/api-client-react"
 
-const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? ""
-
 interface RequiredChannel {
   id: string
   name: string
@@ -27,20 +25,20 @@ interface RequiredChannel {
   enabled: boolean
 }
 
+function authHeader() {
+  return { Authorization: `Bearer ${localStorage.getItem("admin_token") ?? ""}` }
+}
+
 async function fetchChannels(): Promise<RequiredChannel[]> {
-  const token = localStorage.getItem("admin_token") ?? ""
-  const res = await fetch(`${BASE}/api/bot/required-channels`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  const res = await fetch("/api/bot/required-channels", { headers: authHeader() })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 async function saveChannels(channels: RequiredChannel[]): Promise<RequiredChannel[]> {
-  const token = localStorage.getItem("admin_token") ?? ""
-  const res = await fetch(`${BASE}/api/bot/required-channels`, {
+  const res = await fetch("/api/bot/required-channels", {
     method: "PUT",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { ...authHeader(), "Content-Type": "application/json" },
     body: JSON.stringify(channels),
   })
   if (!res.ok) throw new Error(await res.text())
