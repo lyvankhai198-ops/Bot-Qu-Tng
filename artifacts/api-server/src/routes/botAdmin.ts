@@ -378,7 +378,8 @@ async function sendTelegramMessage(userId: string, message: string): Promise<{ o
 }
 
 function buildReplacementMessage(req_: any, email: string, password: string, twoFA?: string, note?: string): string {
-  const userLang = readJson("user_states", {} as any)?.[req_.userId]?.lang ?? "vi";
+  // Use lang stored at warranty submission time (most reliable source)
+  const userLang = req_.userLang ?? readJson("user_states", {} as any)?.[req_.userId]?.lang ?? "vi";
   const isEN = userLang === "en";
   const lines: string[] = [];
   if (isEN) {

@@ -332,7 +332,8 @@ def get_warranty_requests() -> list:
     return load("warranty_requests", [])
 
 def add_warranty_request(user_id: int, username: str, first_name: str,
-                          order_id: str, email: str, description: str) -> str:
+                          order_id: str, email: str, description: str,
+                          user_lang: str = "vi") -> str:
     requests = load("warranty_requests", [])
     req = {
         "id": str(uuid.uuid4())[:12],
@@ -342,6 +343,7 @@ def add_warranty_request(user_id: int, username: str, first_name: str,
         "orderId": order_id,
         "email": email,
         "description": description,
+        "userLang": user_lang,
         "submittedAt": datetime.now().isoformat(),
         "status": "pending",
         "resolution": None,

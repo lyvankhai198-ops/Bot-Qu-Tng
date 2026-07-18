@@ -313,7 +313,7 @@ async def handle_report_issue_input(update: Update, context: ContextTypes.DEFAUL
     order = db.get_order(order_id) if order_id else None
     email = order.get("email", "") if order else ""
 
-    db.add_warranty_request(user.id, user.username, user.first_name, order_id, email, description)
+    db.add_warranty_request(user.id, user.username, user.first_name, order_id, email, description, L)
     db.add_log("WARRANTY_REQUEST", f"@{user.username} ({user.id}) | Order: {order_id}", "")
     db.clear_user_state(user.id, "conv_state")
     db.clear_user_state(user.id, "_report_order_id")
