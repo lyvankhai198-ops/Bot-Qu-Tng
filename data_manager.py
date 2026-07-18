@@ -359,10 +359,27 @@ def update_warranty_request(req_id: str, fields: dict) -> bool:
     for req in requests:
         if req.get("id") == req_id:
             req.update(fields)
-            req.setdefault("resolvedAt", datetime.now().isoformat())
             save("warranty_requests", requests)
             return True
     return False
+
+# ─── Notification settings ─────────────────────────────────────────────────
+
+_NOTIF_DEFAULTS = {
+    "enabled": True,
+    "adminIds": [],
+    "reminderEnabled": True,
+    "reminder1Minutes": 5,
+    "reminder2Minutes": 15,
+    "urgentMinutes": 30,
+}
+
+def get_notification_settings() -> dict:
+    stored = load("notification_settings", {})
+    return {**_NOTIF_DEFAULTS, **stored}
+
+def save_notification_settings(settings: dict) -> None:
+    save("notification_settings", settings)
 
 def get_warranty_request(req_id: str):
     for req in load("warranty_requests", []):

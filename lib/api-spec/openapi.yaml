@@ -542,6 +542,40 @@ paths:
               schema:
                 $ref: "#/components/schemas/ActionResult"
 
+  /bot/notification-settings:
+    get:
+      operationId: getNotificationSettings
+      tags: [bot]
+      summary: Get admin notification settings
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Notification settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+    put:
+      operationId: updateNotificationSettings
+      tags: [bot]
+      summary: Update admin notification settings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationSettings"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationSettings"
+
   /bot/warranty/{id}/resend:
     post:
       operationId: resendWarrantyReplacement
@@ -658,9 +692,31 @@ components:
           type: integer
         warrantyPending:
           type: integer
+        warrantyProcessing:
+          type: integer
         warrantyResolved:
           type: integer
         warrantyRejected:
+          type: integer
+        warrantyOverdue:
+          type: integer
+
+    NotificationSettings:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        adminIds:
+          type: array
+          items:
+            type: string
+        reminderEnabled:
+          type: boolean
+        reminder1Minutes:
+          type: integer
+        reminder2Minutes:
+          type: integer
+        urgentMinutes:
           type: integer
 
     BotSettings:

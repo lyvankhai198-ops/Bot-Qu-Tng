@@ -14,6 +14,8 @@ export interface BotStats {
   roundId: string;
   totalOrders: number;
   warrantyPending: number;
+  warrantyProcessing?: number;
   warrantyResolved: number;
   warrantyRejected: number;
+  warrantyOverdue?: number;
 }

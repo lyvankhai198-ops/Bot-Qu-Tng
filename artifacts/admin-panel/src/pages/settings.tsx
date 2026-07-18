@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from "react"
-import { useGetBotSettings, useUpdateBotSettings, useNewRound, getGetBotSettingsQueryKey } from "@workspace/api-client-react"
+import {
+  useGetBotSettings, useUpdateBotSettings, useNewRound, getGetBotSettingsQueryKey,
+  useGetNotificationSettings, useUpdateNotificationSettings, getGetNotificationSettingsQueryKey,
+} from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -10,8 +13,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Save, AlertTriangle, RefreshCcw } from "lucide-react"
-import type { BotSettings } from "@workspace/api-client-react"
+import { Badge } from "@/components/ui/badge"
+import { Save, AlertTriangle, RefreshCcw, Bell, BellOff, Plus, Trash2 } from "lucide-react"
+import type { BotSettings, NotificationSettings } from "@workspace/api-client-react"
 
 export default function Settings() {
   const queryClient = useQueryClient()
@@ -35,10 +39,27 @@ export default function Settings() {
     }
   })
 
+  const { data: notifData } = useGetNotificationSettings({ query: { queryKey: getGetNotificationSettingsQueryKey() } })
+  const updateNotif = useUpdateNotificationSettings({
+    mutation: {
+      onSuccess: (data) => {
+        queryClient.setQueryData(getGetNotificationSettingsQueryKey(), data)
+        toast({ title: "Thành công", description: "Đã lưu cài đặt thông báo" })
+      }
+    }
+  })
+
   const [form, setForm] = useState<Partial<BotSettings>>({})
   const [roundModalOpen, setRoundModalOpen] = useState(false)
   const [newRoundId, setNewRoundId] = useState("")
   const initialized = useRef(false)
+
+  const [notifForm, setNotifForm] = useState<Partial<NotificationSettings>>({
+    enabled: true, adminIds: [], reminderEnabled: true,
+    reminder1Minutes: 5, reminder2Minutes: 15, urgentMinutes: 30,
+  })
+  const [newAdminId, setNewAdminId] = useState("")
+  const notifInitialized = useRef(false)
 
   useEffect(() => {
     if (settings && !initialized.current) {
@@ -47,7 +68,32 @@ export default function Settings() {
     }
   }, [settings])
 
+  useEffect(() => {
+    if (notifData && !notifInitialized.current) {
+      setNotifForm(notifData)
+      notifInitialized.current = true
+    }
+  }, [notifData])
+
   const handleSave = () => updateSettings.mutate({ data: form })
+
+  const handleSaveNotif = () => updateNotif.mutate({ data: notifForm })
+
+  const addAdminId = () => {
+    const id = newAdminId.trim()
+    if (!id || !/^\d+$/.test(id)) {
+      toast({ title: "Lỗi", description: "Telegram ID chỉ gồm số", variant: "destructive" }); return
+    }
+    const existing = notifForm.adminIds ?? []
+    if (existing.includes(id)) {
+      toast({ title: "Đã tồn tại", description: `ID ${id} đã có trong danh sách`, variant: "destructive" }); return
+    }
+    setNotifForm({ ...notifForm, adminIds: [...existing, id] })
+    setNewAdminId("")
+  }
+
+  const removeAdminId = (id: string) =>
+    setNotifForm({ ...notifForm, adminIds: (notifForm.adminIds ?? []).filter(x => x !== id) })
 
   const handleNewRound = () => {
     if (!newRoundId.trim()) {
@@ -240,6 +286,128 @@ export default function Settings() {
           disabled={updateSettings.isPending}
         >
           {updateSettings.isPending ? "Đang lưu..." : <><Save className="w-4 h-4 mr-2" /> Lưu thay đổi</>}
+        </Button>
+      </div>
+
+      {/* ── Notification settings ───────────────────────────────────────────── */}
+      <div>
+        <h2 className="text-lg md:text-xl font-semibold tracking-tight flex items-center gap-2 mt-2 mb-4">
+          <Bell className="w-5 h-5 text-blue-500" /> Cài đặt thông báo bảo hành
+        </h2>
+        <p className="text-sm text-muted-foreground -mt-3 mb-4">Bot gửi thông báo Telegram đến Admin khi có yêu cầu bảo hành mới</p>
+      </div>
+
+      {/* Master toggle */}
+      <Card>
+        <CardContent className="p-4 md:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-base font-medium">Bật thông báo Admin</Label>
+              <p className="text-sm text-muted-foreground mt-1">Gửi Telegram ngay khi có yêu cầu bảo hành mới</p>
+            </div>
+            <Switch
+              checked={!!notifForm.enabled}
+              onCheckedChange={v => setNotifForm({ ...notifForm, enabled: v })}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Admin IDs */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Danh sách Admin nhận thông báo</CardTitle>
+          <CardDescription>Thêm Telegram ID của các Admin (dùng lệnh /myid trong bot để lấy ID)</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex gap-2">
+            <Input
+              className="min-h-[44px] flex-1"
+              placeholder="Nhập Telegram ID (ví dụ: 123456789)"
+              value={newAdminId}
+              onChange={e => setNewAdminId(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addAdminId()}
+              type="number"
+            />
+            <Button className="min-h-[44px] shrink-0" onClick={addAdminId} variant="outline">
+              <Plus className="w-4 h-4" />
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2 min-h-[28px]">
+            {(notifForm.adminIds ?? []).length === 0 ? (
+              <span className="text-sm text-muted-foreground">Chưa có Admin nào được cấu hình</span>
+            ) : (
+              (notifForm.adminIds ?? []).map(id => (
+                <Badge key={id} variant="secondary" className="flex items-center gap-1 px-3 py-1">
+                  {id}
+                  <button onClick={() => removeAdminId(id)} className="ml-1 hover:text-destructive transition-colors">
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </Badge>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Reminder settings */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Nhắc lại & Khẩn cấp</CardTitle>
+              <CardDescription className="mt-1">Bot tự động nhắc lại nếu Admin chưa xử lý sau một thời gian</CardDescription>
+            </div>
+            <Switch
+              checked={!!notifForm.reminderEnabled}
+              onCheckedChange={v => setNotifForm({ ...notifForm, reminderEnabled: v })}
+            />
+          </div>
+        </CardHeader>
+        {notifForm.reminderEnabled && (
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label className="flex items-center gap-1">⏰ Nhắc lần 1 (phút)</Label>
+                <Input
+                  type="number" min={1} max={60}
+                  className="min-h-[44px]"
+                  value={notifForm.reminder1Minutes ?? 5}
+                  onChange={e => setNotifForm({ ...notifForm, reminder1Minutes: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="flex items-center gap-1">⚠️ Nhắc lần 2 (phút)</Label>
+                <Input
+                  type="number" min={1} max={120}
+                  className="min-h-[44px]"
+                  value={notifForm.reminder2Minutes ?? 15}
+                  onChange={e => setNotifForm({ ...notifForm, reminder2Minutes: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="flex items-center gap-1">🚨 Khẩn cấp (phút)</Label>
+                <Input
+                  type="number" min={1} max={480}
+                  className="min-h-[44px]"
+                  value={notifForm.urgentMinutes ?? 30}
+                  onChange={e => setNotifForm({ ...notifForm, urgentMinutes: Number(e.target.value) })}
+                />
+              </div>
+            </div>
+          </CardContent>
+        )}
+      </Card>
+
+      {/* Save notification settings */}
+      <div className="pb-4">
+        <Button
+          size="lg"
+          className="w-full sm:w-auto min-h-[48px] px-8 bg-blue-600 hover:bg-blue-700"
+          onClick={handleSaveNotif}
+          disabled={updateNotif.isPending}
+        >
+          {updateNotif.isPending ? "Đang lưu..." : <><Bell className="w-4 h-4 mr-2" /> Lưu cài đặt thông báo</>}
         </Button>
       </div>
 

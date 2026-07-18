@@ -26,6 +26,7 @@ export * from './logEntry';
 export * from './loginInput';
 export * from './loginResult';
 export * from './newRoundInput';
+export * from './notificationSettings';
 export * from './order';
 export * from './orderInput';
 export * from './warrantyRefundInput';

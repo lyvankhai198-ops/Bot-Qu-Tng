@@ -117,6 +117,10 @@ router.get("/bot/stats", requireAuth, (_req: any, res: any) => {
   const roundClaims = claimed[s.round_id] ?? {};
   const stock = accounts.filter((a: any) => a.status === "available").length;
 
+  const ns: any = readJson("notification_settings", {}) ?? {};
+  const urgentMinutes: number = ns.urgentMinutes ?? 30;
+  const nowMs = Date.now();
+
   res.json({
     totalUsers: Object.keys(users).length,
     stock,
@@ -124,10 +128,33 @@ router.get("/bot/stats", requireAuth, (_req: any, res: any) => {
     banned: banned.length,
     roundId: s.round_id,
     totalOrders: Object.keys(orders).length,
-    warrantyPending: warranty.filter((w: any) => w.status === "pending").length,
-    warrantyResolved: warranty.filter((w: any) => w.status === "resolved").length,
-    warrantyRejected: warranty.filter((w: any) => w.status === "rejected").length,
+    warrantyPending:    warranty.filter((w: any) => w.status === "pending").length,
+    warrantyProcessing: warranty.filter((w: any) => w.status === "processing").length,
+    warrantyResolved:   warranty.filter((w: any) => ["resolved", "send_failed"].includes(w.status)).length,
+    warrantyRejected:   warranty.filter((w: any) => w.status === "rejected").length,
+    warrantyOverdue:    warranty.filter((w: any) => {
+      if (!["pending", "processing"].includes(w.status)) return false;
+      if (w.acknowledgedAt) return false;
+      const elapsed = (nowMs - new Date(w.submittedAt).getTime()) / 60000;
+      return elapsed > urgentMinutes;
+    }).length,
   });
+});
+
+// ── GET /bot/notification-settings ──────────────────────────────────────────
+router.get("/bot/notification-settings", requireAuth, (_req: any, res: any) => {
+  const defaults = { enabled: true, adminIds: [] as string[], reminderEnabled: true, reminder1Minutes: 5, reminder2Minutes: 15, urgentMinutes: 30 };
+  const stored = readJson("notification_settings", {}) ?? {};
+  res.json({ ...defaults, ...stored });
+});
+
+// ── PUT /bot/notification-settings ──────────────────────────────────────────
+router.put("/bot/notification-settings", requireAuth, (req: any, res: any) => {
+  const current = readJson("notification_settings", {}) ?? {};
+  const updated = { ...current, ...req.body };
+  writeJson("notification_settings", updated);
+  addLog("NOTIF_SETTINGS_UPDATE", JSON.stringify(updated).slice(0, 120), "web-admin");
+  res.json(updated);
 });
 
 // ── GET /bot/settings ───────────────────────────────────────────────────────

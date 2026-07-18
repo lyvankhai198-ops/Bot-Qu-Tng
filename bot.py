@@ -313,7 +313,7 @@ async def handle_report_issue_input(update: Update, context: ContextTypes.DEFAUL
     order = db.get_order(order_id) if order_id else None
     email = order.get("email", "") if order else ""
 
-    db.add_warranty_request(user.id, user.username, user.first_name, order_id, email, description, L)
+    req_id = db.add_warranty_request(user.id, user.username, user.first_name, order_id, email, description, L)
     db.add_log("WARRANTY_REQUEST", f"@{user.username} ({user.id}) | Order: {order_id}", "")
     db.clear_user_state(user.id, "conv_state")
     db.clear_user_state(user.id, "_report_order_id")
@@ -323,6 +323,11 @@ async def handle_report_issue_input(update: Update, context: ContextTypes.DEFAUL
         parse_mode=ParseMode.HTML,
         reply_markup=main_keyboard(user.id),
     )
+
+    # Notify admins in background (non-blocking)
+    req = db.get_warranty_request(req_id)
+    if req:
+        Thread(target=_notify_admins_warranty, args=(req, order), daemon=True).start()
 
 # ─── Inline callbacks ─────────────────────────────────────────────────────────
 
@@ -463,6 +468,199 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         else:
             await update.message.reply_text(t(L, "unknown_cmd"), reply_markup=main_keyboard(user.id))
 
+# ─── Admin warranty notification system ──────────────────────────────────────
+
+ADMIN_PANEL_URL = os.environ.get("ADMIN_PANEL_URL", "http://103.180.138.203/admin-panel/#/warranty")
+
+def _get_all_admin_ids(ns: dict | None = None) -> list:
+    if ns is None:
+        ns = db.get_notification_settings()
+    ids: set = set()
+    if ADMIN_ID:
+        ids.add(ADMIN_ID)
+    for aid in ns.get("adminIds", []):
+        try:
+            ids.add(int(str(aid).strip()))
+        except Exception:
+            pass
+    return list(ids)
+
+def _warranty_admin_markup(req_id: str) -> dict:
+    return {
+        "inline_keyboard": [[
+            {"text": "📋 Mở trang bảo hành", "url": ADMIN_PANEL_URL},
+            {"text": "✅ Đang xử lý", "callback_data": f"warranty_ack:{req_id}"},
+        ]]
+    }
+
+def _tg_send_markup(token: str, chat_id: int, text: str, markup: dict | None = None, max_retries: int = 3) -> bool:
+    """Send message with optional inline keyboard; retries up to max_retries times."""
+    payload: dict = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if markup:
+        payload["reply_markup"] = markup
+    for attempt in range(max_retries):
+        try:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            data = _json.dumps(payload).encode()
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception as e:
+            logger.warning(f"TG send markup attempt {attempt+1} failed for chat {chat_id}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(1)
+    db.add_log("NOTIF_SEND_FAIL", f"chat_id={chat_id}", "bot")
+    return False
+
+def _build_warranty_notif_msg(req: dict, order: dict | None, tag: str = "🔔", urgency: str = "") -> str:
+    order_id    = req.get("orderId", "N/A")
+    email       = req.get("email", "N/A")
+    description = req.get("description", "")
+    username    = req.get("username", "")
+    user_id     = req.get("userId", "")
+    submitted   = req.get("submittedAt", "")
+    try:
+        ts = datetime.fromisoformat(submitted).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        ts = submitted
+
+    product_name  = ""
+    purchase_date = ""
+    if order:
+        product_name  = order.get("productName") or order.get("type") or ""
+        pd            = order.get("purchasedAt", "")
+        purchase_date = pd[:10] if pd else ""
+
+    lines = [f"{tag} <b>YÊU CẦU BẢO HÀNH MỚI{urgency}</b>\n"]
+    lines.append(f"📦 Mã đơn: <code>{order_id}</code>")
+    lines.append(f"📧 Email: <code>{email}</code>")
+    if product_name:
+        lines.append(f"🛍 Sản phẩm: <b>{product_name}</b>")
+    if purchase_date:
+        lines.append(f"📅 Ngày mua: {purchase_date}")
+    if username:
+        lines.append(f"👤 Khách: @{username} ({user_id})")
+    lines.append(f"\n📝 Nội dung lỗi:\n<i>{description}</i>")
+    lines.append(f"\n🕐 Thời gian: {ts}")
+    return "\n".join(lines)
+
+def _notify_admins_warranty(req: dict, order: dict | None = None) -> None:
+    """Background thread: notify all admins of a new warranty request."""
+    try:
+        ns = db.get_notification_settings()
+        if not ns.get("enabled"):
+            return
+        admin_ids = _get_all_admin_ids(ns)
+        if not admin_ids:
+            logger.warning("WARRANTY NOTIFY: no admin IDs configured")
+            return
+
+        msg    = _build_warranty_notif_msg(req, order)
+        markup = _warranty_admin_markup(req.get("id", ""))
+        for aid in admin_ids:
+            _tg_send_markup(TOKEN, aid, msg, markup)
+
+        db.update_warranty_request(req["id"], {"notifiedAt": datetime.now().isoformat()})
+        logger.info(f"Warranty notification sent for {req['id']} to {admin_ids}")
+    except Exception as e:
+        logger.error(f"_notify_admins_warranty error: {e}")
+        db.add_log("WARRANTY_NOTIFY_ERROR", str(e), "bot")
+
+def warranty_reminder_worker() -> None:
+    """Background thread: sends reminder/urgent notifications for unacknowledged warranty requests."""
+    while True:
+        time.sleep(60)
+        try:
+            ns = db.get_notification_settings()
+            if not ns.get("enabled") or not ns.get("reminderEnabled"):
+                continue
+            admin_ids = _get_all_admin_ids(ns)
+            if not admin_ids:
+                continue
+
+            r1_min  = int(ns.get("reminder1Minutes", 5))
+            r2_min  = int(ns.get("reminder2Minutes", 15))
+            urg_min = int(ns.get("urgentMinutes", 30))
+            now_dt  = datetime.now()
+
+            for req in db.get_warranty_requests():
+                if req.get("status") not in ("pending",):
+                    continue
+                if req.get("acknowledgedAt"):
+                    continue
+                submitted = req.get("submittedAt", "")
+                try:
+                    submitted_dt = datetime.fromisoformat(submitted)
+                except Exception:
+                    continue
+                elapsed = (now_dt - submitted_dt).total_seconds() / 60
+                req_id = req.get("id", "")
+                order  = db.get_order(req.get("orderId", ""))
+
+                if elapsed >= r1_min and not req.get("reminder1SentAt"):
+                    msg = _build_warranty_notif_msg(req, order, "⏰", " — NHẮC LẦN 1")
+                    for aid in admin_ids:
+                        _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
+                    db.update_warranty_request(req_id, {"reminder1SentAt": now_dt.isoformat()})
+                    db.add_log("WARRANTY_REMINDER1", req_id, "bot")
+
+                if elapsed >= r2_min and not req.get("reminder2SentAt"):
+                    msg = _build_warranty_notif_msg(req, order, "⚠️", " — NHẮC LẦN 2")
+                    for aid in admin_ids:
+                        _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
+                    db.update_warranty_request(req_id, {"reminder2SentAt": now_dt.isoformat()})
+                    db.add_log("WARRANTY_REMINDER2", req_id, "bot")
+
+                if elapsed >= urg_min and not req.get("urgentSentAt"):
+                    msg = _build_warranty_notif_msg(req, order, "🚨", " — KHẨN CẤP!")
+                    for aid in admin_ids:
+                        _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
+                    db.update_warranty_request(req_id, {"urgentSentAt": now_dt.isoformat()})
+                    db.add_log("WARRANTY_URGENT", req_id, "bot")
+
+        except Exception as e:
+            logger.error(f"warranty_reminder_worker error: {e}")
+
+async def callback_warranty_ack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin taps '✅ Đang xử lý' button in notification message."""
+    query = update.callback_query
+    user  = update.effective_user
+    await query.answer()
+
+    ns        = db.get_notification_settings()
+    admin_ids = _get_all_admin_ids(ns)
+    if user.id not in admin_ids:
+        await query.answer("Bạn không có quyền thực hiện thao tác này.", show_alert=True)
+        return
+
+    req_id = query.data.split(":", 1)[1] if ":" in query.data else ""
+    req    = db.get_warranty_request(req_id)
+    if not req:
+        await query.answer("Không tìm thấy yêu cầu này.", show_alert=True)
+        return
+    if req.get("acknowledgedAt"):
+        await query.answer("Yêu cầu này đã được nhận xử lý rồi.", show_alert=True)
+        return
+
+    db.update_warranty_request(req_id, {
+        "status": "processing",
+        "acknowledgedAt": datetime.now().isoformat(),
+        "acknowledgedBy": str(user.id),
+    })
+    db.add_log("WARRANTY_ACK", f"{req_id} by @{user.username or user.id}", "bot")
+
+    admin_name = f"@{user.username}" if user.username else user.first_name
+    try:
+        original = query.message.text or ""
+        await query.edit_message_text(
+            original + f"\n\n✅ <b>Đã nhận xử lý bởi {admin_name}</b>",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+    await query.answer("✅ Đã đánh dấu đang xử lý!", show_alert=False)
+
 # ─── Broadcast worker ─────────────────────────────────────────────────────────
 
 def _tg_send(token: str, chat_id: int, text: str) -> bool:
@@ -543,11 +741,15 @@ def main():
     Thread(target=broadcast_worker, daemon=True).start()
     logger.info("Broadcast worker started.")
 
+    Thread(target=warranty_reminder_worker, daemon=True).start()
+    logger.info("Warranty reminder worker started.")
+
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("myid", cmd_myid))
-    app.add_handler(CallbackQueryHandler(callback_lang,  pattern=r"^lang:"))
-    app.add_handler(CallbackQueryHandler(callback_order, pattern=r"^order:"))
+    app.add_handler(CallbackQueryHandler(callback_lang,          pattern=r"^lang:"))
+    app.add_handler(CallbackQueryHandler(callback_order,         pattern=r"^order:"))
+    app.add_handler(CallbackQueryHandler(callback_warranty_ack,  pattern=r"^warranty_ack:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
 
     logger.info("Bot is polling...")

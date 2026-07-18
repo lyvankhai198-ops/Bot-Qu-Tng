@@ -1,6 +1,6 @@
 import { useGetBotStats, useGetBotSettings, useHealthCheck, useGetBotLogs, getGetBotLogsQueryKey } from "@workspace/api-client-react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Users, Package, Gift, Ban, ShoppingCart, ShieldAlert, Activity, ShieldCheck, ShieldX, ServerCrash, Clock, User } from "lucide-react"
+import { Users, Package, Gift, Ban, ShoppingCart, ShieldAlert, Activity, ShieldCheck, ShieldX, ServerCrash, Clock, User, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { format } from "date-fns"
 
@@ -11,12 +11,14 @@ export default function Dashboard() {
   const { data: logs, isLoading: logsLoading } = useGetBotLogs({ limit: 10 })
 
   const statCards = [
-    { title: "Tổng người dùng", value: stats?.totalUsers, icon: Users, color: "text-blue-500" },
-    { title: "Kho tài khoản", value: stats?.stock, icon: Package, color: "text-green-500" },
-    { title: "Đã phát", value: stats?.claimed, icon: Gift, color: "text-purple-500" },
-    { title: "Đã cấm", value: stats?.banned, icon: Ban, color: "text-red-500" },
-    { title: "Tổng đơn hàng", value: stats?.totalOrders, icon: ShoppingCart, color: "text-orange-500" },
-    { title: "Yêu cầu bảo hành", value: stats?.warrantyPending, icon: ShieldAlert, color: "text-yellow-500" },
+    { title: "Tổng người dùng",    value: stats?.totalUsers,  icon: Users,        color: "text-blue-500"   },
+    { title: "Kho tài khoản",      value: stats?.stock,       icon: Package,      color: "text-green-500"  },
+    { title: "Đã phát",            value: stats?.claimed,     icon: Gift,         color: "text-purple-500" },
+    { title: "Đã cấm",             value: stats?.banned,      icon: Ban,          color: "text-red-500"    },
+    { title: "Tổng đơn hàng",      value: stats?.totalOrders, icon: ShoppingCart, color: "text-orange-500" },
+    { title: "BH chờ xử lý",       value: stats?.warrantyPending,    icon: ShieldAlert,  color: "text-yellow-500", badge: stats?.warrantyOverdue ? { label: `${stats.warrantyOverdue} quá hạn`, cls: "bg-red-600 text-white" } : null },
+    { title: "BH đang xử lý",      value: stats?.warrantyProcessing, icon: Loader2,      color: "text-blue-400"   },
+    { title: "BH đã giải quyết",   value: stats?.warrantyResolved,   icon: ShieldCheck,  color: "text-green-500"  },
   ]
 
   return (
@@ -33,19 +35,24 @@ export default function Dashboard() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {statCards.map((card, i) => (
-          <Card key={i}>
+          <Card key={i} className={(card as any).badge ? "border-red-500/40 bg-red-500/5" : ""}>
             <CardContent className="p-6 flex items-center justify-between">
-              <div>
+              <div className="min-w-0">
                 <p className="text-sm font-medium text-muted-foreground mb-1">{card.title}</p>
                 {statsLoading ? (
                   <div className="h-8 w-16 bg-muted animate-pulse rounded" />
                 ) : (
-                  <h3 className="text-3xl font-bold">{card.value?.toLocaleString() || 0}</h3>
+                  <h3 className="text-3xl font-bold">{card.value?.toLocaleString() ?? 0}</h3>
+                )}
+                {(card as any).badge && !statsLoading && (
+                  <span className={`mt-1 inline-block text-xs font-medium px-2 py-0.5 rounded-full ${(card as any).badge.cls}`}>
+                    {(card as any).badge.label}
+                  </span>
                 )}
               </div>
-              <div className={`p-4 rounded-xl bg-muted/50 ${card.color}`}>
+              <div className={`p-4 rounded-xl bg-muted/50 ${card.color} shrink-0`}>
                 <card.icon className="w-6 h-6" />
               </div>
             </CardContent>

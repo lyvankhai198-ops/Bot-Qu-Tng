@@ -25,8 +25,19 @@ export interface BotStats {
   roundId: string;
   totalOrders: number;
   warrantyPending: number;
+  warrantyProcessing?: number;
   warrantyResolved: number;
   warrantyRejected: number;
+  warrantyOverdue?: number;
+}
+
+export interface NotificationSettings {
+  enabled?: boolean;
+  adminIds?: string[];
+  reminderEnabled?: boolean;
+  reminder1Minutes?: number;
+  reminder2Minutes?: number;
+  urgentMinutes?: number;
 }
 
 export interface BotSettings {

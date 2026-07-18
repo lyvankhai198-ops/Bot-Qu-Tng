@@ -39,8 +39,10 @@ export const GetBotStatsResponse = zod.object({
   "roundId": zod.string(),
   "totalOrders": zod.number(),
   "warrantyPending": zod.number(),
+  "warrantyProcessing": zod.number().optional(),
   "warrantyResolved": zod.number(),
-  "warrantyRejected": zod.number()
+  "warrantyRejected": zod.number(),
+  "warrantyOverdue": zod.number().optional()
 })
 
 
@@ -483,6 +485,41 @@ export const ResolveWarrantyRejectBody = zod.object({
 export const ResolveWarrantyRejectResponse = zod.object({
   "ok": zod.boolean(),
   "message": zod.string()
+})
+
+
+/**
+ * @summary Get admin notification settings
+ */
+export const GetNotificationSettingsResponse = zod.object({
+  "enabled": zod.boolean().optional(),
+  "adminIds": zod.array(zod.string()).optional(),
+  "reminderEnabled": zod.boolean().optional(),
+  "reminder1Minutes": zod.number().optional(),
+  "reminder2Minutes": zod.number().optional(),
+  "urgentMinutes": zod.number().optional()
+})
+
+
+/**
+ * @summary Update admin notification settings
+ */
+export const UpdateNotificationSettingsBody = zod.object({
+  "enabled": zod.boolean().optional(),
+  "adminIds": zod.array(zod.string()).optional(),
+  "reminderEnabled": zod.boolean().optional(),
+  "reminder1Minutes": zod.number().optional(),
+  "reminder2Minutes": zod.number().optional(),
+  "urgentMinutes": zod.number().optional()
+})
+
+export const UpdateNotificationSettingsResponse = zod.object({
+  "enabled": zod.boolean().optional(),
+  "adminIds": zod.array(zod.string()).optional(),
+  "reminderEnabled": zod.boolean().optional(),
+  "reminder1Minutes": zod.number().optional(),
+  "reminder2Minutes": zod.number().optional(),
+  "urgentMinutes": zod.number().optional()
 })
 
 

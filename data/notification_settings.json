@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "adminIds": [],
+  "reminderEnabled": true,
+  "reminder1Minutes": 5,
+  "reminder2Minutes": 15,
+  "urgentMinutes": 30
+}
