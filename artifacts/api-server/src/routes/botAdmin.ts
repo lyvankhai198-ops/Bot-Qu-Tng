@@ -458,19 +458,21 @@ router.post("/bot/warranty/:id/replacement", requireAuth, async (req: any, res: 
   const message = buildReplacementMessage(req_, email, password, twoFA, note);
   const result = await sendTelegramMessage(req_.userId, message);
 
+  // Update order status regardless of send outcome
+  const orders: any = readJson("orders", {}) ?? {};
+  if (req_.orderId && orders[req_.orderId]) { orders[req_.orderId].status = "warranted"; writeJson("orders", orders); }
+
   if (result.ok) {
     requests[idx] = { ...req_, ...replacementData, status: "resolved", resolution: `replacement:${email}`, sentStatus: "sent", sentAt: now(), sentError: null };
     writeJson("warranty_requests", requests);
-    // Update order status
-    const orders: any = readJson("orders", {}) ?? {};
-    if (req_.orderId && orders[req_.orderId]) { orders[req_.orderId].status = "warranted"; writeJson("orders", orders); }
     addLog("WARRANTY_REPLACEMENT", `${id} → ${email} | sent OK`, "web-admin");
-    res.json({ ok: true, message: "Đã gửi tài khoản thay thế cho khách" });
+    res.json({ ok: true, sentStatus: "sent", message: "Đã gửi tài khoản thay thế cho khách" });
   } else {
     requests[idx] = { ...req_, ...replacementData, status: "send_failed", resolution: `replacement:${email}`, sentStatus: "failed", sentError: result.error, sentAt: null };
     writeJson("warranty_requests", requests);
     addLog("WARRANTY_REPLACEMENT_FAIL", `${id} → ${email} | ${result.error}`, "web-admin");
-    res.status(500).json({ ok: false, message: `Lưu thành công nhưng gửi Telegram thất bại: ${result.error}` });
+    // Return 200 so admin panel shows the resend button instead of a generic error
+    res.json({ ok: false, sentStatus: "failed", message: `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
   }
 });
 
@@ -499,14 +501,14 @@ router.post("/bot/warranty/:id/resend", requireAuth, async (req: any, res: any) 
 });
 
 // ── POST /bot/warranty/:id/refund ────────────────────────────────────────────
-router.post("/bot/warranty/:id/refund", requireAuth, (req: any, res: any) => {
+router.post("/bot/warranty/:id/refund", requireAuth, async (req: any, res: any) => {
   const { id } = req.params;
   const { amount, note } = req.body ?? {};
   const requests: any[] = readJson("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r: any) => r.id === id);
   if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
   const req_ = requests[idx];
-  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: now() };
+  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: now(), resolvedBy: "web-admin" };
   writeJson("warranty_requests", requests);
   const orders: any = readJson("orders", {}) ?? {};
   if (req_.orderId && orders[req_.orderId]) {
@@ -514,13 +516,13 @@ router.post("/bot/warranty/:id/refund", requireAuth, (req: any, res: any) => {
     writeJson("orders", orders);
   }
   const msg = `💰 <b>Yêu cầu hoàn tiền đã được chấp nhận!</b>\n\nSố tiền hoàn: <b>${Number(amount).toLocaleString("vi")}đ</b>${note ? `\n\n📝 Ghi chú: ${note}` : ""}`;
-  queueDirectMessage(req_.userId, msg);
+  await sendTelegramMessage(req_.userId, msg);
   addLog("WARRANTY_REFUND", `${id} → ${amount}đ`, "web-admin");
   res.json({ ok: true, message: "Đã xử lý hoàn tiền" });
 });
 
 // ── POST /bot/warranty/:id/reject ────────────────────────────────────────────
-router.post("/bot/warranty/:id/reject", requireAuth, (req: any, res: any) => {
+router.post("/bot/warranty/:id/reject", requireAuth, async (req: any, res: any) => {
   const { id } = req.params;
   const { reason } = req.body ?? {};
   if (!reason) { res.status(400).json({ ok: false, message: "Lý do là bắt buộc" }); return; }
@@ -528,10 +530,10 @@ router.post("/bot/warranty/:id/reject", requireAuth, (req: any, res: any) => {
   const idx = requests.findIndex((r: any) => r.id === id);
   if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
   const req_ = requests[idx];
-  requests[idx] = { ...req_, status: "rejected", resolution: `reject:${reason}`, resolvedAt: now() };
+  requests[idx] = { ...req_, status: "rejected", resolution: `reject:${reason}`, resolvedAt: now(), resolvedBy: "web-admin" };
   writeJson("warranty_requests", requests);
   const msg = `❌ <b>Yêu cầu bảo hành không được chấp nhận.</b>\n\nLý do: ${reason}`;
-  queueDirectMessage(req_.userId, msg);
+  await sendTelegramMessage(req_.userId, msg);
   addLog("WARRANTY_REJECT", `${id}: ${reason}`, "web-admin");
   res.json({ ok: true, message: "Đã từ chối" });
 });
