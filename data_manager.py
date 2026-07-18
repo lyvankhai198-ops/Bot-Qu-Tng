@@ -4,6 +4,7 @@ All JSON files live in DATA_DIR (default: ./data/)
 """
 import json
 import os
+import re
 import shutil
 import uuid
 from datetime import datetime, date
