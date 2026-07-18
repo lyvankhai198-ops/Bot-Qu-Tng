@@ -241,6 +241,8 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
 
         if (!result?.success || !result.extracted) {
           draft.ocrError = result?.error || "Không đọc được thông tin từ ảnh"
+          // Đánh dấu tất cả trường bắt buộc là low để hiển thị highlight
+          draft.confidence = { email: "low", productName: "low", price: "low", purchaseDate: "low", warrantyDays: "low" }
           return draft
         }
 
@@ -319,8 +321,8 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
     let added = 0, updated = 0, skipped = 0, errors = 0
 
     for (const draft of drafts) {
-      if (draft.dupStatus === "skip")                            { skipped++; continue }
-      if (!draft.ocrSuccess || !draft.email || !draft.productName) { errors++;  continue }
+      if (draft.dupStatus === "skip")                { skipped++; continue }
+      if (!isDraftValid(draft))                      { errors++;  continue }
 
       const wdays  = parseInt(draft.warrantyDays) || 0
       const expiry = calcExpiry(draft.purchaseDate, wdays)
@@ -379,8 +381,32 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
   if (!open) return null
 
   const cur        = drafts[curIdx]
-  const validCount = drafts.filter(d => d.ocrSuccess && d.email && d.dupStatus !== "skip").length
+
+  /** Một đơn hợp lệ phải có đủ: email + sản phẩm + giá + ngày mua + bảo hành */
+  function isDraftValid(d: OrderDraft): boolean {
+    if (!d.ocrSuccess)        return false
+    if (d.dupStatus === "skip") return false
+    if (!d.email)             return false
+    if (!d.productName)       return false
+    if (!d.price || parseInt(d.price) <= 0) return false
+    if (!d.purchaseDate)      return false
+    if (!d.warrantyDays || parseInt(d.warrantyDays) <= 0) return false
+    return true
+  }
+
+  const validCount = drafts.filter(isDraftValid).length
   const expiry     = cur ? calcExpiry(cur.purchaseDate, parseInt(cur.warrantyDays) || 0) : ""
+
+  // Danh sách trường còn thiếu của đơn hiện tại (để hiển thị cảnh báo)
+  function missingFields(d: OrderDraft): string[] {
+    const missing: string[] = []
+    if (!d.email)                            missing.push("Email/tài khoản")
+    if (!d.productName)                      missing.push("Sản phẩm")
+    if (!d.price || parseInt(d.price) <= 0)  missing.push("Giá bán")
+    if (!d.purchaseDate)                     missing.push("Ngày mua")
+    if (!d.warrantyDays || parseInt(d.warrantyDays) <= 0) missing.push("Số ngày bảo hành")
+    return missing
+  }
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "0.5rem", overflowY: "auto" }}>
@@ -483,7 +509,12 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
                 <div className="text-center">
-                  <p className="text-sm font-medium">Ảnh {curIdx + 1} / {drafts.length}</p>
+                  <p className="text-sm font-medium">
+                    Ảnh {curIdx + 1} / {drafts.length}
+                    {!isDraftValid(cur) && cur.dupStatus !== "skip" && (
+                      <span className="ml-1.5 text-yellow-600 text-xs">⚠ thiếu trường</span>
+                    )}
+                  </p>
                   <p className="text-xs text-muted-foreground truncate max-w-40">{cur.fileItem.file.name}</p>
                 </div>
                 <Button variant="outline" size="sm" disabled={curIdx === drafts.length - 1} onClick={() => setCurIdx(i => i + 1)}>
@@ -530,13 +561,40 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
 
               {/* Right: edit form */}
               <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-                <F label="Email / Tài khoản *" value={cur.email}         onChange={v => setField(curIdx, "email", v)}         confidence={cur.confidence.email} />
-                <F label="Mật khẩu"            value={cur.password}      onChange={v => setField(curIdx, "password", v)}      type="password" confidence={cur.confidence.password} />
-                <F label="Mã 2FA"              value={cur.twoFA}         onChange={v => setField(curIdx, "twoFA", v)}         confidence={cur.confidence.twoFA} />
-                <F label="Sản phẩm *"          value={cur.productName}   onChange={v => setField(curIdx, "productName", v)}   list={productNames} confidence={cur.confidence.productName} />
-                <F label="Giá bán (VNĐ)"       value={cur.price}         onChange={v => setField(curIdx, "price", v)}         type="number" confidence={cur.confidence.price} />
-                <F label="Khách hàng"          value={cur.customerName}  onChange={v => setField(curIdx, "customerName", v)}  confidence={cur.confidence.customerName} />
-                <F label="Ngày mua"            value={cur.purchaseDate}  onChange={v => setField(curIdx, "purchaseDate", v)}  type="date" confidence={cur.confidence.purchaseDate} />
+                <F label="Email / Tài khoản *" value={cur.email}        onChange={v => setField(curIdx, "email", v)}        confidence={cur.confidence.email} required={!cur.email} />
+                <F label="Mật khẩu"            value={cur.password}     onChange={v => setField(curIdx, "password", v)}     type="password" confidence={cur.confidence.password} />
+                <F label="Mã 2FA"              value={cur.twoFA}        onChange={v => setField(curIdx, "twoFA", v)}        confidence={cur.confidence.twoFA} />
+                <F label="Sản phẩm *"          value={cur.productName}  onChange={v => setField(curIdx, "productName", v)}  list={productNames} confidence={cur.confidence.productName} required={!cur.productName} />
+                <F label="Giá bán (VNĐ) *"     value={cur.price}        onChange={v => setField(curIdx, "price", v)}        type="number" confidence={cur.confidence.price} required={!cur.price || parseInt(cur.price) <= 0} />
+                <F label="Khách hàng"          value={cur.customerName} onChange={v => setField(curIdx, "customerName", v)} confidence={cur.confidence.customerName} />
+
+                {/* Ngày mua — bắt buộc, highlight đỏ khi trống */}
+                <div className="grid gap-1">
+                  <Label className="text-xs flex items-center gap-1">
+                    Ngày mua *
+                    {(!cur.purchaseDate && cur.ocrSuccess) && (
+                      <span title="OCR không đọc được ngày" style={{ fontSize: 10, color: "#b45309" }}>●</span>
+                    )}
+                  </Label>
+                  <Input
+                    type="date"
+                    value={cur.purchaseDate}
+                    onChange={e => setField(curIdx, "purchaseDate", e.target.value)}
+                    className={`h-9 text-sm transition-colors ${
+                      !cur.purchaseDate
+                        ? "border-red-400 bg-red-50 dark:bg-red-950/20 focus:border-red-500"
+                        : (cur.confidence.purchaseDate === "low" || cur.confidence.purchaseDate === "medium")
+                          ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20"
+                          : ""
+                    }`}
+                  />
+                  {!cur.purchaseDate && cur.ocrSuccess && (
+                    <p className="text-xs text-red-600 dark:text-red-400 px-0.5">
+                      Vui lòng nhập ngày mua để hệ thống tính bảo hành.
+                    </p>
+                  )}
+                </div>
+
                 <div className="grid gap-1">
                   <Label className="text-xs">Trạng thái</Label>
                   <Select value={cur.status} onValueChange={v => setField(curIdx, "status", v)}>
@@ -550,23 +608,51 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
                     </SelectContent>
                   </Select>
                 </div>
-                <F label="Số ngày bảo hành"  value={cur.warrantyDays}  onChange={v => setField(curIdx, "warrantyDays", v)} type="number" confidence={cur.confidence.warrantyDays} />
-                {expiry && <p className="text-xs text-muted-foreground px-0.5">Hết bảo hành: {fmtDate(expiry)}</p>}
-                <F label="Phương thức TT"    value={cur.paymentMethod} onChange={v => setField(curIdx, "paymentMethod", v)} confidence={cur.confidence.paymentMethod} />
-                <F label="Ghi chú"           value={cur.notes}         onChange={v => setField(curIdx, "notes", v)} />
+
+                <F label="Số ngày bảo hành *" value={cur.warrantyDays} onChange={v => setField(curIdx, "warrantyDays", v)} type="number" confidence={cur.confidence.warrantyDays} required={!cur.warrantyDays || parseInt(cur.warrantyDays) <= 0} />
+
+                {/* Ngày hết bảo hành — tự tính */}
+                {expiry ? (
+                  <div className="rounded-lg bg-muted/50 border border-border px-3 py-2">
+                    <p className="text-xs text-muted-foreground">Ngày hết bảo hành</p>
+                    <p className="text-sm font-semibold">{fmtDate(expiry)}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {fmtDate(cur.purchaseDate)} + {cur.warrantyDays} ngày
+                    </p>
+                  </div>
+                ) : (cur.purchaseDate && parseInt(cur.warrantyDays) <= 0) ? (
+                  <p className="text-xs text-muted-foreground px-0.5">Nhập số ngày bảo hành để tính ngày hết hạn</p>
+                ) : null}
+
+                <F label="Phương thức TT"     value={cur.paymentMethod} onChange={v => setField(curIdx, "paymentMethod", v)} confidence={cur.confidence.paymentMethod} />
+                <F label="Ghi chú"            value={cur.notes}         onChange={v => setField(curIdx, "notes", v)} />
               </div>
             </div>
 
-            <div className="flex items-center gap-2 pt-2 border-t flex-wrap">
-              <Button variant="outline" className="min-h-[44px]" onClick={() => setStage("upload")}>← Quay lại</Button>
-              <span className="text-xs text-muted-foreground flex-1">
-                {validCount} đơn hợp lệ / {drafts.length} ảnh
-              </span>
-              <Button className="min-h-[44px]" disabled={saving || validCount === 0} onClick={handleSave}>
-                {saving
-                  ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Đang lưu...</>
-                  : `Lưu ${validCount} đơn hợp lệ`}
-              </Button>
+            <div className="space-y-2 pt-2 border-t">
+              {/* Cảnh báo trường thiếu của đơn hiện tại */}
+              {cur.ocrSuccess && cur.dupStatus !== "skip" && missingFields(cur).length > 0 && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 px-3 py-2">
+                  <p className="text-xs text-red-700 dark:text-red-400">
+                    Đơn này thiếu: <strong>{missingFields(cur).join(", ")}</strong>
+                  </p>
+                </div>
+              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button variant="outline" className="min-h-[44px]" onClick={() => setStage("upload")}>← Quay lại</Button>
+                <span className="text-xs text-muted-foreground flex-1">
+                  {validCount > 0
+                    ? <span className="text-green-700 dark:text-green-400 font-medium">{validCount} đơn hợp lệ</span>
+                    : <span className="text-red-600 dark:text-red-400">0 đơn hợp lệ</span>
+                  }
+                  {" / "}{drafts.length} ảnh
+                </span>
+                <Button className="min-h-[44px]" disabled={saving || validCount === 0} onClick={handleSave}>
+                  {saving
+                    ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Đang lưu...</>
+                    : `Lưu ${validCount} đơn hợp lệ`}
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -601,32 +687,38 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
   )
 }
 
-// ── Field helper — highlight vàng nếu confidence medium/low ───────────────────
-function F({ label, value, onChange, type = "text", list, confidence }: {
+// ── Field helper ───────────────────────────────────────────────────────────────
+// confidence → viền vàng (OCR không chắc)
+// required=true + giá trị trống → viền đỏ (bắt buộc nhưng chưa điền)
+function F({ label, value, onChange, type = "text", list, confidence, required: req }: {
   label: string
   value: string
   onChange: (v: string) => void
   type?: string
   list?: string[]
   confidence?: Conf
+  required?: boolean   // true khi trường bắt buộc mà đang trống/invalid
 }) {
   const listId    = list?.length ? `fl-${label.replace(/\W/g, "")}` : undefined
   const uncertain = confidence === "low" || confidence === "medium"
+  // Ưu tiên: thiếu bắt buộc → đỏ; không chắc → vàng
+  const borderCls = req
+    ? "border-red-400 bg-red-50 dark:bg-red-950/20 focus:border-red-500"
+    : uncertain
+      ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20 focus:border-yellow-500"
+      : ""
   return (
     <div className="grid gap-1">
       <Label className="text-xs flex items-center gap-1">
         {label}
-        {uncertain && <span title="OCR không chắc chắn" style={{ fontSize: 10, color: "#b45309" }}>●</span>}
+        {uncertain && !req && <span title="OCR không chắc chắn" style={{ fontSize: 10, color: "#b45309" }}>●</span>}
+        {req        && <span title="Trường bắt buộc còn trống" style={{ fontSize: 10, color: "#dc2626" }}>●</span>}
       </Label>
       <Input
         type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
-        className={`h-9 text-sm transition-colors ${
-          uncertain
-            ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20 focus:border-yellow-500"
-            : ""
-        }`}
+        className={`h-9 text-sm transition-colors ${borderCls}`}
         list={listId}
       />
       {listId && <datalist id={listId}>{list!.map(n => <option key={n} value={n} />)}</datalist>}

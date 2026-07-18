@@ -1,0 +1,154 @@
+SỬA LUỒNG “THÊM ĐƠN HÀNG TỪ ẢNH” — BẮT BUỘC CÓ NGÀY MUA
+
+Hiện tại hệ thống cho phép lưu đơn dù trường “Ngày mua” đang trống. Điều này sai vì sau này không thể tính thời hạn bảo hành và số tiền hoàn.
+
+Hãy sửa như sau:
+
+1. Trường Ngày mua là bắt buộc
+
+- Đánh dấu dấu *
+- Không cho lưu nếu ngày mua trống hoặc sai định dạng
+- Hiển thị lỗi ngay dưới trường:
+
+“Vui lòng nhập ngày mua để hệ thống tính bảo hành.”
+
+2. Tự lấy ngày mua từ ảnh
+
+Ưu tiên đọc theo thứ tự:
+
+1. Thanh toán
+2. Giao lúc
+3. Tạo lúc
+
+Ví dụ OCR đọc được:
+
+Thanh toán
+10:37:12 18/7/2026
+
+Thì tự điền:
+
+18/07/2026
+
+Chỉ lấy phần ngày, không bắt buộc lưu giờ.
+
+3. Hỗ trợ nhiều định dạng ngày OCR
+
+Phải nhận được:
+
+18/7/2026
+18/07/2026
+18-7-2026
+18-07-2026
+2026-07-18
+10:37:12 18/7/2026
+
+Sau đó chuẩn hóa để lưu trong database thành:
+
+2026-07-18
+
+Giao diện hiển thị:
+
+18/07/2026
+
+4. Không đánh dấu “đơn hợp lệ” khi thiếu ngày mua
+
+Dòng dưới cùng hiện đang báo:
+
+“1 đơn hợp lệ / 1 ảnh”
+
+nhưng ngày mua đang trống.
+
+Phải sửa điều kiện hợp lệ. Một đơn chỉ hợp lệ khi có tối thiểu:
+
+- Email/tài khoản
+- Sản phẩm
+- Giá bán
+- Ngày mua
+- Số ngày bảo hành hoặc thông tin sản phẩm để suy ra bảo hành
+
+Nếu thiếu bất kỳ trường nào thì hiển thị:
+
+“0 đơn hợp lệ / 1 ảnh”
+
+và vô hiệu hóa nút “Lưu đơn hợp lệ”.
+
+5. Thêm ngày hết bảo hành
+
+Sau khi có:
+
+- Ngày mua
+- Số ngày bảo hành
+
+thì tự tính:
+
+Ngày hết bảo hành = Ngày mua + số ngày bảo hành
+
+Ví dụ:
+
+Ngày mua: 18/07/2026
+Bảo hành: 30 ngày
+
+Ngày hết bảo hành: 17/08/2026
+
+Hãy thống nhất rõ cách tính ngày đầu tiên và dùng cùng một công thức trong toàn hệ thống.
+
+6. Lưu các trường vào database
+
+Bắt buộc lưu:
+
+purchase_date
+warranty_days
+warranty_end_date
+
+Không chỉ lưu ngày dưới dạng text ở frontend.
+
+Dùng kiểu DATE trong database nếu có thể.
+
+7. Tính bảo hành sau này
+
+Khi khách yêu cầu bảo hành:
+
+remaining_days = warranty_end_date - ngày hiện tại
+
+Nếu remaining_days <= 0:
+
+“Hết thời hạn bảo hành”
+
+Nếu còn hạn thì dùng số ngày còn lại để tính tiền hoàn:
+
+refund_amount =
+original_price / warranty_days * remaining_days
+
+Luôn tính theo đơn mua ban đầu.
+
+Tài khoản thay thế không được đặt lại ngày mua hoặc thời hạn bảo hành.
+
+8. Trường hợp OCR không đọc được ngày
+
+- Highlight vàng trường Ngày mua
+- Tự mở date picker để admin chọn
+- Không cho lưu trước khi admin nhập ngày
+- Không tự lấy ngày hiện tại làm ngày mua vì sẽ làm sai bảo hành
+
+9. Kiểm tra lại ảnh mẫu
+
+Ảnh mẫu có:
+
+Tạo lúc:
+10:35:59 18/7/2026
+
+Thanh toán:
+10:37:12 18/7/2026
+
+Giao lúc:
+10:37:14 18/7/2026
+
+Hệ thống phải tự điền ngày mua là:
+
+18/07/2026
+
+10. Sửa nút lưu
+
+Nút “Lưu 1 đơn hợp lệ” chỉ bật khi toàn bộ trường bắt buộc hợp lệ.
+
+Không được chỉ kiểm tra email rồi coi đơn là hợp lệ.
