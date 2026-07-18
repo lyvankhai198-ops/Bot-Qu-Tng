@@ -882,12 +882,15 @@ def warranty_reminder_worker() -> None:
                 req_id = req.get("id", "")
                 order  = db.get_order(req.get("orderId", ""))
 
+                # Reload req from DB before each check so state is always fresh
+                # (prevents all 3 reminders firing at once if elapsed > urg_min)
                 if elapsed >= r1_min and not req.get("reminder1SentAt"):
                     msg = _build_warranty_notif_msg(req, order, "⏰", " — NHẮC LẦN 1")
                     for aid in admin_ids:
                         _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
                     db.update_warranty_request(req_id, {"reminder1SentAt": now_dt.isoformat()})
                     db.add_log("WARRANTY_REMINDER1", req_id, "bot")
+                    req = db.get_warranty_request(req_id) or req  # refresh
 
                 if elapsed >= r2_min and not req.get("reminder2SentAt"):
                     msg = _build_warranty_notif_msg(req, order, "⚠️", " — NHẮC LẦN 2")
@@ -895,6 +898,7 @@ def warranty_reminder_worker() -> None:
                         _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
                     db.update_warranty_request(req_id, {"reminder2SentAt": now_dt.isoformat()})
                     db.add_log("WARRANTY_REMINDER2", req_id, "bot")
+                    req = db.get_warranty_request(req_id) or req  # refresh
 
                 if elapsed >= urg_min and not req.get("urgentSentAt"):
                     msg = _build_warranty_notif_msg(req, order, "🚨", " — KHẨN CẤP!")
