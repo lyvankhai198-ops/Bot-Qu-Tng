@@ -1,0 +1,155 @@
+FIX LUỒNG NÚT “NHẬN QUÀ” — PHẢI KIỂM TRA THAM GIA KÊNH TRƯỚC
+
+Hiện tại khi người dùng bấm “🎁 Nhận Quà”, bot trả ngay:
+
+“Kho quà hiện đã hết. Hãy quay lại sau nhé!”
+
+nhưng không hiển thị yêu cầu tham gia kênh.
+
+Nguyên nhân có thể là code đang kiểm tra kho quà trước rồi return sớm.
+
+Hãy sửa thứ tự xử lý bắt buộc như sau:
+
+1. Người dùng bấm “Nhận Quà”.
+2. Kiểm tra danh sách kênh bắt buộc đang bật.
+3. Nếu chưa tham gia đủ kênh:
+   - Không kiểm tra kho quà.
+   - Không phát quà.
+   - Hiển thị nút tham gia kênh và nút “✅ Tôi đã tham gia”.
+4. Chỉ sau khi xác minh người dùng đã tham gia đủ kênh mới kiểm tra kho quà.
+5. Nếu đã tham gia nhưng kho hết thì mới hiển thị:
+   “😔 Kho quà hiện đã hết. Hãy quay lại sau nhé!”
+
+LUỒNG ĐÚNG:
+
+Nhấn Nhận Quà
+→ Kiểm tra tham gia kênh
+→ Nếu chưa tham gia: yêu cầu join
+→ Xác minh lại bằng getChatMember
+→ Nếu đã tham gia: kiểm tra kho
+→ Nếu còn quà: phát quà
+→ Nếu hết quà: báo hết quà
+
+Không được kiểm tra kho trước bước xác minh tham gia kênh.
+
+--------------------------------
+KIỂM TRA CẤU HÌNH KÊNH
+--------------------------------
+
+Kiểm tra trang admin đã có ít nhất một kênh bắt buộc:
+
+- enabled = true
+- chat_id hoặc @username hợp lệ
+- invite_url hợp lệ
+
+Nếu chưa cấu hình kênh, hiển thị cảnh báo trong admin:
+
+“Chưa cấu hình kênh bắt buộc nhận quà.”
+
+Không được âm thầm bỏ qua bước kiểm tra join.
+
+--------------------------------
+KIỂM TRA QUYỀN BOT
+--------------------------------
+
+Bot phải được thêm làm admin của kênh bắt buộc để gọi getChatMember ổn định.
+
+Khi người dùng bấm “Tôi đã tham gia”, gọi:
+
+getChatMember(chat_id, user_id)
+
+Chấp nhận các trạng thái:
+
+- member
+- administrator
+- creator
+
+Không chấp nhận:
+
+- left
+- kicked
+- restricted nếu không còn quyền xem kênh
+
+Nếu Telegram trả lỗi, hiển thị:
+
+“Không thể xác minh thành viên. Vui lòng kiểm tra bot đã được thêm làm quản trị viên của kênh.”
+
+Không được coi lỗi API là người dùng đã tham gia.
+
+--------------------------------
+NỘI DUNG HIỂN THỊ
+--------------------------------
+
+Nếu chưa tham gia:
+
+⚠️ BẠN CHƯA THAM GIA KÊNH
+
+Để nhận quà miễn phí, vui lòng tham gia kênh chính thức bên dưới.
+
+Sau khi tham gia, nhấn “✅ Tôi đã tham gia” để xác minh.
+
+Các nút:
+
+📢 Tham gia Kênh
+✅ Tôi đã tham gia
+⬅️ Quay lại
+
+Nếu có nhiều kênh:
+
+- Hiển thị một nút cho từng kênh chưa tham gia.
+- Chỉ cho nhận quà khi đã tham gia tất cả các kênh đang bật.
+
+--------------------------------
+NÚT “TÔI ĐÃ THAM GIA”
+--------------------------------
+
+Khi bấm:
+
+1. Kiểm tra lại toàn bộ kênh bắt buộc.
+2. Nếu còn thiếu:
+   “❌ Bạn vẫn chưa tham gia đầy đủ các kênh.”
+3. Nếu đủ:
+   “✅ Xác minh thành công!”
+4. Sau đó mới tiếp tục kiểm tra kho và phát quà.
+
+Không bắt người dùng bấm lại nút Nhận Quà lần nữa.
+
+--------------------------------
+LOG DEBUG TẠM THỜI
+--------------------------------
+
+Thêm log kỹ thuật, không log token:
+
+- giveaway button clicked
+- requiredChannels count
+- channel enabled
+- getChatMember status
+- membership verified true/false
+- stock count
+- gift delivered true/false
+
+Qua log phải xác định được code có chạy bước membership check hay không.
+
+--------------------------------
+TEST BẮT BUỘC
+--------------------------------
+
+Test bằng một tài khoản Telegram chưa join kênh:
+
+1. Kho quà bằng 0.
+2. Bấm Nhận Quà.
+3. Vẫn phải hiện yêu cầu tham gia kênh trước.
+4. Join kênh.
+5. Bấm Tôi đã tham gia.
+6. Sau khi xác minh mới báo kho hết.
+
+Test tiếp khi kho có quà:
+
+1. Chưa join → không được nhận.
+2. Join → xác minh thành công.
+3. Nhận đúng một quà.
+4. Không nhận trùng.
+5. Restart/deploy không reset cấu hình kênh.
+
+LƯU Ý:
+Chỉ sửa luồng kiểm tra tham gia kênh của tính năng Nhận Quà. Không reset website, không xóa cài đặt, không thay đổi các chức năng khác.
