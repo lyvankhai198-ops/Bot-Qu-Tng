@@ -349,6 +349,13 @@ def add_warranty_request(user_id: int, username: str, first_name: str,
         "resolution": None,
         "resolvedAt": None,
         "resolvedBy": None,
+        # ── Reminder state (persistent, restart-safe) ──────────────────────
+        "adminNotifiedAt": None,      # set after first admin notification
+        "reminderEnabled": False,     # enabled only after admin is notified
+        "reminderCount": 0,           # how many reminders sent so far
+        "lastReminderAt": None,
+        "nextReminderAt": None,       # absolute ISO timestamp of next reminder
+        "reminderProcessing": False,  # anti-duplicate lock
     }
     requests.append(req)
     save("warranty_requests", requests)
@@ -437,10 +444,13 @@ def add_group_warranty_request(user_id: int, username: str, first_name: str,
         "ackNotifSentStatus": None,
         "ackNotifSentAt": None,
         "ackNotifError": None,
-        "notifiedAt": None,
-        "reminder1SentAt": None,
-        "reminder2SentAt": None,
-        "urgentSentAt": None,
+        # ── Reminder state ─────────────────────────────────────────────
+        "adminNotifiedAt": None,
+        "reminderEnabled": False,
+        "reminderCount": 0,
+        "lastReminderAt": None,
+        "nextReminderAt": None,
+        "reminderProcessing": False,
     }
     requests.append(req)
     save("warranty_requests", requests)
@@ -487,6 +497,68 @@ def get_open_warranty_emails(user_id: int) -> set:
             if em:
                 open_emails.add(em.lower())
     return open_emails
+
+# ─── Notification Logs ────────────────────────────────────────────────────────
+
+def add_notification_log(ticket_id: str, notification_type: str,
+                          reminder_number: int, sent_at: str,
+                          status: str = "sent", error_message: str | None = None) -> None:
+    """Append a notification log entry (unique per ticket+type+reminder_number)."""
+    logs = load("notification_logs", [])
+    # Enforce uniqueness: skip if same (ticket_id, notification_type, reminder_number) exists
+    for entry in logs:
+        if (entry.get("ticketId") == ticket_id
+                and entry.get("notificationType") == notification_type
+                and entry.get("reminderNumber") == reminder_number):
+            return
+    logs.append({
+        "id": str(uuid.uuid4())[:12],
+        "ticketId": ticket_id,
+        "notificationType": notification_type,
+        "reminderNumber": reminder_number,
+        "sentAt": sent_at,
+        "status": status,
+        "errorMessage": error_message,
+    })
+    save("notification_logs", logs)
+
+def get_notification_logs(ticket_id: str | None = None) -> list:
+    logs = load("notification_logs", [])
+    if ticket_id:
+        return [l for l in logs if l.get("ticketId") == ticket_id]
+    return logs
+
+# ─── Reminder maintenance helpers ─────────────────────────────────────────────
+
+def reset_stale_reminder_locks() -> int:
+    """On startup: clear any reminderProcessing=True flags left from a crash."""
+    requests = load("warranty_requests", [])
+    fixed = 0
+    for req in requests:
+        if req.get("reminderProcessing"):
+            req["reminderProcessing"] = False
+            fixed += 1
+    if fixed:
+        save("warranty_requests", requests)
+    return fixed
+
+def migrate_warranty_reminder_fields() -> int:
+    """One-time migration: add reminder state fields to existing tickets that lack them.
+    Old tickets default to reminderEnabled=False to prevent spam on first deploy."""
+    requests = load("warranty_requests", [])
+    changed = 0
+    for req in requests:
+        if "reminderEnabled" not in req:
+            req.setdefault("adminNotifiedAt", req.get("notifiedAt"))  # keep old notifiedAt if exists
+            req["reminderEnabled"] = False   # don't auto-remind old tickets
+            req.setdefault("reminderCount", 0)
+            req.setdefault("lastReminderAt", None)
+            req.setdefault("nextReminderAt", None)
+            req.setdefault("reminderProcessing", False)
+            changed += 1
+    if changed:
+        save("warranty_requests", requests)
+    return changed
 
 # ─── Introduction ─────────────────────────────────────────────────────────
 

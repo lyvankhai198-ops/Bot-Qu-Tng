@@ -830,8 +830,15 @@ def _build_warranty_notif_msg(req: dict, order: dict | None, tag: str = "🔔", 
     return "\n".join(lines)
 
 def _notify_admins_warranty(req: dict, order: dict | None = None) -> None:
-    """Background thread: notify all admins of a new warranty request."""
+    """Background thread: notify all admins of a new warranty request (idempotent)."""
     try:
+        req_id = req.get("id", "")
+        # Idempotency guard: reload from DB and check adminNotifiedAt
+        fresh = db.get_warranty_request(req_id)
+        if fresh and fresh.get("adminNotifiedAt"):
+            logger.info(f"WARRANTY NOTIFY: {req_id} already notified, skipping")
+            return
+
         ns = db.get_notification_settings()
         if not ns.get("enabled"):
             return
@@ -841,18 +848,29 @@ def _notify_admins_warranty(req: dict, order: dict | None = None) -> None:
             return
 
         msg    = _build_warranty_notif_msg(req, order)
-        markup = _warranty_admin_markup(req.get("id", ""))
+        markup = _warranty_admin_markup(req_id)
         for aid in admin_ids:
             _tg_send_markup(TOKEN, aid, msg, markup)
 
-        db.update_warranty_request(req["id"], {"notifiedAt": datetime.now().isoformat()})
-        logger.info(f"Warranty notification sent for {req['id']} to {admin_ids}")
+        # Persist notification state and schedule first reminder
+        now_dt = datetime.now()
+        r1_min = int(ns.get("reminder1Minutes", 5))
+        next_reminder = (now_dt + timedelta(minutes=r1_min)).isoformat()
+        db.update_warranty_request(req_id, {
+            "adminNotifiedAt": now_dt.isoformat(),
+            "reminderEnabled": True,
+            "reminderCount": 0,
+            "nextReminderAt": next_reminder,
+            "reminderProcessing": False,
+        })
+        db.add_notification_log(req_id, "new_warranty", 0, now_dt.isoformat())
+        logger.info(f"Warranty notification sent for {req_id}, next reminder at {next_reminder}")
     except Exception as e:
         logger.error(f"_notify_admins_warranty error: {e}")
         db.add_log("WARRANTY_NOTIFY_ERROR", str(e), "bot")
 
 def warranty_reminder_worker() -> None:
-    """Background thread: sends reminder/urgent notifications for unacknowledged warranty requests."""
+    """Background thread: sends reminders using persistent nextReminderAt — safe across restarts."""
     while True:
         time.sleep(60)
         try:
@@ -863,49 +881,73 @@ def warranty_reminder_worker() -> None:
             if not admin_ids:
                 continue
 
-            r1_min  = int(ns.get("reminder1Minutes", 5))
-            r2_min  = int(ns.get("reminder2Minutes", 15))
-            urg_min = int(ns.get("urgentMinutes", 30))
-            now_dt  = datetime.now()
+            r2_delta  = int(ns.get("reminder2Minutes", 15)) - int(ns.get("reminder1Minutes", 5))
+            urg_delta = int(ns.get("urgentMinutes", 30))    - int(ns.get("reminder2Minutes", 15))
+            now_dt    = datetime.now()
+
+            _REMINDER_STAGES = [
+                ("⏰", " — NHẮC LẦN 1", "WARRANTY_REMINDER1", r2_delta),
+                ("⚠️", " — NHẮC LẦN 2", "WARRANTY_REMINDER2", urg_delta),
+                ("🚨", " — KHẨN CẤP!",  "WARRANTY_URGENT",    None),  # last — disable after
+            ]
 
             for req in db.get_warranty_requests():
-                if req.get("status") not in ("pending",):
+                # Only remind open tickets with reminder enabled and due time reached
+                if req.get("status") not in ("pending", "processing"):
                     continue
-                if req.get("acknowledgedAt"):
+                if not req.get("reminderEnabled"):
                     continue
-                submitted = req.get("submittedAt", "")
+                if req.get("reminderProcessing"):
+                    continue  # another process is handling this ticket
+                next_at_str = req.get("nextReminderAt")
+                if not next_at_str:
+                    continue
                 try:
-                    submitted_dt = datetime.fromisoformat(submitted)
+                    next_at = datetime.fromisoformat(next_at_str)
                 except Exception:
                     continue
-                elapsed = (now_dt - submitted_dt).total_seconds() / 60
-                req_id = req.get("id", "")
-                order  = db.get_order(req.get("orderId", ""))
+                if now_dt < next_at:
+                    continue
 
-                # Reload req from DB before each check so state is always fresh
-                # (prevents all 3 reminders firing at once if elapsed > urg_min)
-                if elapsed >= r1_min and not req.get("reminder1SentAt"):
-                    msg = _build_warranty_notif_msg(req, order, "⏰", " — NHẮC LẦN 1")
+                req_id        = req.get("id", "")
+                reminder_count = int(req.get("reminderCount", 0))
+                if reminder_count >= len(_REMINDER_STAGES):
+                    # All reminders exhausted — disable
+                    db.update_warranty_request(req_id, {"reminderEnabled": False, "nextReminderAt": None})
+                    continue
+
+                # Acquire processing lock to prevent duplicates
+                if not db.update_warranty_request(req_id, {"reminderProcessing": True}):
+                    continue
+
+                try:
+                    order = db.get_order(req.get("orderId", ""))
+                    tag, suffix, log_action, next_delta = _REMINDER_STAGES[reminder_count]
+
+                    msg = _build_warranty_notif_msg(req, order, tag, suffix)
                     for aid in admin_ids:
                         _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
-                    db.update_warranty_request(req_id, {"reminder1SentAt": now_dt.isoformat()})
-                    db.add_log("WARRANTY_REMINDER1", req_id, "bot")
-                    req = db.get_warranty_request(req_id) or req  # refresh
 
-                if elapsed >= r2_min and not req.get("reminder2SentAt"):
-                    msg = _build_warranty_notif_msg(req, order, "⚠️", " — NHẮC LẦN 2")
-                    for aid in admin_ids:
-                        _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
-                    db.update_warranty_request(req_id, {"reminder2SentAt": now_dt.isoformat()})
-                    db.add_log("WARRANTY_REMINDER2", req_id, "bot")
-                    req = db.get_warranty_request(req_id) or req  # refresh
+                    new_count = reminder_count + 1
+                    update = {
+                        "reminderCount": new_count,
+                        "lastReminderAt": now_dt.isoformat(),
+                        "reminderProcessing": False,
+                    }
+                    if next_delta is not None:
+                        update["nextReminderAt"] = (now_dt + timedelta(minutes=next_delta)).isoformat()
+                    else:
+                        update["reminderEnabled"] = False
+                        update["nextReminderAt"]   = None
 
-                if elapsed >= urg_min and not req.get("urgentSentAt"):
-                    msg = _build_warranty_notif_msg(req, order, "🚨", " — KHẨN CẤP!")
-                    for aid in admin_ids:
-                        _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
-                    db.update_warranty_request(req_id, {"urgentSentAt": now_dt.isoformat()})
-                    db.add_log("WARRANTY_URGENT", req_id, "bot")
+                    db.update_warranty_request(req_id, update)
+                    db.add_notification_log(req_id, "reminder", new_count, now_dt.isoformat())
+                    db.add_log(log_action, req_id, "bot")
+                    logger.info(f"Reminder #{new_count} sent for warranty {req_id}")
+
+                except Exception as send_err:
+                    logger.error(f"warranty_reminder_worker send error for {req_id}: {send_err}")
+                    db.update_warranty_request(req_id, {"reminderProcessing": False})
 
         except Exception as e:
             logger.error(f"warranty_reminder_worker error: {e}")
@@ -931,12 +973,15 @@ async def callback_warranty_ack(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("ℹ️ Yêu cầu này đã được tiếp nhận rồi.", show_alert=True)
         return
 
-    # Mark as processing
+    # Mark as processing and disable reminders (admin is now aware)
     now_dt = datetime.now()
     db.update_warranty_request(req_id, {
         "status": "processing",
         "acknowledgedAt": now_dt.isoformat(),
         "acknowledgedBy": str(user.id),
+        "reminderEnabled": False,
+        "nextReminderAt": None,
+        "reminderProcessing": False,
     })
     db.add_log("WARRANTY_ACK", f"{req_id} by @{user.username or user.id}", "bot")
 
@@ -1072,6 +1117,14 @@ def main():
 
     Thread(target=broadcast_worker, daemon=True).start()
     logger.info("Broadcast worker started.")
+
+    # Startup: clear stale locks from crashed mid-send, migrate old ticket fields
+    locked = db.reset_stale_reminder_locks()
+    migrated = db.migrate_warranty_reminder_fields()
+    if locked:
+        logger.info(f"Cleared {locked} stale reminderProcessing lock(s) on startup")
+    if migrated:
+        logger.info(f"Migrated {migrated} old warranty ticket(s) to new reminder schema (reminderEnabled=False)")
 
     Thread(target=warranty_reminder_worker, daemon=True).start()
     logger.info("Warranty reminder worker started.")

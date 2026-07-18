@@ -1,0 +1,204 @@
+KHẮC PHỤC LỖI MỖI LẦN CẬP NHẬT CODE LẠI GỬI THÔNG BÁO BẢO HÀNH CŨ
+
+Hiện tại mỗi lần cập nhật code, restart server hoặc deploy lại, bot lại gửi thông báo:
+
+“YÊU CẦU BẢO HÀNH MỚI — NHẮC LẦN 2”
+
+cho các yêu cầu cũ.
+
+Đây là lỗi scheduler/reminder bị khởi tạo lại sai hoặc không lưu trạng thái nhắc trong database.
+
+Hãy sửa triệt để theo yêu cầu sau:
+
+1. Không dùng bộ nhớ tạm để lưu trạng thái nhắc
+
+Không lưu bằng:
+- biến RAM
+- setTimeout đơn thuần
+- danh sách pending trong process
+- local file tạm
+- cache bị mất sau restart
+
+Toàn bộ trạng thái nhắc phải lưu trong database.
+
+2. Bổ sung trường trạng thái cho ticket bảo hành
+
+Ví dụ:
+
+support_tickets
+- id
+- status
+- created_at
+- resolved_at
+- reminder_count
+- last_reminder_at
+- next_reminder_at
+- reminder_enabled
+- admin_notified_at
+- notification_message_id
+
+3. Chỉ nhắc ticket thực sự còn mở
+
+Scheduler chỉ được lấy ticket có:
+
+status IN ('pending', 'waiting_admin')
+AND reminder_enabled = true
+AND resolved_at IS NULL
+AND next_reminder_at <= NOW()
+
+Không được nhắc các ticket có trạng thái:
+
+- resolved
+- refunded
+- replaced
+- rejected
+- cancelled
+- closed
+
+4. Sau mỗi lần gửi nhắc
+
+Phải cập nhật database ngay:
+
+- reminder_count = reminder_count + 1
+- last_reminder_at = thời gian hiện tại
+- next_reminder_at = thời gian nhắc tiếp theo
+
+Phải cập nhật thành công rồi mới coi là đã gửi.
+
+5. Không tạo lại lịch nhắc từ đầu khi server restart
+
+Khi ứng dụng khởi động lại:
+
+- Không reset reminder_count về 0
+- Không đặt lại next_reminder_at dựa trên created_at
+- Không gửi ngay tất cả ticket pending
+- Chỉ đọc next_reminder_at đã lưu trong database
+
+Nếu next_reminder_at chưa tới thì không gửi.
+
+6. Chống gửi trùng
+
+Trước khi gửi, khóa bản ghi hoặc dùng transaction.
+
+Đảm bảo cùng một ticket không bị nhiều process gửi nhắc cùng lúc.
+
+Có thể dùng:
+
+SELECT ... FOR UPDATE SKIP LOCKED
+
+hoặc cờ:
+
+reminder_processing = true
+
+Sau khi gửi xong mới bỏ cờ.
+
+7. Không chạy nhiều scheduler trùng nhau
+
+Kiểm tra xem hiện tại có phải:
+
+- web server chạy scheduler
+- bot server chạy scheduler
+- worker cũng chạy scheduler
+- mỗi instance đều tự gửi
+
+Chỉ cho phép một service duy nhất chạy reminder worker.
+
+Nếu deploy nhiều instance thì phải có distributed lock.
+
+8. Không gửi lại thông báo “Yêu cầu bảo hành mới”
+
+Thông báo lần đầu chỉ gửi một lần khi ticket vừa được tạo.
+
+Sau đó chỉ gửi:
+
+- Nhắc lần 1
+- Nhắc lần 2
+- Nhắc lần 3
+
+Không được mỗi lần restart lại coi ticket là yêu cầu mới.
+
+Cần có trường:
+
+admin_notified_at
+
+Nếu đã có giá trị thì không gửi lại thông báo mới.
+
+9. Khi admin xử lý ticket
+
+Ngay khi admin:
+
+- gửi tài khoản thay thế
+- hoàn tiền
+- từ chối
+- đóng ticket
+
+thì phải:
+
+- đổi status
+- set resolved_at
+- set reminder_enabled = false
+- set next_reminder_at = null
+
+Không được tiếp tục nhắc.
+
+10. Không gửi nhắc cho dữ liệu cũ khi deploy
+
+Khi chạy migration hoặc cập nhật code:
+
+- Không tự quét toàn bộ ticket cũ và gửi ngay
+- Không backfill next_reminder_at cho ticket đã quá hạn theo cách khiến chúng gửi hàng loạt
+- Với ticket cũ chưa có trạng thái rõ ràng, mặc định reminder_enabled = false để tránh spam
+- Chỉ bật reminder cho ticket mới hoặc ticket admin chủ động bật lại
+
+11. Thêm bảng log thông báo
+
+Tạo bảng:
+
+notification_logs
+- id
+- ticket_id
+- notification_type
+- reminder_number
+- sent_at
+- telegram_chat_id
+- telegram_message_id
+- status
+- error_message
+
+Thêm unique constraint phù hợp để cùng một ticket không gửi trùng cùng một reminder_number.
+
+Ví dụ unique:
+
+(ticket_id, notification_type, reminder_number)
+
+12. Test bắt buộc
+
+Thực hiện đúng các bước:
+
+1. Tạo một ticket mới.
+2. Kiểm tra chỉ gửi một thông báo mới.
+3. Chờ tới lần nhắc 1.
+4. Restart server.
+5. Không được gửi lại lần nhắc 1.
+6. Chờ tới lần nhắc 2.
+7. Chỉ gửi đúng một lần nhắc 2.
+8. Deploy code mới.
+9. Không gửi lại bất kỳ thông báo cũ nào.
+10. Đóng ticket.
+11. Restart server.
+12. Không còn thông báo nhắc nào nữa.
+
+13. Khắc phục ngay dữ liệu hiện tại
+
+Trước khi bật scheduler lại:
+
+- Tạm dừng reminder worker
+- Kiểm tra các ticket hiện tại
+- Ticket nào đã xử lý thì đóng và tắt reminder
+- Ticket nào không rõ trạng thái thì không gửi tự động
+- Xóa các lịch nhắc trùng trong database
+- Sau đó mới bật lại scheduler
+
+Mục tiêu cuối cùng:
+
+Cập nhật code, restart server hoặc deploy lại tuyệt đối không được làm bot gửi lại thông báo bảo hành cũ.
