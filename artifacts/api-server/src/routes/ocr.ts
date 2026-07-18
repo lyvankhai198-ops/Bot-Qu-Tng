@@ -182,18 +182,27 @@ function getValueAfterLabel(lines: string[], labels: string[]): string | null {
   const normLabels = labels.map(normLabel);
 
   for (let i = 0; i < lines.length; i++) {
-    const lineNorm = normLabel(lines[i]);
-    const isLabel  = normLabels.some(lbl => lineNorm === lbl);
-    if (!isLabel) continue;
+    const rawLine  = lines[i];
+    const lineNorm = normLabel(rawLine);
 
-    // Try inline value (after colon)
-    const colonIdx = lines[i].indexOf(":");
+    // Case A: whole line is the label (value on next line, or after colon)
+    const isPureLabel = normLabels.some(lbl => lineNorm === lbl);
+
+    // Case B: line is "Label: value" on the same line
+    const inlineLabel = normLabels.find(lbl =>
+      lineNorm.startsWith(lbl + ":") || lineNorm.startsWith(lbl + " :")
+    );
+
+    if (!isPureLabel && !inlineLabel) continue;
+
+    // Try inline value first (works for both A with trailing colon, and B)
+    const colonIdx = rawLine.indexOf(":");
     if (colonIdx >= 0) {
-      const inline = lines[i].slice(colonIdx + 1).trim();
+      const inline = rawLine.slice(colonIdx + 1).trim();
       if (inline && inline !== "-") return inline;
     }
 
-    // Take next non-empty line (skip up to 1 blank)
+    // Fallback: take next non-empty line (skip up to 1 blank)
     for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
       const next = lines[j]?.trim().replace(/^[•·●]\s*/, ""); // strip bullet
       if (next && next !== "-") return next;

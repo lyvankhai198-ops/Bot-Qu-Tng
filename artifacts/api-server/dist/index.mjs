@@ -50724,12 +50724,16 @@ function getValueAfterLabel(lines, labels) {
   const normLabel = (s) => s.toLowerCase().replace(/^[•·●\-\*\s]+/, "").replace(/:\s*$/, "").replace(/\s+/g, " ").trim();
   const normLabels = labels.map(normLabel);
   for (let i = 0; i < lines.length; i++) {
-    const lineNorm = normLabel(lines[i]);
-    const isLabel = normLabels.some((lbl) => lineNorm === lbl);
-    if (!isLabel) continue;
-    const colonIdx = lines[i].indexOf(":");
+    const rawLine = lines[i];
+    const lineNorm = normLabel(rawLine);
+    const isPureLabel = normLabels.some((lbl) => lineNorm === lbl);
+    const inlineLabel = normLabels.find(
+      (lbl) => lineNorm.startsWith(lbl + ":") || lineNorm.startsWith(lbl + " :")
+    );
+    if (!isPureLabel && !inlineLabel) continue;
+    const colonIdx = rawLine.indexOf(":");
     if (colonIdx >= 0) {
-      const inline = lines[i].slice(colonIdx + 1).trim();
+      const inline = rawLine.slice(colonIdx + 1).trim();
       if (inline && inline !== "-") return inline;
     }
     for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
