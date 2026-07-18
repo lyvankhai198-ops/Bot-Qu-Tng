@@ -1,0 +1,351 @@
+FIX TRIỆT ĐỂ NÚT “NHẬN QUÀ” KHÔNG KIỂM TRA THAM GIA KÊNH
+
+Hiện tại đã thêm tính năng bắt buộc tham gia kênh nhưng khi test bằng tài khoản Telegram phụ chưa tham gia kênh, bấm “🎁 Nhận Quà” bot vẫn trả ngay:
+
+“😔 Kho quà hiện đã hết. Hãy quay lại sau nhé!”
+
+Không hề hiển thị yêu cầu tham gia kênh.
+
+Điều này chứng minh handler thực tế của nút Nhận Quà vẫn đang chạy luồng cũ hoặc bước kiểm tra membership bị bỏ qua.
+
+LƯU Ý:
+Chỉ sửa chức năng kiểm tra tham gia kênh trước khi nhận quà.
+Không reset web, không reset database, không thay đổi cài đặt hiện có.
+
+====================================
+1. TÌM ĐÚNG HANDLER ĐANG CHẠY
+====================================
+
+Kiểm tra tất cả handler liên quan đến:
+
+- 🎁 Nhận Quà
+- nhận quà
+- giveaway
+- claim_gift
+- callback nhận quà
+- reply keyboard
+- inline keyboard
+
+Có thể đang tồn tại nhiều handler trùng nhau.
+
+Phải xác định chính xác handler nào đang trả câu:
+
+“Kho quà hiện đã hết. Hãy quay lại sau nhé!”
+
+Sau đó sửa trực tiếp handler đó.
+
+Không được chỉ tạo thêm một hàm mới nhưng không được gọi.
+
+====================================
+2. THỨ TỰ XỬ LÝ BẮT BUỘC
+====================================
+
+Handler thực tế phải chạy đúng thứ tự:
+
+A. Tải cấu hình các kênh bắt buộc đang bật từ database.
+
+B. Kiểm tra người dùng đã tham gia tất cả các kênh hay chưa.
+
+C. Nếu chưa tham gia:
+- Dừng ngay.
+- Không kiểm tra kho.
+- Không phát quà.
+- Hiển thị yêu cầu tham gia kênh.
+
+D. Nếu đã tham gia đủ:
+- Mới kiểm tra kho quà.
+- Còn quà thì phát.
+- Hết quà thì báo hết.
+
+Pseudo-flow bắt buộc:
+
+async function handleClaimGift(userId) {
+  const requiredChannels = await getEnabledRequiredChannels();
+
+  const membership = await verifyMembership(userId, requiredChannels);
+
+  if (!membership.allJoined) {
+    return showJoinRequiredMessage(membership.missingChannels);
+  }
+
+  const stock = await getGiftStock();
+
+  if (stock <= 0) {
+    return showOutOfStockMessage();
+  }
+
+  return deliverGift();
+}
+
+Không được gọi getGiftStock() trước verifyMembership().
+
+====================================
+3. KHÔNG ĐƯỢC BỎ QUA KHI KHO HẾT
+====================================
+
+Kể cả kho quà bằng 0, người chưa tham gia kênh vẫn phải thấy yêu cầu tham gia kênh trước.
+
+Test đúng:
+
+- Người chưa join
+- Kho quà = 0
+- Bấm Nhận Quà
+
+Kết quả bắt buộc:
+
+“Bạn cần tham gia kênh trước khi nhận quà.”
+
+Không được trả “Kho quà hiện đã hết”.
+
+====================================
+4. KIỂM TRA CẤU HÌNH KÊNH TRONG DATABASE
+====================================
+
+Kiểm tra database có bản ghi kênh bắt buộc hay không.
+
+Mỗi kênh cần có:
+
+- channel_id hoặc chat_id
+- channel_username nếu có
+- invite_url
+- title
+- enabled = true
+- required_for_giveaway = true
+
+Nếu không có kênh đang bật thì phải báo trong trang admin:
+
+“Chưa có kênh bắt buộc nhận quà đang hoạt động.”
+
+Không được âm thầm bỏ qua bước membership.
+
+====================================
+5. PHÂN BIỆT CHAT_ID VÀ LINK KÊNH
+====================================
+
+getChatMember không được gọi bằng link:
+
+https://t.me/...
+
+Phải dùng:
+
+- @channelusername
+
+hoặc:
+
+- chat_id dạng -100xxxxxxxxxx
+
+invite_url chỉ dùng cho nút mở kênh.
+
+Ví dụ:
+
+channel_id:
+@aicenterchannel
+
+invite_url:
+https://t.me/aicenterchannel
+
+Không dùng invite_url làm chat_id.
+
+====================================
+6. QUYỀN CỦA BOT TRONG KÊNH
+====================================
+
+Bot phải được thêm vào kênh bắt buộc với quyền admin phù hợp.
+
+Thêm endpoint hoặc nút test trong admin:
+
+“Kiểm tra kết nối kênh”
+
+Kết quả cần hiển thị:
+
+- Bot truy cập được kênh hay không
+- Tên kênh
+- Bot có phải admin không
+- getChatMember có hoạt động không
+
+Nếu bot không truy cập được, báo:
+
+“Bot chưa được thêm làm quản trị viên của kênh hoặc Channel ID không đúng.”
+
+Không được coi lỗi Telegram API là đã tham gia.
+
+====================================
+7. KIỂM TRA TRẠNG THÁI THÀNH VIÊN
+====================================
+
+Gọi:
+
+getChatMember(channelId, telegramUserId)
+
+Được coi là đã tham gia khi status là:
+
+- member
+- administrator
+- creator
+
+Không được coi là đã tham gia khi:
+
+- left
+- kicked
+
+Với restricted:
+Chỉ coi là tham gia nếu is_member = true.
+
+====================================
+8. NỘI DUNG KHI CHƯA THAM GIA
+====================================
+
+Hiển thị:
+
+⚠️ BẠN CHƯA THAM GIA KÊNH
+
+Để nhận quà miễn phí, bạn cần tham gia kênh chính thức của AI Center.
+
+Sau khi tham gia, hãy bấm “✅ Tôi đã tham gia” để xác minh.
+
+Các nút:
+
+📢 Tham gia Kênh Bán Hàng
+✅ Tôi đã tham gia
+⬅️ Quay lại
+
+Nếu có nhiều kênh:
+- Hiển thị nút của tất cả kênh còn thiếu.
+- Chỉ cho nhận quà khi đã tham gia đủ tất cả.
+
+====================================
+9. CALLBACK “TÔI ĐÃ THAM GIA”
+====================================
+
+Khi bấm “✅ Tôi đã tham gia”:
+
+- Kiểm tra lại membership từ Telegram API.
+- Không dùng cache cũ.
+- Không chỉ kiểm tra biến trong session.
+
+Nếu chưa đủ:
+
+❌ Bạn vẫn chưa tham gia đầy đủ các kênh bắt buộc.
+
+Nếu đã đủ:
+
+✅ Xác minh thành công!
+
+Sau đó tiếp tục ngay:
+- Kiểm tra kho.
+- Còn quà thì phát.
+- Hết quà thì báo hết.
+
+Không bắt người dùng bấm lại nút Nhận Quà.
+
+====================================
+10. KHÔNG ĐƯỢC CACHE SAI
+====================================
+
+Không lưu vĩnh viễn trạng thái:
+
+joined = true
+
+chỉ dựa trên lần kiểm tra cũ.
+
+Mỗi lần bấm Nhận Quà phải kiểm tra lại hoặc dùng cache rất ngắn.
+
+Tài khoản phụ chưa join tuyệt đối không được vượt qua.
+
+====================================
+11. THÊM LOG DEBUG TẠM THỜI
+====================================
+
+Thêm log kỹ thuật:
+
+- claim gift handler started
+- telegram_user_id
+- required_channels_count
+- required_channel_id
+- membership_status
+- missing_channels_count
+- membership_check_result
+- stock_check_started
+- gift_stock
+- gift_delivered
+
+Không log bot token.
+
+Qua log phải thấy:
+
+membership_check_started
+
+xuất hiện trước:
+
+stock_check_started
+
+====================================
+12. ENDPOINT DEBUG ADMIN
+====================================
+
+Tạo endpoint admin:
+
+GET /api/giveaway/membership-debug/:telegramUserId
+
+Trả:
+
+{
+  "requiredChannels": [
+    {
+      "title": "...",
+      "channelId": "...",
+      "enabled": true,
+      "botCanAccess": true,
+      "memberStatus": "left"
+    }
+  ],
+  "allJoined": false,
+  "missingCount": 1
+}
+
+Không trả bot token.
+
+====================================
+13. TEST BẮT BUỘC BẰNG NICK PHỤ
+====================================
+
+Test 1:
+
+- Nick phụ chưa join.
+- Kho hết quà.
+- Bấm Nhận Quà.
+- Phải hiện yêu cầu join.
+
+Test 2:
+
+- Nick phụ chưa join.
+- Kho có quà.
+- Bấm Nhận Quà.
+- Không được phát quà.
+
+Test 3:
+
+- Join kênh.
+- Bấm Tôi đã tham gia.
+- Phải xác minh thành công.
+
+Test 4:
+
+- Đã join nhưng kho hết.
+- Sau xác minh mới báo hết quà.
+
+Test 5:
+
+- Rời kênh.
+- Bấm Nhận Quà lại.
+- Phải yêu cầu join lại.
+
+Test 6:
+
+- Restart bot và deploy.
+- Cấu hình kênh vẫn còn.
+- Membership check vẫn hoạt động.
+
+MỤC TIÊU CUỐI:
+
+Bất kỳ tài khoản nào chưa tham gia kênh bắt buộc, kể cả khi kho quà đang hết, đều phải thấy màn hình yêu cầu tham gia kênh trước. Không được đi thẳng vào thông báo hết quà.

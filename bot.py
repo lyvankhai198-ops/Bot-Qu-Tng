@@ -536,41 +536,48 @@ async def maintenance_reply(update: Update, L: str) -> bool:
 
 _JOINED_STATUSES = {"member", "administrator", "creator"}
 
-async def _check_channels_membership(bot, user_id: int, channels: list) -> tuple[list, list]:
-    """Check membership for all enabled channels with a known chatId/username.
+async def _check_channels_membership(bot, user_id: int, channels: list) -> tuple[list, list, list]:
+    """Check membership for all enabled channels.
 
     Returns:
-        (not_joined, api_errors)
-        - not_joined:  channels user has not joined (status left/kicked/restricted)
-        - api_errors:  channels where getChatMember raised an exception
-                       (likely bot is not admin in that channel)
-
-    Channels without username/chatId (private invite-link-only) are skipped —
-    the join button still appears but membership cannot be enforced.
+        (not_joined, unverifiable, api_errors)
+        - not_joined:    channels WITH chatId where getChatMember confirmed NOT a member
+        - unverifiable:  channels WITHOUT chatId (private invite-link only) — shown in join
+                         prompt but cannot be verified via API; accepted on trust when user
+                         taps "Tôi đã tham gia"
+        - api_errors:    channels WITH chatId where getChatMember raised an exception
+                         (bot not admin, or wrong chatId)
     """
-    not_joined: list = []
-    api_errors: list = []
+    not_joined: list  = []
+    unverifiable: list = []
+    api_errors: list  = []
 
     for ch in channels:
         chat_id = ch.get("chatId") or ch.get("username") or ""
         if not chat_id:
-            # Private channel — cannot verify; skip
-            logger.info(f"[gift] channel '{ch.get('name')}' has no chatId — skipping verification")
+            # No chatId → cannot verify; still block user (trust-based)
+            logger.info(f"[gift] required_channel_id=(none) channel='{ch.get('name')}' — unverifiable, queuing join prompt")
+            unverifiable.append(ch)
             continue
-        # Normalize: ensure @ prefix for usernames
+        # Normalize: ensure @ prefix for plain usernames
         if not str(chat_id).startswith(("-", "@", "+")):
             chat_id = f"@{chat_id}"
-        logger.info(f"[gift] getChatMember chat_id={chat_id} user_id={user_id}")
+        logger.info(f"[gift] required_channel_id={chat_id} getChatMember user_id={user_id}")
         try:
             member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-            logger.info(f"[gift] getChatMember status={member.status} channel={chat_id}")
-            if member.status not in _JOINED_STATUSES:
+            status = member.status
+            logger.info(f"[gift] membership_status={status} channel={chat_id}")
+            # restricted: only joined if is_member=True
+            if status == "restricted":
+                if not getattr(member, "is_member", False):
+                    not_joined.append(ch)
+            elif status not in _JOINED_STATUSES:
                 not_joined.append(ch)
         except Exception as e:
             logger.warning(f"[gift] getChatMember error channel={chat_id}: {e}")
             api_errors.append(ch)
 
-    return not_joined, api_errors
+    return not_joined, unverifiable, api_errors
 
 def _build_join_markup(L: str, not_joined: list) -> InlineKeyboardMarkup:
     vi = L == "vi"
@@ -647,7 +654,7 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     vi   = L == "vi"
     settings = db.get_settings()
 
-    logger.info(f"[gift] giveaway button clicked user_id={user.id}")
+    logger.info(f"[gift] claim gift handler started telegram_user_id={user.id}")
 
     if not settings.get("gift_enabled", True):
         await update.message.reply_text(t(L, "gift_disabled"))
@@ -660,10 +667,18 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if settings.get("require_channel_check", False):
         channels         = db.get_required_channels()
         enabled_channels = [c for c in channels if c.get("enabled", True)]
-        logger.info(f"[gift] requiredChannels count={len(enabled_channels)}")
+        logger.info(f"[gift] membership_check_started required_channels_count={len(enabled_channels)}")
+
         if enabled_channels:
-            not_joined, api_errors = await _check_channels_membership(context.bot, user.id, enabled_channels)
-            logger.info(f"[gift] membership verified={len(not_joined)==0 and len(api_errors)==0} not_joined={len(not_joined)} api_errors={len(api_errors)}")
+            not_joined, unverifiable, api_errors = await _check_channels_membership(
+                context.bot, user.id, enabled_channels
+            )
+            missing_channels_count = len(not_joined) + len(unverifiable)
+            logger.info(
+                f"[gift] membership_check_result not_joined={len(not_joined)} "
+                f"unverifiable={len(unverifiable)} api_errors={len(api_errors)} "
+                f"missing_channels_count={missing_channels_count}"
+            )
 
             if api_errors:
                 names = ", ".join(f"<b>{c.get('name', 'kênh')}</b>" for c in api_errors)
@@ -674,11 +689,13 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 )
                 return
 
-            if not_joined:
+            # Block if any channel not joined (verified) OR unverifiable (private, trust-based)
+            if not_joined or unverifiable:
+                all_missing = not_joined + unverifiable
                 msg = (
                     "⚠️ <b>BẠN CHƯA THAM GIA KÊNH</b>\n\n"
-                    "Để nhận quà miễn phí, vui lòng tham gia kênh chính thức bên dưới.\n\n"
-                    'Sau khi tham gia, nhấn "<b>✅ Tôi đã tham gia</b>" để xác minh.'
+                    "Để nhận quà miễn phí, bạn cần tham gia kênh chính thức của AI Center.\n\n"
+                    'Sau khi tham gia, hãy bấm "<b>✅ Tôi đã tham gia</b>" để xác minh.'
                 ) if vi else (
                     "⚠️ <b>YOU HAVEN'T JOINED THE CHANNEL</b>\n\n"
                     "To receive a free gift, please join the official channel below.\n\n"
@@ -686,13 +703,14 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 )
                 await update.message.reply_text(
                     msg, parse_mode=ParseMode.HTML,
-                    reply_markup=_build_join_markup(L, not_joined),
+                    reply_markup=_build_join_markup(L, all_missing),
                 )
                 return
 
-    # ── Kiểm tra kho SAU KHI đã xác minh tham gia kênh ───────────────────
+    # ── Kiểm tra kho CHỈ SAU khi đã xác minh kênh ────────────────────────
+    logger.info(f"[gift] stock_check_started telegram_user_id={user.id}")
     stock = db.stock_count()
-    logger.info(f"[gift] membership verified=True stock={stock}")
+    logger.info(f"[gift] gift_stock={stock}")
     if stock == 0:
         await update.message.reply_text(t(L, "gift_empty"))
         return
@@ -700,7 +718,7 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _claim_gift(user, context, L, settings)
 
 async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Called when user taps '✅ Tôi đã tham gia' — re-verify ALL channels then claim gift."""
+    """Called when user taps '✅ Tôi đã tham gia' — re-verify verifiable channels, trust unverifiable."""
     query = update.callback_query
     await query.answer()
     user = query.from_user
@@ -717,8 +735,13 @@ async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     channels         = db.get_required_channels()
     enabled_channels = [c for c in channels if c.get("enabled", True)]
-    not_joined, api_errors = await _check_channels_membership(context.bot, user.id, enabled_channels)
-    logger.info(f"[gift] check_join callback user_id={user.id} not_joined={len(not_joined)} api_errors={len(api_errors)}")
+    not_joined, unverifiable, api_errors = await _check_channels_membership(
+        context.bot, user.id, enabled_channels
+    )
+    logger.info(
+        f"[gift] check_join callback telegram_user_id={user.id} "
+        f"not_joined={len(not_joined)} unverifiable_trusted={len(unverifiable)} api_errors={len(api_errors)}"
+    )
 
     if api_errors:
         names = ", ".join(f"<b>{c.get('name', 'kênh')}</b>" for c in api_errors)
@@ -729,10 +752,11 @@ async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
+    # Still not a member in verified channels → block
     if not_joined:
         names = ", ".join(f"<b>{c.get('name') or c.get('username') or 'kênh'}</b>" for c in not_joined)
         msg = (
-            f"❌ <b>Bạn vẫn chưa tham gia đầy đủ các kênh.</b>\n\n"
+            f"❌ <b>Bạn vẫn chưa tham gia đầy đủ các kênh bắt buộc.</b>\n\n"
             f"📢 Chưa tham gia: {names}\n\n"
             "Vui lòng tham gia rồi nhấn <b>✅ Tôi đã tham gia</b> lại."
         ) if vi else (
@@ -744,9 +768,10 @@ async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE
                                       reply_markup=query.message.reply_markup)
         return
 
-    # Xác minh thành công — kiểm tra kho rồi phát quà
+    # All verifiable channels OK; unverifiable channels trusted (user tapped the join button)
+    logger.info(f"[gift] stock_check_started telegram_user_id={user.id} unverifiable_trusted={len(unverifiable)}")
     stock = db.stock_count()
-    logger.info(f"[gift] check_join verified=True stock={stock}")
+    logger.info(f"[gift] gift_stock={stock}")
     if stock == 0:
         msg = (
             "✅ <b>Xác minh thành công!</b>\n\n😔 Kho quà hiện đã hết. Hãy quay lại sau nhé!"
@@ -761,7 +786,7 @@ async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE
         "✅ <b>Verification successful!</b> Sending your gift...",
         parse_mode=ParseMode.HTML,
     )
-    logger.info(f"[gift] gift delivered to user_id={user.id}")
+    logger.info(f"[gift] gift_delivered telegram_user_id={user.id}")
     await _claim_gift(user, context, L, settings)
 
 async def callback_back_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link } from "lucide-react"
+import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link, Wifi, WifiOff, Loader2 } from "lucide-react"
 import type { BotSettings, NotificationSettings } from "@workspace/api-client-react"
 
 interface RequiredChannel {
@@ -93,6 +93,27 @@ export default function Settings() {
   const [channels, setChannels] = useState<RequiredChannel[]>([])
   const [channelsSaving, setChannelsSaving] = useState(false)
   const [newCh, setNewCh] = useState({ name: "", username: "", url: "" })
+  const [channelTests, setChannelTests] = useState<Record<string, { loading?: boolean; ok?: boolean; title?: string; botStatus?: string; isAdmin?: boolean; error?: string }>>({})
+
+  const handleTestChannel = async (ch: RequiredChannel) => {
+    const chatId = ch.username?.replace(/^@/, "") || ""
+    if (!chatId) {
+      toast({ title: "Không thể kiểm tra", description: "Kênh private (không có username) — bot không thể xác minh qua getChatMember", variant: "destructive" })
+      return
+    }
+    setChannelTests(prev => ({ ...prev, [ch.id]: { loading: true } }))
+    try {
+      const res = await fetch(`/api/bot/check-channel/${encodeURIComponent(chatId)}`, { headers: authHeader() })
+      const data = await res.json()
+      setChannelTests(prev => ({ ...prev, [ch.id]: data }))
+      if (!data.canAccess) toast({ title: "Lỗi kết nối kênh", description: data.error ?? "Bot không thể truy cập kênh", variant: "destructive" })
+      else if (!data.isAdmin) toast({ title: "⚠️ Bot chưa là admin", description: `Bot status: ${data.botStatus}. Cần thêm bot làm quản trị viên để getChatMember hoạt động.`, variant: "destructive" })
+      else toast({ title: "✅ Kênh OK", description: `${data.title} — Bot là ${data.botStatus}, getChatMember hoạt động` })
+    } catch (e: any) {
+      setChannelTests(prev => ({ ...prev, [ch.id]: { ok: false, error: e.message } }))
+      toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    }
+  }
 
   const loadChannels = useCallback(async () => {
     try { setChannels(await fetchChannels()) } catch { /* ignore */ }
@@ -474,7 +495,10 @@ export default function Settings() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm">{ch.name}</span>
-                      <Badge variant="secondary" className="font-mono text-xs">{ch.username}</Badge>
+                      {ch.username
+                        ? <Badge variant="secondary" className="font-mono text-xs">{ch.username}</Badge>
+                        : <Badge variant="outline" className="text-xs text-muted-foreground">private</Badge>
+                      }
                       {ch.url && (
                         <a href={ch.url} target="_blank" rel="noopener noreferrer"
                            className="text-blue-500 hover:text-blue-600 inline-flex items-center gap-0.5 text-xs">
@@ -482,8 +506,27 @@ export default function Settings() {
                         </a>
                       )}
                     </div>
+                    {/* Test result */}
+                    {channelTests[ch.id] && !channelTests[ch.id].loading && (
+                      <div className={`mt-1 text-xs flex items-center gap-1 ${channelTests[ch.id].ok && channelTests[ch.id].isAdmin ? "text-green-600" : "text-amber-600"}`}>
+                        {channelTests[ch.id].ok && channelTests[ch.id].isAdmin
+                          ? <><Wifi className="w-3 h-3" /> {channelTests[ch.id].title} · Bot là {channelTests[ch.id].botStatus} ✓</>
+                          : <><WifiOff className="w-3 h-3" /> {channelTests[ch.id].error ?? `Bot status: ${channelTests[ch.id].botStatus} — cần là admin`}</>
+                        }
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => handleTestChannel(ch)}
+                      className="text-muted-foreground hover:text-blue-500 transition-colors p-1"
+                      title="Kiểm tra kết nối kênh"
+                    >
+                      {channelTests[ch.id]?.loading
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <Wifi className="w-4 h-4" />
+                      }
+                    </button>
                     <Switch
                       checked={ch.enabled}
                       onCheckedChange={v => handleToggleChannel(ch.id, v)}
