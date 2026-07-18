@@ -536,29 +536,41 @@ async def maintenance_reply(update: Update, L: str) -> bool:
 
 _JOINED_STATUSES = {"member", "administrator", "creator"}
 
-async def _check_channels_membership(bot, user_id: int, channels: list) -> list:
-    """Return list of enabled channels the user has NOT joined.
+async def _check_channels_membership(bot, user_id: int, channels: list) -> tuple[list, list]:
+    """Check membership for all enabled channels with a known chatId/username.
 
-    Channels without a username/chatId (private invite-link-only channels) cannot
-    be verified via getChatMember, so they are skipped in the check — the join
-    button still appears but membership is not enforced.
+    Returns:
+        (not_joined, api_errors)
+        - not_joined:  channels user has not joined (status left/kicked/restricted)
+        - api_errors:  channels where getChatMember raised an exception
+                       (likely bot is not admin in that channel)
+
+    Channels without username/chatId (private invite-link-only) are skipped —
+    the join button still appears but membership cannot be enforced.
     """
-    not_joined = []
+    not_joined: list = []
+    api_errors: list = []
+
     for ch in channels:
         chat_id = ch.get("chatId") or ch.get("username") or ""
         if not chat_id:
-            # Private channel — cannot verify; skip verification for this channel
+            # Private channel — cannot verify; skip
+            logger.info(f"[gift] channel '{ch.get('name')}' has no chatId — skipping verification")
             continue
-        # Normalize: if no @ and no +, treat as numeric or add @
+        # Normalize: ensure @ prefix for usernames
         if not str(chat_id).startswith(("-", "@", "+")):
             chat_id = f"@{chat_id}"
+        logger.info(f"[gift] getChatMember chat_id={chat_id} user_id={user_id}")
         try:
             member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+            logger.info(f"[gift] getChatMember status={member.status} channel={chat_id}")
             if member.status not in _JOINED_STATUSES:
                 not_joined.append(ch)
-        except Exception:
-            not_joined.append(ch)
-    return not_joined
+        except Exception as e:
+            logger.warning(f"[gift] getChatMember error channel={chat_id}: {e}")
+            api_errors.append(ch)
+
+    return not_joined, api_errors
 
 def _build_join_markup(L: str, not_joined: list) -> InlineKeyboardMarkup:
     vi = L == "vi"
@@ -573,7 +585,10 @@ def _build_join_markup(L: str, not_joined: list) -> InlineKeyboardMarkup:
                 f"📢 Tham gia {name}" if vi else f"📢 Join {name}", url=url
             )])
     buttons.append([InlineKeyboardButton(
-        "✅ Đã tham gia" if vi else "✅ I Joined", callback_data="check_join"
+        "✅ Tôi đã tham gia" if vi else "✅ I Joined", callback_data="check_join"
+    )])
+    buttons.append([InlineKeyboardButton(
+        "⬅️ Quay lại" if vi else "⬅️ Back", callback_data="back_main"
     )])
     return InlineKeyboardMarkup(buttons)
 
@@ -632,29 +647,42 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     vi   = L == "vi"
     settings = db.get_settings()
 
+    logger.info(f"[gift] giveaway button clicked user_id={user.id}")
+
     if not settings.get("gift_enabled", True):
         await update.message.reply_text(t(L, "gift_disabled"))
         return
     if db.is_banned(user.id):
         await update.message.reply_text(t(L, "gift_banned"))
         return
-    if db.stock_count() == 0:
-        await update.message.reply_text(t(L, "gift_empty"))
-        return
 
-    # ── Channel join-gate ──────────────────────────────────────────────────
+    # ── Channel join-gate TRƯỚC khi kiểm tra kho ──────────────────────────
     if settings.get("require_channel_check", False):
         channels         = db.get_required_channels()
         enabled_channels = [c for c in channels if c.get("enabled", True)]
+        logger.info(f"[gift] requiredChannels count={len(enabled_channels)}")
         if enabled_channels:
-            not_joined = await _check_channels_membership(context.bot, user.id, enabled_channels)
+            not_joined, api_errors = await _check_channels_membership(context.bot, user.id, enabled_channels)
+            logger.info(f"[gift] membership verified={len(not_joined)==0 and len(api_errors)==0} not_joined={len(not_joined)} api_errors={len(api_errors)}")
+
+            if api_errors:
+                names = ", ".join(f"<b>{c.get('name', 'kênh')}</b>" for c in api_errors)
+                await update.message.reply_text(
+                    f"⚠️ Không thể xác minh thành viên kênh {names}.\n"
+                    "Vui lòng kiểm tra bot đã được thêm làm <b>quản trị viên</b> của kênh.",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+
             if not_joined:
                 msg = (
-                    "⚠️ <b>Bạn cần tham gia kênh chính thức trước khi nhận quà.</b>\n\n"
-                    "Vui lòng tham gia kênh bên dưới rồi nhấn <b>✅ Đã tham gia</b> để tiếp tục."
+                    "⚠️ <b>BẠN CHƯA THAM GIA KÊNH</b>\n\n"
+                    "Để nhận quà miễn phí, vui lòng tham gia kênh chính thức bên dưới.\n\n"
+                    'Sau khi tham gia, nhấn "<b>✅ Tôi đã tham gia</b>" để xác minh.'
                 ) if vi else (
-                    "⚠️ <b>You need to join the official channel before claiming a gift.</b>\n\n"
-                    "Please join the channel(s) below, then tap <b>✅ I Joined</b> to continue."
+                    "⚠️ <b>YOU HAVEN'T JOINED THE CHANNEL</b>\n\n"
+                    "To receive a free gift, please join the official channel below.\n\n"
+                    'After joining, tap "<b>✅ I Joined</b>" to verify.'
                 )
                 await update.message.reply_text(
                     msg, parse_mode=ParseMode.HTML,
@@ -662,10 +690,17 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 )
                 return
 
+    # ── Kiểm tra kho SAU KHI đã xác minh tham gia kênh ───────────────────
+    stock = db.stock_count()
+    logger.info(f"[gift] membership verified=True stock={stock}")
+    if stock == 0:
+        await update.message.reply_text(t(L, "gift_empty"))
+        return
+
     await _claim_gift(user, context, L, settings)
 
 async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Called when user taps '✅ Đã tham gia' — re-verify then claim gift."""
+    """Called when user taps '✅ Tôi đã tham gia' — re-verify ALL channels then claim gift."""
     query = update.callback_query
     await query.answer()
     user = query.from_user
@@ -682,25 +717,60 @@ async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     channels         = db.get_required_channels()
     enabled_channels = [c for c in channels if c.get("enabled", True)]
-    not_joined       = await _check_channels_membership(context.bot, user.id, enabled_channels)
+    not_joined, api_errors = await _check_channels_membership(context.bot, user.id, enabled_channels)
+    logger.info(f"[gift] check_join callback user_id={user.id} not_joined={len(not_joined)} api_errors={len(api_errors)}")
+
+    if api_errors:
+        names = ", ".join(f"<b>{c.get('name', 'kênh')}</b>" for c in api_errors)
+        await query.edit_message_text(
+            f"⚠️ Không thể xác minh thành viên kênh {names}.\n"
+            "Vui lòng kiểm tra bot đã được thêm làm <b>quản trị viên</b> của kênh.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
 
     if not_joined:
         names = ", ".join(f"<b>{c.get('name') or c.get('username') or 'kênh'}</b>" for c in not_joined)
         msg = (
-            f"❌ <b>Bạn vẫn chưa tham gia kênh.</b>\n\nVui lòng tham gia trước khi nhận quà.\n📢 Chưa tham gia: {names}"
+            f"❌ <b>Bạn vẫn chưa tham gia đầy đủ các kênh.</b>\n\n"
+            f"📢 Chưa tham gia: {names}\n\n"
+            "Vui lòng tham gia rồi nhấn <b>✅ Tôi đã tham gia</b> lại."
         ) if vi else (
-            f"❌ <b>You haven't joined the required channel(s) yet.</b>\n\nPlease join first.\n📢 Not joined: {names}"
+            f"❌ <b>You haven't joined all required channels yet.</b>\n\n"
+            f"📢 Not joined: {names}\n\n"
+            "Please join then tap <b>✅ I Joined</b> again."
         )
         await query.edit_message_text(msg, parse_mode=ParseMode.HTML,
                                       reply_markup=query.message.reply_markup)
         return
 
+    # Xác minh thành công — kiểm tra kho rồi phát quà
+    stock = db.stock_count()
+    logger.info(f"[gift] check_join verified=True stock={stock}")
+    if stock == 0:
+        msg = (
+            "✅ <b>Xác minh thành công!</b>\n\n😔 Kho quà hiện đã hết. Hãy quay lại sau nhé!"
+            if vi else
+            "✅ <b>Verification successful!</b>\n\n😔 The gift stock is empty. Please come back later!"
+        )
+        await query.edit_message_text(msg, parse_mode=ParseMode.HTML)
+        return
+
     await query.edit_message_text(
-        "✅ <b>Xác minh thành công!</b> Bạn có thể nhận quà ngay bây giờ." if vi else
-        "✅ <b>Verification successful!</b> You can claim your gift now.",
+        "✅ <b>Xác minh thành công!</b> Đang gửi quà cho bạn..." if vi else
+        "✅ <b>Verification successful!</b> Sending your gift...",
         parse_mode=ParseMode.HTML,
     )
+    logger.info(f"[gift] gift delivered to user_id={user.id}")
     await _claim_gift(user, context, L, settings)
+
+async def callback_back_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Called when user taps '⬅️ Quay lại' from channel join screen."""
+    query = update.callback_query
+    await query.answer()
+    user  = query.from_user
+    L     = lang(user.id)
+    await query.delete_message()
 
 # ─── 💬 Hỗ Trợ — order lookup entry ─────────────────────────────────────────
 
@@ -1912,6 +1982,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_warranty_noop, pattern=r"^warranty_noop$"))
     app.add_handler(CallbackQueryHandler(callback_multi_warranty,  pattern=r"^mw:"))
     app.add_handler(CallbackQueryHandler(callback_check_join,    pattern=r"^check_join$"))
+    app.add_handler(CallbackQueryHandler(callback_back_main,     pattern=r"^back_main$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
