@@ -802,6 +802,54 @@ router.post("/bot/warranty/:id/accounts/:accId/replacement", requireAuth, async 
     msgLines.push(`\nVui lòng kiểm tra tài khoản ngay sau khi nhận.`);
   }
   const result = await sendTelegramMessage(req_.userId, msgLines.join("\n"));
+
+  // ── Write replacement chain record (same logic as single replacement) ────────
+  // acc.orderId is set when group requests are created from order:report_all / order:pick_items
+  const accOrderId = acc.orderId || req_.orderId || "";
+  const accEmail   = (acc.email || "").toLowerCase();
+  if (accOrderId && accEmail) {
+    const orderItems: any = readJson("order_items", {}) ?? {};
+    const itemList: any[] = orderItems[accOrderId] ?? [];
+    const itemIdx = itemList.findIndex(
+      (it: any) => (it.original_account || it.email || "").toLowerCase() === accEmail ||
+                   (it.current_account  || it.email || "").toLowerCase() === accEmail
+    );
+    if (itemIdx !== -1) {
+      const item = itemList[itemIdx];
+      const repNumber = (item.current_replacement_number ?? 0) + 1;
+      const allReps: any = readJson("account_replacements", {}) ?? {};
+      if (!allReps[item.itemId]) allReps[item.itemId] = [];
+      allReps[item.itemId].push({
+        id: crypto.randomUUID().slice(0, 12),
+        orderId: accOrderId,
+        orderItemId: item.itemId,
+        previousAccount: item.current_account || item.email || "",
+        newAccount: email,
+        newPassword: password,
+        newTwoFA: twoFA || null,
+        replacementNumber: repNumber,
+        deliveredAt: now(),
+        reason: note || "",
+        supportTicketId: id,
+        createdBy: "web-admin",
+        createdAt: now(),
+        status: "delivered",
+      });
+      writeJson("account_replacements", allReps);
+      itemList[itemIdx] = {
+        ...item,
+        current_account: email,
+        current_password: password,
+        current_two_fa: twoFA || null,
+        current_replacement_number: repNumber,
+        item_status: "active",
+        updatedAt: now(),
+      };
+      orderItems[accOrderId] = itemList;
+      writeJson("order_items", orderItems);
+    }
+  }
+
   const replacementData = { replacementEmail: email, replacementPassword: password, replacementTwoFA: twoFA || null, replacementNote: note || null, resolvedAt: now(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "sent" : "failed", sentAt: result.ok ? now() : null, sentError: result.ok ? null : result.error };
   requests[idx].accounts[accIdx] = { ...acc, ...replacementData };
   _recomputeGroupStatus(requests[idx]);
