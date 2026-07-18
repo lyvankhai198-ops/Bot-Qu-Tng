@@ -998,11 +998,22 @@ def calc_order_display(order: dict, settings: dict) -> dict:
     result = dict(order)
     today = date.today()
 
-    expiry_str = order.get("expiryDate", "")
+    # Resolve expiry date: explicit field first, then compute from purchaseDate + warrantyDays
+    expiry_str = (order.get("expiryDate") or "")[:10]
+    if not expiry_str:
+        purchase_str0 = (order.get("purchaseDate") or "")[:10]
+        wd0 = int(order.get("warrantyDays") or 0)
+        if purchase_str0 and wd0:
+            try:
+                from datetime import timedelta as _td
+                expiry_str = (date.fromisoformat(purchase_str0) + _td(days=wd0)).isoformat()
+            except Exception:
+                pass
+
     remaining_days = None
     if expiry_str:
         try:
-            expiry = date.fromisoformat(expiry_str[:10])
+            expiry = date.fromisoformat(expiry_str)
             remaining_days = max(0, (expiry - today).days)
         except Exception:
             pass
@@ -1021,10 +1032,10 @@ def calc_order_display(order: dict, settings: dict) -> dict:
     price = order.get("price", 0) or 0
     if remaining_days is not None and price:
         purchase_str = order.get("purchaseDate", "")
-        if purchase_str:
+        if purchase_str and expiry_str:
             try:
                 purchase = date.fromisoformat(purchase_str[:10])
-                expiry = date.fromisoformat(expiry_str[:10])
+                expiry = date.fromisoformat(expiry_str)
                 total_days = max(1, (expiry - purchase).days)
                 if settings.get("refund_formula") == "remaining_days":
                     refund_amount = round(price * remaining_days / total_days)
@@ -1033,6 +1044,9 @@ def calc_order_display(order: dict, settings: dict) -> dict:
         custom_text = settings.get("refund_custom_text", "")
         if settings.get("refund_formula") == "custom" and custom_text:
             refund_amount = custom_text
+
+    # Expose resolved expiry_str so callers can use it
+    result["_resolved_expiry_date"] = expiry_str or ""
 
     result["_remaining_days"] = remaining_days
     result["_warranty_ok"] = warranty_ok
