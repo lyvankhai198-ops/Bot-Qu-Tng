@@ -15,10 +15,10 @@ from threading import Thread
 from flask import Flask, jsonify
 from telegram import (
     Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton,
+    BotCommand, BotCommandScopeAllPrivateChats,
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    BotCommand, BotCommandScopeAllPrivateChats,
     ContextTypes, filters,
 )
 from telegram.constants import ParseMode
