@@ -1,43 +1,59 @@
 import { Router } from "express";
 import multer from "multer";
 
-// ── OpenAI-compatible client (Groq preferred, fallback to Replit AI Integration) ─
+// ── AI backend detection ──────────────────────────────────────────────────────
+type AiBackend = "gemini" | "openai";
+let _backend: AiBackend | null = null;
 let _openai: any = null;
 let _model: string = "gpt-5.6-luna";
 
+function detectBackend(): AiBackend {
+  if (process.env.GOOGLE_AI_API_KEY) return "gemini";
+  if (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL && process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return "openai";
+  throw new Error("Chưa cấu hình AI: cần GOOGLE_AI_API_KEY hoặc AI env vars");
+}
+
 async function getOpenAI(): Promise<any> {
   if (!_openai) {
-    // 1. Google Gemini (free tier, OpenAI-compatible, works on VPS)
-    const googleKey = process.env.GOOGLE_AI_API_KEY;
-    if (googleKey) {
-      const { default: OpenAI } = await import("openai");
-      _openai = new OpenAI({
-        apiKey:  googleKey,
-        baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-      });
-      _model = "gemini-2.0-flash";
-      return _openai;
-    }
-    // 2. Groq (free, works on VPS)
-    const groqKey = process.env.GROQ_API_KEY;
-    if (groqKey) {
-      const { default: OpenAI } = await import("openai");
-      _openai = new OpenAI({ apiKey: groqKey, baseURL: "https://api.groq.com/openai/v1" });
-      _model  = "llama-4-scout-17b-16e-instruct";
-      return _openai;
-    }
-    // 3. Replit AI Integration (only works inside Replit environment)
-    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-    const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-    if (baseURL && apiKey) {
-      const { default: OpenAI } = await import("openai");
-      _openai = new OpenAI({ apiKey, baseURL });
-      _model  = "gpt-5.6-luna";
-      return _openai;
-    }
-    throw new Error("Chưa cấu hình AI: cần GROQ_API_KEY hoặc AI_INTEGRATIONS_OPENAI_BASE_URL");
+    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL!;
+    const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY!;
+    const { default: OpenAI } = await import("openai");
+    _openai = new OpenAI({ apiKey, baseURL });
+    _model  = "gpt-5.6-luna";
   }
   return _openai;
+}
+
+/** Call Gemini REST API directly — more reliable than OpenAI-compat wrapper */
+async function callGemini(base64: string, mimeType: string): Promise<string> {
+  const apiKey = process.env.GOOGLE_AI_API_KEY!;
+  const model  = "gemini-2.0-flash";
+  const url    = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const body = {
+    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    contents: [{
+      parts: [
+        { text: "Trích xuất thông tin đơn hàng từ ảnh này." },
+        { inline_data: { mime_type: mimeType, data: base64 } }
+      ]
+    }],
+    generationConfig: { maxOutputTokens: 1024 }
+  };
+
+  const resp = await fetch(url, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Gemini ${resp.status}: ${text.slice(0, 200)}`);
+  }
+
+  const data: any = await resp.json();
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
 // ── Multer — multipart/form-data, memory storage ─────────────────────────────
@@ -128,24 +144,31 @@ router.post(
         const base64   = file.buffer.toString("base64");
         const mimeType = file.mimetype.startsWith("image/") ? file.mimetype : "image/jpeg";
 
-        const oai      = await getOpenAI();
-        const response = await oai.chat.completions.create({
-          model: _model,
-          max_completion_tokens: 1024,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            {
-              role: "user",
-              content: [
-                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
-                { type: "text", text: "Trích xuất thông tin đơn hàng từ ảnh này." },
-              ],
-            },
-          ],
-        });
+        const backend = detectBackend();
+        let raw = "";
 
-        const raw     = response.choices[0]?.message?.content ?? "";
-        const cleaned = raw.replace(/```(?:json)?/g, "").replace(/```/g, "").trim();
+        if (backend === "gemini") {
+          raw = await callGemini(base64, mimeType);
+        } else {
+          const oai = await getOpenAI();
+          const response = await oai.chat.completions.create({
+            model: _model,
+            max_completion_tokens: 1024,
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              {
+                role: "user",
+                content: [
+                  { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
+                  { type: "text", text: "Trích xuất thông tin đơn hàng từ ảnh này." },
+                ],
+              },
+            ],
+          });
+          raw = response.choices[0]?.message?.content ?? "";
+        }
+
+        const cleaned   = raw.replace(/```(?:json)?/g, "").replace(/```/g, "").trim();
         const extracted = JSON.parse(cleaned);
 
         // Validate required field

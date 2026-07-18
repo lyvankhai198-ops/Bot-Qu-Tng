@@ -62767,36 +62767,46 @@ var import_express3 = __toESM(require_express2(), 1);
 var import_multer = __toESM(require_multer(), 1);
 var _openai = null;
 var _model = "gpt-5.6-luna";
+function detectBackend() {
+  if (process.env.GOOGLE_AI_API_KEY) return "gemini";
+  if (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL && process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return "openai";
+  throw new Error("Ch\u01B0a c\u1EA5u h\xECnh AI: c\u1EA7n GOOGLE_AI_API_KEY ho\u1EB7c AI env vars");
+}
 async function getOpenAI() {
   if (!_openai) {
-    const googleKey = process.env.GOOGLE_AI_API_KEY;
-    if (googleKey) {
-      const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
-      _openai = new OpenAI2({
-        apiKey: googleKey,
-        baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/"
-      });
-      _model = "gemini-2.0-flash";
-      return _openai;
-    }
-    const groqKey = process.env.GROQ_API_KEY;
-    if (groqKey) {
-      const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
-      _openai = new OpenAI2({ apiKey: groqKey, baseURL: "https://api.groq.com/openai/v1" });
-      _model = "llama-4-scout-17b-16e-instruct";
-      return _openai;
-    }
     const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
     const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-    if (baseURL && apiKey) {
-      const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
-      _openai = new OpenAI2({ apiKey, baseURL });
-      _model = "gpt-5.6-luna";
-      return _openai;
-    }
-    throw new Error("Ch\u01B0a c\u1EA5u h\xECnh AI: c\u1EA7n GROQ_API_KEY ho\u1EB7c AI_INTEGRATIONS_OPENAI_BASE_URL");
+    const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
+    _openai = new OpenAI2({ apiKey, baseURL });
+    _model = "gpt-5.6-luna";
   }
   return _openai;
+}
+async function callGemini(base64, mimeType) {
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
+  const model = "gemini-2.0-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const body = {
+    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    contents: [{
+      parts: [
+        { text: "Tr\xEDch xu\u1EA5t th\xF4ng tin \u0111\u01A1n h\xE0ng t\u1EEB \u1EA3nh n\xE0y." },
+        { inline_data: { mime_type: mimeType, data: base64 } }
+      ]
+    }],
+    generationConfig: { maxOutputTokens: 1024 }
+  };
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Gemini ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 var upload = (0, import_multer.default)({
   storage: import_multer.default.memoryStorage(),
@@ -62880,22 +62890,28 @@ router3.post(
       try {
         const base64 = file.buffer.toString("base64");
         const mimeType = file.mimetype.startsWith("image/") ? file.mimetype : "image/jpeg";
-        const oai = await getOpenAI();
-        const response = await oai.chat.completions.create({
-          model: _model,
-          max_completion_tokens: 1024,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            {
-              role: "user",
-              content: [
-                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
-                { type: "text", text: "Tr\xEDch xu\u1EA5t th\xF4ng tin \u0111\u01A1n h\xE0ng t\u1EEB \u1EA3nh n\xE0y." }
-              ]
-            }
-          ]
-        });
-        const raw = response.choices[0]?.message?.content ?? "";
+        const backend = detectBackend();
+        let raw = "";
+        if (backend === "gemini") {
+          raw = await callGemini(base64, mimeType);
+        } else {
+          const oai = await getOpenAI();
+          const response = await oai.chat.completions.create({
+            model: _model,
+            max_completion_tokens: 1024,
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              {
+                role: "user",
+                content: [
+                  { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
+                  { type: "text", text: "Tr\xEDch xu\u1EA5t th\xF4ng tin \u0111\u01A1n h\xE0ng t\u1EEB \u1EA3nh n\xE0y." }
+                ]
+              }
+            ]
+          });
+          raw = response.choices[0]?.message?.content ?? "";
+        }
         const cleaned = raw.replace(/```(?:json)?/g, "").replace(/```/g, "").trim();
         const extracted = JSON.parse(cleaned);
         if (!extracted.email?.value) throw new Error("Kh\xF4ng t\xECm th\u1EA5y email/t\xE0i kho\u1EA3n trong \u1EA3nh");
