@@ -41,3 +41,11 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+VPS_DEPLOY_PATH = "/root/Bot-Qu-Tng"
+VPS_HOST = "103.180.138.203"
+VPS_SERVICE = "gift-bot"
+VPS_USER = "root"
