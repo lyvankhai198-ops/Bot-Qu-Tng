@@ -51260,6 +51260,95 @@ router2.put("/bot/intro", requireAuth, (req, res) => {
   addLog("UPDATE_INTRO", "", "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 c\u1EADp nh\u1EADt gi\u1EDBi thi\u1EC7u" });
 });
+router2.get("/giveaway/membership-debug/:telegramUserId", requireAuth, async (req, res) => {
+  const { telegramUserId } = req.params;
+  if (!TG_TOKEN) {
+    res.status(503).json({ error: "TELEGRAM_BOT_TOKEN not configured" });
+    return;
+  }
+  const channels = readJson("required_channels", []) ?? [];
+  const enabled = channels.filter((c) => c.enabled !== false);
+  const JOINED = /* @__PURE__ */ new Set(["member", "administrator", "creator"]);
+  const results = await Promise.all(enabled.map(async (ch) => {
+    const chatId = (ch.chatId || ch.username || "").trim();
+    const entry = { title: ch.name, channelId: chatId || "(none \u2014 private invite link)", inviteUrl: ch.url || "", enabled: true };
+    if (!chatId) {
+      entry.botCanAccess = null;
+      entry.memberStatus = "unverifiable (no chatId)";
+      return entry;
+    }
+    const normalized = chatId.startsWith("-") || chatId.startsWith("+") || chatId.startsWith("@") ? chatId : `@${chatId}`;
+    try {
+      const chatResp = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getChat?chat_id=${encodeURIComponent(normalized)}`);
+      const chatData = await chatResp.json();
+      entry.botCanAccess = chatData.ok;
+      if (!chatData.ok) {
+        entry.memberStatus = "error: " + (chatData.description ?? "cannot access channel");
+        return entry;
+      }
+      const mResp = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getChatMember?chat_id=${encodeURIComponent(normalized)}&user_id=${telegramUserId}`);
+      const mData = await mResp.json();
+      if (mData.ok) {
+        entry.memberStatus = mData.result.status;
+        if (mData.result.status === "restricted") entry.is_member = mData.result.is_member ?? false;
+      } else {
+        entry.memberStatus = "error: " + (mData.description ?? "getChatMember failed");
+        entry.botCanAccess = false;
+      }
+    } catch (e) {
+      entry.botCanAccess = false;
+      entry.memberStatus = "error: " + (e?.message ?? "network");
+    }
+    return entry;
+  }));
+  const allJoined = results.every((r) => {
+    if (!r.channelId || r.channelId.includes("none")) return true;
+    if (r.memberStatus === "restricted") return r.is_member === true;
+    return JOINED.has(r.memberStatus);
+  });
+  const missingCount = results.filter((r) => {
+    if (!r.channelId || r.channelId.includes("none")) return false;
+    if (r.memberStatus === "restricted") return !(r.is_member === true);
+    return !JOINED.has(r.memberStatus);
+  }).length;
+  res.json({ requiredChannels: results, allJoined, missingCount });
+});
+router2.get("/bot/check-channel/:channelId", requireAuth, async (req, res) => {
+  if (!TG_TOKEN) {
+    res.status(503).json({ ok: false, error: "TELEGRAM_BOT_TOKEN not configured" });
+    return;
+  }
+  const raw = decodeURIComponent(req.params.channelId);
+  if (!raw) {
+    res.status(400).json({ ok: false, error: "channelId required" });
+    return;
+  }
+  const chatId = raw.startsWith("-") || raw.startsWith("@") ? raw : `@${raw}`;
+  try {
+    const chatResp = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getChat?chat_id=${encodeURIComponent(chatId)}`);
+    const chatData = await chatResp.json();
+    if (!chatData.ok) {
+      res.json({ ok: false, canAccess: false, error: chatData.description ?? "Cannot access channel" });
+      return;
+    }
+    const meResp = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getMe`);
+    const meData = await meResp.json();
+    const botId = meData.result?.id;
+    let isAdmin = false;
+    let botStatus = "unknown";
+    if (botId) {
+      const mResp = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getChatMember?chat_id=${encodeURIComponent(chatId)}&user_id=${botId}`);
+      const mData = await mResp.json();
+      if (mData.ok) {
+        botStatus = mData.result.status;
+        isAdmin = ["administrator", "creator"].includes(botStatus);
+      }
+    }
+    res.json({ ok: true, canAccess: true, title: chatData.result?.title, username: chatData.result?.username ? `@${chatData.result.username}` : null, type: chatData.result?.type, botStatus, isAdmin, getChatMemberWorks: isAdmin });
+  } catch (e) {
+    res.json({ ok: false, canAccess: false, error: e?.message ?? "Network error" });
+  }
+});
 router2.get("/bot/backup", requireAuth, (_req, res) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
   const backup = { exportedAt: now() };
