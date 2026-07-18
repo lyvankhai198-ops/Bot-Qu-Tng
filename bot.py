@@ -72,12 +72,14 @@ def order_inline(L: str, order_id: str) -> InlineKeyboardMarkup:
 
 _VND_PER_USDT = 10_000 / 0.38  # ≈ 26,315.79 VND per USDT
 
-def _fmt_price(vnd: float) -> str:
-    """Convert VND amount to USDT string."""
-    usdt = vnd / _VND_PER_USDT
-    if usdt < 0.01:
-        return f"{usdt:.4f} USDT"
-    return f"{usdt:.2f} USDT"
+def _fmt_price(vnd: float, L: str = "vi") -> str:
+    """Format price: VND for vi, USDT for en."""
+    if L == "en":
+        usdt = vnd / _VND_PER_USDT
+        if usdt < 0.01:
+            return f"{usdt:.4f} USDT"
+        return f"{usdt:.2f} USDT"
+    return f"{int(vnd):,}đ"
 
 def _fmt_order(L: str, order: dict, settings: dict) -> str:
     data = db.calc_order_display(order, settings)
@@ -105,10 +107,10 @@ def _fmt_order(L: str, order: dict, settings: dict) -> str:
     elif isinstance(refund_amt, str):
         refund_str = refund_amt
     else:
-        refund_str = f"~{_fmt_price(refund_amt)}"
+        refund_str = f"~{_fmt_price(refund_amt, L)}"
 
     price = order.get("price", 0) or 0
-    price_str = _fmt_price(int(price)) if price else "N/A"
+    price_str = _fmt_price(int(price), L) if price else "N/A"
 
     status_map = {
         "active":    t(L, "status_active"),
