@@ -1101,22 +1101,64 @@ router.post("/bot/warranty/:id/resend", requireAuth, async (req: any, res: any) 
 // ── POST /bot/warranty/:id/refund ────────────────────────────────────────────
 router.post("/bot/warranty/:id/refund", requireAuth, async (req: any, res: any) => {
   const { id } = req.params;
-  const { amount, note } = req.body ?? {};
+  const { amount, note, adminName } = req.body ?? {};
   const requests: any[] = readJson("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r: any) => r.id === id);
   if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
   const req_ = requests[idx];
-  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: now(), resolvedBy: "web-admin", reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
+  const resolvedBy = adminName || "web-admin";
+  const refundedAt = now();
+  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: refundedAt, resolvedBy, reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   writeJson("warranty_requests", requests);
+
+  // Update order: mark refunded + store amount/time
   const orders: any = readJson("orders", {}) ?? {};
+  const email = req_.email || (req_.accounts && req_.accounts[0]?.originalEmail) || "";
   if (req_.orderId && orders[req_.orderId]) {
     orders[req_.orderId].status = "refunded";
+    orders[req_.orderId].refundedAt = refundedAt;
+    orders[req_.orderId].refundAmount = Number(amount);
     writeJson("orders", orders);
   }
-  const msg = `💰 <b>Yêu cầu hoàn tiền đã được chấp nhận!</b>\n\nSố tiền hoàn: <b>${Number(amount).toLocaleString("vi")}đ</b>${note ? `\n\n📝 Ghi chú: ${note}` : ""}`;
+
+  // Save to refund_history.json
+  const history: any[] = readJson("refund_history", []) ?? [];
+  const record = {
+    id: crypto.randomUUID(),
+    warrantyRequestId: id,
+    orderId: req_.orderId || null,
+    email,
+    amount: Number(amount),
+    note: note || "",
+    refundedAt,
+    refundedBy: resolvedBy,
+  };
+  history.push(record);
+  writeJson("refund_history", history);
+
+  // Send notification to customer (Vietnamese)
+  const amountStr = Number(amount).toLocaleString("vi");
+  const msg =
+    `💰 <b>Hoàn tiền thành công</b>\n\n` +
+    `📧 Tài khoản: <code>${email}</code>\n` +
+    `💵 Số tiền hoàn: <b>${amountStr}đ</b>` +
+    (note ? `\n\n📝 Ghi chú: ${note}` : "") +
+    `\n\n📝 Lưu ý:\nTiền hoàn sẽ được cộng trực tiếp vào ví mua hàng của quý khách tại Kênh Mua Hàng và có thể sử dụng cho các đơn hàng tiếp theo.`;
   await sendTelegramMessage(req_.userId, msg);
-  addLog("WARRANTY_REFUND", `${id} → ${amount}đ`, "web-admin");
+  addLog("WARRANTY_REFUND", `${id} → ${amountStr}đ | ${email}`, resolvedBy);
   res.json({ ok: true, message: "Đã xử lý hoàn tiền" });
+});
+
+// ── GET /bot/refund-history ───────────────────────────────────────────────────
+router.get("/bot/refund-history", requireAuth, (req: any, res: any) => {
+  const history: any[] = readJson("refund_history", []) ?? [];
+  const { orderId, email, from, to } = req.query;
+  let result = [...history].reverse(); // newest first
+  if (orderId) result = result.filter((r: any) => (r.orderId || "").includes(String(orderId)));
+  if (email)   result = result.filter((r: any) => (r.email || "").toLowerCase().includes(String(email).toLowerCase()));
+  if (from)    result = result.filter((r: any) => r.refundedAt >= String(from));
+  if (to)      result = result.filter((r: any) => r.refundedAt <= String(to) + "T23:59:59");
+  res.json(result);
 });
 
 // ── POST /bot/warranty/:id/reject ────────────────────────────────────────────

@@ -623,6 +623,10 @@ def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
         warranty_status = "active" if remaining_days > 0 else "expired"
         can_report = warranty_status == "active"
 
+    # Block warranty reporting for orders that were already refunded
+    if order.get("status") == "refunded":
+        can_report = False
+
     # Pro-rated refund
     refund_amount = 0
     price = order.get("price", 0) or 0
@@ -959,6 +963,16 @@ def get_intro() -> dict:
 
 def save_intro(data: dict):
     save("intro", data)
+
+# ─── Refund history ──────────────────────────────────────────────────────────
+
+def get_refund_record(order_id: str) -> dict | None:
+    """Return the most recent refund record for an order, or None."""
+    if not order_id:
+        return None
+    history = load("refund_history", [])
+    matches = [r for r in history if r.get("orderId") == order_id]
+    return matches[-1] if matches else None
 
 # ─── Logs ──────────────────────────────────────────────────────────────────
 

@@ -15,6 +15,7 @@ import {
   Bot,
   Menu,
   X,
+  Wallet,
 } from "lucide-react"
 import { Button } from "./ui/button"
 
@@ -27,6 +28,7 @@ const navItems = [
   { href: "/broadcast", label: "Gửi tin nhắn", icon: Send },
   { href: "/intro", label: "Cấu hình Intro", icon: FileText },
   { href: "/receivers", label: "Đã nhận quà", icon: Gift },
+  { href: "/refund-history", label: "Lịch sử hoàn tiền", icon: Wallet },
   { href: "/logs", label: "Lịch sử hệ thống", icon: Activity },
   { href: "/settings", label: "Cài đặt", icon: SettingsIcon },
 ]

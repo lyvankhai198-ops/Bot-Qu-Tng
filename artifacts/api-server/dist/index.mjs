@@ -50903,7 +50903,7 @@ router2.post("/bot/warranty/:id/resend", requireAuth, async (req, res) => {
 });
 router2.post("/bot/warranty/:id/refund", requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { amount, note } = req.body ?? {};
+  const { amount, note, adminName } = req.body ?? {};
   const requests = readJson("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id);
   if (idx === -1) {
@@ -50911,21 +50911,54 @@ router2.post("/bot/warranty/:id/refund", requireAuth, async (req, res) => {
     return;
   }
   const req_ = requests[idx];
-  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: now(), resolvedBy: "web-admin", reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
+  const resolvedBy = adminName || "web-admin";
+  const refundedAt = now();
+  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: refundedAt, resolvedBy, reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   writeJson("warranty_requests", requests);
   const orders = readJson("orders", {}) ?? {};
+  const email = req_.email || req_.accounts && req_.accounts[0]?.originalEmail || "";
   if (req_.orderId && orders[req_.orderId]) {
     orders[req_.orderId].status = "refunded";
+    orders[req_.orderId].refundedAt = refundedAt;
+    orders[req_.orderId].refundAmount = Number(amount);
     writeJson("orders", orders);
   }
-  const msg = `\u{1F4B0} <b>Y\xEAu c\u1EA7u ho\xE0n ti\u1EC1n \u0111\xE3 \u0111\u01B0\u1EE3c ch\u1EA5p nh\u1EADn!</b>
+  const history = readJson("refund_history", []) ?? [];
+  const record = {
+    id: crypto.randomUUID(),
+    warrantyRequestId: id,
+    orderId: req_.orderId || null,
+    email,
+    amount: Number(amount),
+    note: note || "",
+    refundedAt,
+    refundedBy: resolvedBy
+  };
+  history.push(record);
+  writeJson("refund_history", history);
+  const amountStr = Number(amount).toLocaleString("vi");
+  const msg = `\u{1F4B0} <b>Ho\xE0n ti\u1EC1n th\xE0nh c\xF4ng</b>
 
-S\u1ED1 ti\u1EC1n ho\xE0n: <b>${Number(amount).toLocaleString("vi")}\u0111</b>${note ? `
+\u{1F4E7} T\xE0i kho\u1EA3n: <code>${email}</code>
+\u{1F4B5} S\u1ED1 ti\u1EC1n ho\xE0n: <b>${amountStr}\u0111</b>` + (note ? `
 
-\u{1F4DD} Ghi ch\xFA: ${note}` : ""}`;
+\u{1F4DD} Ghi ch\xFA: ${note}` : "") + `
+
+\u{1F4DD} L\u01B0u \xFD:
+Ti\u1EC1n ho\xE0n s\u1EBD \u0111\u01B0\u1EE3c c\u1ED9ng tr\u1EF1c ti\u1EBFp v\xE0o v\xED mua h\xE0ng c\u1EE7a qu\xFD kh\xE1ch t\u1EA1i K\xEAnh Mua H\xE0ng v\xE0 c\xF3 th\u1EC3 s\u1EED d\u1EE5ng cho c\xE1c \u0111\u01A1n h\xE0ng ti\u1EBFp theo.`;
   await sendTelegramMessage(req_.userId, msg);
-  addLog("WARRANTY_REFUND", `${id} \u2192 ${amount}\u0111`, "web-admin");
+  addLog("WARRANTY_REFUND", `${id} \u2192 ${amountStr}\u0111 | ${email}`, resolvedBy);
   res.json({ ok: true, message: "\u0110\xE3 x\u1EED l\xFD ho\xE0n ti\u1EC1n" });
+});
+router2.get("/bot/refund-history", requireAuth, (req, res) => {
+  const history = readJson("refund_history", []) ?? [];
+  const { orderId, email, from, to } = req.query;
+  let result = [...history].reverse();
+  if (orderId) result = result.filter((r) => (r.orderId || "").includes(String(orderId)));
+  if (email) result = result.filter((r) => (r.email || "").toLowerCase().includes(String(email).toLowerCase()));
+  if (from) result = result.filter((r) => r.refundedAt >= String(from));
+  if (to) result = result.filter((r) => r.refundedAt <= String(to) + "T23:59:59");
+  res.json(result);
 });
 router2.post("/bot/warranty/:id/reject", requireAuth, async (req, res) => {
   const { id } = req.params;
