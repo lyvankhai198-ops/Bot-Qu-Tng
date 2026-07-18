@@ -2,6 +2,9 @@
 
 # compiled output
 dist
+# Nhưng cho phép dist của admin-panel và api-server (VPS dùng git pull để lấy)
+!artifacts/admin-panel/dist/
+!artifacts/api-server/dist/
 tmp
 out-tsc
 *.tsbuildinfo
