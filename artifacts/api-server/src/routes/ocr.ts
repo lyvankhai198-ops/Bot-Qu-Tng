@@ -1,63 +1,43 @@
 import { Router } from "express";
+import multer from "multer";
 
-// Lazy dynamic import — prevents crash at startup when AI env vars are absent (e.g. VPS)
+// ── OpenAI lazy init ─────────────────────────────────────────────────────────
 let _openai: any = null;
 async function getOpenAI(): Promise<any> {
   if (!_openai) {
     const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-    const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-    if (!baseURL || !apiKey) throw new Error("AI env vars not configured on this server. OCR requires AI_INTEGRATIONS_OPENAI_BASE_URL and AI_INTEGRATIONS_OPENAI_API_KEY.");
+    const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    if (!baseURL || !apiKey)
+      throw new Error("AI env vars not configured. Set AI_INTEGRATIONS_OPENAI_BASE_URL and AI_INTEGRATIONS_OPENAI_API_KEY.");
     const { default: OpenAI } = await import("openai");
     _openai = new OpenAI({ apiKey, baseURL });
   }
   return _openai;
 }
 
+// ── Multer — multipart/form-data, memory storage ─────────────────────────────
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024, files: 20 },   // 15 MB per file, max 20
+  fileFilter: (_req: any, file: any, cb: any) => {
+    const ok = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
+    if (ok.includes(file.mimetype) || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(file.originalname)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File không hỗ trợ: ${file.originalname} (${file.mimetype}). Chỉ chấp nhận JPG, PNG, WEBP, HEIC.`));
+    }
+  },
+});
+
 const router = Router();
 
-// ── Auth middleware (reuse same pattern as botAdmin) ────────────────────────
+// ── Auth middleware ──────────────────────────────────────────────────────────
 const ADMIN_SECRET = process.env.SESSION_SECRET ?? "";
-
 function requireAuth(req: any, res: any, next: any) {
   const auth = req.headers["authorization"] ?? "";
   if (!auth.startsWith("Bearer ")) { res.status(401).json({ error: "Unauthorized" }); return; }
-  const token = auth.slice(7);
-  if (!ADMIN_SECRET || token !== ADMIN_SECRET) { res.status(401).json({ error: "Invalid token" }); return; }
+  if (!ADMIN_SECRET || auth.slice(7) !== ADMIN_SECRET) { res.status(401).json({ error: "Invalid token" }); return; }
   next();
-}
-
-// ── Types ───────────────────────────────────────────────────────────────────
-interface ImageInput {
-  data: string;       // base64 encoded image
-  mimeType: string;   // e.g. "image/jpeg"
-  filename?: string;
-}
-
-type Confidence = "high" | "medium" | "low";
-
-interface ExtractedField<T = string | null> {
-  value: T;
-  confidence: Confidence;
-}
-
-interface OcrExtractedOrder {
-  email: ExtractedField;
-  password: ExtractedField;
-  twoFA: ExtractedField;
-  productName: ExtractedField;
-  price: ExtractedField<number | null>;
-  customerName: ExtractedField;
-  status: ExtractedField;
-  purchaseDate: ExtractedField;   // ISO date string YYYY-MM-DD
-  paymentMethod: ExtractedField;
-  warrantyDays: ExtractedField<number | null>;
-}
-
-interface OcrImageResult {
-  filename: string;
-  success: boolean;
-  error?: string;
-  extracted?: OcrExtractedOrder;
 }
 
 // ── OCR prompt ───────────────────────────────────────────────────────────────
@@ -66,84 +46,94 @@ Nhiệm vụ: đọc ảnh và trả về JSON với cấu trúc chính xác.
 
 Quy tắc trích xuất:
 - Đọc toàn bộ nội dung có trong ảnh, kể cả phần nhỏ
-- purchaseDate: ưu tiên "thời gian thanh toán" → "giao lúc" → "tạo lúc". Chỉ lấy phần ngày (YYYY-MM-DD)
+- purchaseDate: ưu tiên "thời gian thanh toán" → "giao lúc" → "tạo lúc". Chỉ lấy phần ngày, format YYYY-MM-DD
 - price: trích số tiền (bỏ chữ "đ", "VNĐ", dấu chấm/phẩy ngăn cách ngàn). Ví dụ "90.000đ" → 90000
 - warrantyDays: tự suy từ tên sản phẩm: "30D" hoặc "30 ngày" → 30, "3 THÁNG" → 90, "10D" → 10. Trả null nếu không suy được
 - status: map về "active"/"expired"/"refunded". "Đã giao" → "active", "Hoàn tiền" → "refunded"
 - twoFA: trả null nếu không có
+- email: ưu tiên trường "Email/tài khoản" hoặc "Tài khoản đã giao"
 - Chuẩn hóa ký tự tiếng Việt (Unicode NFC)
 - confidence: "high" = rõ ràng chắc chắn, "medium" = đọc được nhưng không chắc, "low" = đoán/không tìm thấy
 
 Trả về JSON EXACTLY theo cấu trúc sau, KHÔNG kèm markdown:
 {
-  "email": {"value": "...", "confidence": "high|medium|low"},
-  "password": {"value": "...", "confidence": "high|medium|low"},
+  "email": {"value": "...", "confidence": "high"},
+  "password": {"value": "...", "confidence": "high"},
   "twoFA": {"value": null, "confidence": "high"},
-  "productName": {"value": "...", "confidence": "high|medium|low"},
-  "price": {"value": 90000, "confidence": "high|medium|low"},
-  "customerName": {"value": "...", "confidence": "high|medium|low"},
-  "status": {"value": "active", "confidence": "high|medium|low"},
-  "purchaseDate": {"value": "2026-07-18", "confidence": "high|medium|low"},
-  "paymentMethod": {"value": "...", "confidence": "high|medium|low"},
-  "warrantyDays": {"value": 30, "confidence": "high|medium|low"}
+  "productName": {"value": "...", "confidence": "high"},
+  "price": {"value": 90000, "confidence": "high"},
+  "customerName": {"value": "...", "confidence": "high"},
+  "status": {"value": "active", "confidence": "high"},
+  "purchaseDate": {"value": "2026-07-18", "confidence": "high"},
+  "paymentMethod": {"value": "...", "confidence": "high"},
+  "warrantyDays": {"value": 30, "confidence": "high"}
 }`;
 
 // ── POST /bot/orders/ocr-extract ─────────────────────────────────────────────
-router.post("/bot/orders/ocr-extract", requireAuth, async (req: any, res: any) => {
-  const { images } = req.body as { images: ImageInput[] };
+router.post(
+  "/bot/orders/ocr-extract",
+  requireAuth,
+  (req: any, res: any, next: any) => {
+    upload.array("images", 20)(req, res, (err: any) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE")
+          return res.status(400).json({ error: "File quá lớn (tối đa 15MB mỗi ảnh)" });
+        if (err.code === "LIMIT_FILE_COUNT")
+          return res.status(400).json({ error: "Quá nhiều ảnh (tối đa 20)" });
+        return res.status(400).json({ error: err.message });
+      }
+      if (err) return res.status(400).json({ error: err.message });
+      next();
+    });
+  },
+  async (req: any, res: any) => {
+    const files: Express.Multer.File[] = req.files ?? [];
 
-  if (!Array.isArray(images) || images.length === 0) {
-    return res.status(400).json({ error: "images array required" });
-  }
-  if (images.length > 20) {
-    return res.status(400).json({ error: "Too many images (max 20)" });
-  }
-
-  const results: OcrImageResult[] = [];
-
-  for (const img of images) {
-    const filename = img.filename || "image";
-    try {
-      if (!img.data || !img.mimeType) throw new Error("Missing data or mimeType");
-
-      const supported = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-      if (!supported.includes(img.mimeType)) throw new Error(`Unsupported type: ${img.mimeType}`);
-
-      const oai = await getOpenAI();
-      const response = await oai.chat.completions.create({
-        model: "gpt-5.6-luna",
-        max_completion_tokens: 1024,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:${img.mimeType};base64,${img.data}`,
-                  detail: "high",
-                },
-              },
-              { type: "text", text: "Trích xuất thông tin đơn hàng từ ảnh này." },
-            ],
-          },
-        ],
-      });
-
-      const raw = response.choices[0]?.message?.content ?? "";
-      // Strip any markdown code fences just in case
-      const cleaned = raw.replace(/```(?:json)?/g, "").replace(/```/g, "").trim();
-      const extracted: OcrExtractedOrder = JSON.parse(cleaned);
-
-      results.push({ filename, success: true, extracted });
-    } catch (err: any) {
-      // Don't log actual passwords or base64 data
-      results.push({ filename, success: false, error: String(err?.message ?? "Unknown error") });
+    if (!files.length) {
+      return res.status(400).json({ error: "Không nhận được ảnh. Vui lòng thử lại." });
     }
-  }
 
-  res.json({ results });
-});
+    const results: Array<{ filename: string; success: boolean; extracted?: any; error?: string }> = [];
+
+    for (const file of files) {
+      const filename = file.originalname || "image";
+      // Log only technical metadata, never content
+      console.info(`OCR: ${filename} ${file.size}B ${file.mimetype}`);
+      try {
+        const base64   = file.buffer.toString("base64");
+        const mimeType = file.mimetype.startsWith("image/") ? file.mimetype : "image/jpeg";
+
+        const oai      = await getOpenAI();
+        const response = await oai.chat.completions.create({
+          model: "gpt-5.6-luna",
+          max_completion_tokens: 1024,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            {
+              role: "user",
+              content: [
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
+                { type: "text", text: "Trích xuất thông tin đơn hàng từ ảnh này." },
+              ],
+            },
+          ],
+        });
+
+        const raw     = response.choices[0]?.message?.content ?? "";
+        const cleaned = raw.replace(/```(?:json)?/g, "").replace(/```/g, "").trim();
+        const extracted = JSON.parse(cleaned);
+
+        // Validate required field
+        if (!extracted.email?.value) throw new Error("Không tìm thấy email/tài khoản trong ảnh");
+
+        results.push({ filename, success: true, extracted });
+      } catch (err: any) {
+        results.push({ filename, success: false, error: String(err?.message ?? "Lỗi không xác định") });
+      }
+    }
+
+    res.json({ results });
+  }
+);
 
 export default router;

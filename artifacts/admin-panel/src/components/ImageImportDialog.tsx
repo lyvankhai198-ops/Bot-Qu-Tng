@@ -1,641 +1,579 @@
-import { useState, useCallback, useRef } from "react"
+/**
+ * ImageImportDialog — Thêm đơn hàng từ ảnh
+ * Viết lại hoàn toàn, tối ưu cho iOS Safari.
+ * Dùng FormData multipart thay vì base64 JSON.
+ * Không dùng Radix Dialog để tránh event interception trên iOS.
+ */
+import { useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
-  Camera, Upload, X, CheckCircle2, AlertTriangle, XCircle,
-  Loader2, ImageIcon, ChevronLeft, ChevronRight, Save
+  Camera, Upload, X, CheckCircle2, AlertTriangle,
+  Loader2, ChevronLeft, ChevronRight
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useQueryClient } from "@tanstack/react-query"
 import { getListOrdersQueryKey } from "@workspace/api-client-react"
 import type { Order } from "@workspace/api-client-react"
-import { format } from "date-fns"
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-type Confidence = "high" | "medium" | "low"
+// ── Types ──────────────────────────────────────────────────────────────────────
+type FileStatus = "selected" | "error"
+type DupStatus  = "none" | "exists" | "update" | "skip"
+type Stage      = "upload" | "extracting" | "review" | "done"
 
-interface ExtractedField<T = string | null> {
-  value: T
-  confidence: Confidence
-}
-
-interface ExtractedOrder {
-  email: ExtractedField
-  password: ExtractedField
-  twoFA: ExtractedField
-  productName: ExtractedField
-  price: ExtractedField<number | null>
-  customerName: ExtractedField
-  status: ExtractedField
-  purchaseDate: ExtractedField
-  paymentMethod: ExtractedField
-  warrantyDays: ExtractedField<number | null>
-}
-
-interface ImageItem {
+interface FileItem {
   id: string
-  filename: string
-  previewUrl: string
-  base64: string
-  mimeType: string
-  // null = not yet processed
-  extracted: ExtractedOrder | null
-  error: string | null
-  processed: boolean
-  // editable form state after extraction
-  form: EditableOrder
-  // duplicate status
-  dupStatus: "none" | "exists" | "ignored" | "updating"
+  file: File          // Real File object stored immediately in onChange
+  previewUrl: string  // createObjectURL for thumbnail
+  status: FileStatus
+  error?: string
 }
 
-interface EditableOrder {
+interface OrderDraft {
+  id: string
+  fileItem: FileItem
+  ocrSuccess: boolean
+  ocrError?: string
+  // Form fields
   email: string
   password: string
   twoFA: string
   productName: string
   price: string
   customerName: string
-  status: string
-  purchaseDate: string
-  paymentMethod: string
+  purchaseDate: string  // YYYY-MM-DD
   warrantyDays: string
-  warrantyExpiry: string
+  status: string
+  paymentMethod: string
   notes: string
+  // Duplicate
+  dupStatus: DupStatus
 }
 
-const emptyForm = (): EditableOrder => ({
-  email: "", password: "", twoFA: "", productName: "", price: "",
-  customerName: "", status: "active", purchaseDate: "", paymentMethod: "",
-  warrantyDays: "", warrantyExpiry: "", notes: "",
-})
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function addDays(dateStr: string, days: number): string {
-  if (!dateStr || !days) return ""
-  const [y, m, d] = dateStr.split("-").map(Number)
-  const dt = new Date(y, m - 1, d + days)
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`
+interface DoneResult {
+  total: number; added: number; updated: number; skipped: number; errors: number
 }
 
-function extractedToForm(e: ExtractedOrder): EditableOrder {
-  const warrantyDays = e.warrantyDays.value ?? 0
-  const purchaseDate = e.purchaseDate.value ?? ""
-  const warrantyExpiry = warrantyDays && purchaseDate ? addDays(purchaseDate, warrantyDays) : ""
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function uid(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36)
+}
+
+function fmtSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(0)}KB`
+  return `${(bytes / 1048576).toFixed(1)}MB`
+}
+
+function isHeic(file: File): boolean {
+  return /heic|heif/i.test(file.type) || /\.(heic|heif)$/i.test(file.name)
+}
+
+/** Convert HEIC → JPEG via Canvas (Safari iOS decodes HEIC natively) */
+function convertToJpeg(file: File): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const img  = new Image()
+    const url  = URL.createObjectURL(file)
+    const tid  = setTimeout(() => { URL.revokeObjectURL(url); reject(new Error("Timeout chuyển đổi HEIC")) }, 15000)
+    img.onload = () => {
+      clearTimeout(tid)
+      const canvas = document.createElement("canvas")
+      canvas.width  = img.naturalWidth
+      canvas.height = img.naturalHeight
+      canvas.getContext("2d")!.drawImage(img, 0, 0)
+      URL.revokeObjectURL(url)
+      canvas.toBlob(blob => {
+        if (!blob) { reject(new Error("Canvas toBlob thất bại")); return }
+        resolve(new File([blob], file.name.replace(/\.(heic|heif)$/i, ".jpg"), { type: "image/jpeg" }))
+      }, "image/jpeg", 0.92)
+    }
+    img.onerror = () => { clearTimeout(tid); URL.revokeObjectURL(url); reject(new Error("Không thể đọc ảnh HEIC")) }
+    img.src = url
+  })
+}
+
+function calcExpiry(purchaseDate: string, days: number): string {
+  if (!purchaseDate || days <= 0) return ""
+  try {
+    const d = new Date(purchaseDate)
+    d.setDate(d.getDate() + days)
+    return d.toISOString().slice(0, 10)
+  } catch { return "" }
+}
+
+function fmtDate(iso: string): string {
+  if (!iso) return ""
+  const [y, m, d] = iso.split("-")
+  return `${d}/${m}/${y}`
+}
+
+function getProductNames(orders: Order[]): string[] {
+  const s = new Set<string>()
+  orders.forEach(o => { if (o.productName) s.add(o.productName) })
+  return Array.from(s).sort()
+}
+
+/** Fuzzy match: ignore case, spaces, dashes; return best match or null */
+function fuzzyMatch(query: string, names: string[]): string | null {
+  const norm = (s: string) => s.toLowerCase().replace(/[\s\-_]+/g, "")
+  const q = norm(query)
+  return names.find(n => norm(n) === q) ??
+         names.find(n => norm(n).includes(q) || q.includes(norm(n))) ??
+         null
+}
+
+function defaultDraft(fileItem: FileItem): OrderDraft {
   return {
-    email: e.email.value ?? "",
-    password: e.password.value ?? "",
-    twoFA: e.twoFA.value ?? "",
-    productName: e.productName.value ?? "",
-    price: e.price.value != null ? String(e.price.value) : "",
-    customerName: e.customerName.value ?? "",
-    status: e.status.value || "active",
-    purchaseDate,
-    paymentMethod: e.paymentMethod.value ?? "",
-    warrantyDays: warrantyDays ? String(warrantyDays) : "",
-    warrantyExpiry,
-    notes: "",
+    id: uid(), fileItem,
+    ocrSuccess: false,
+    email: "", password: "", twoFA: "", productName: "",
+    price: "", customerName: "", purchaseDate: "",
+    warrantyDays: "0", status: "active", paymentMethod: "", notes: "",
+    dupStatus: "none",
   }
 }
 
-function fieldBadge(c: Confidence) {
-  if (c === "high") return null
-  if (c === "medium") return <span className="ml-1 text-xs text-yellow-600 dark:text-yellow-400">⚠ cần kiểm tra</span>
-  return <span className="ml-1 text-xs text-destructive">✗ không rõ</span>
-}
-
-function inputClass(c: Confidence) {
-  if (c === "high") return "min-h-[40px]"
-  if (c === "medium") return "min-h-[40px] border-yellow-400 dark:border-yellow-600 bg-yellow-50/30 dark:bg-yellow-950/20"
-  return "min-h-[40px] border-destructive bg-red-50/30 dark:bg-red-950/20"
-}
-
-const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") + "/api"
-const SESSION_SECRET = (() => {
-  // Read from cookie set by login
-  const m = document.cookie.match(/session_token=([^;]+)/)
-  return m ? decodeURIComponent(m[1]) : (localStorage.getItem("admin_token") ?? "")
-})()
-
-async function callOcrExtract(images: { data: string; mimeType: string; filename: string }[]) {
-  const token = localStorage.getItem("admin_token") ?? SESSION_SECRET
-  const resp = await fetch(`${API_BASE}/bot/orders/ocr-extract`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ images }),
-  })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-  return resp.json() as Promise<{ results: { filename: string; success: boolean; extracted?: ExtractedOrder; error?: string }[] }>
-}
-
-async function saveOrder(form: EditableOrder, existingOrders: Order[], dupAction?: "update" | "skip"): Promise<{ ok: boolean; skipped?: boolean; orderId?: string; error?: string }> {
-  const token = localStorage.getItem("admin_token") ?? SESSION_SECRET
-  const emailLower = form.email.toLowerCase()
-  const existing = existingOrders.find(o => (o.email || "").toLowerCase() === emailLower)
-
-  if (existing && dupAction !== "update" && dupAction !== "skip") {
-    return { ok: false, error: "DUPLICATE" }
-  }
-  if (existing && dupAction === "skip") {
-    return { ok: true, skipped: true }
-  }
-
-  const warrantyDays = Number(form.warrantyDays) || 0
-  const expiryDate = warrantyDays && form.purchaseDate ? addDays(form.purchaseDate, warrantyDays) : null
-
-  const payload = {
-    email: form.email,
-    password: form.password || null,
-    twoFA: form.twoFA || null,
-    productName: form.productName,
-    price: form.price ? Number(form.price) : null,
-    customerName: form.customerName || null,
-    purchaseDate: form.purchaseDate ? new Date(form.purchaseDate).toISOString() : null,
-    warrantyPeriod: warrantyDays ? `${warrantyDays} ngày` : null,
-    warrantyExpiry: expiryDate ? new Date(expiryDate).toISOString() : null,
-    status: form.status || "active",
-    notes: form.notes || null,
-  }
-
-  if (existing && dupAction === "update") {
-    const resp = await fetch(`${API_BASE}/bot/orders/${existing.orderId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
-    })
-    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` }
-    return { ok: true, orderId: existing.orderId }
-  }
-
-  const resp = await fetch(`${API_BASE}/bot/orders`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify(payload),
-  })
-  if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` }
-  const data = await resp.json()
-  return { ok: true, orderId: data.orderId }
-}
-
-// ── Main Component ────────────────────────────────────────────────────────────
+// ── Component ──────────────────────────────────────────────────────────────────
 interface Props {
   open: boolean
   onClose: () => void
   existingOrders: Order[]
 }
 
-type Stage = "upload" | "review" | "done"
-
-interface DoneResult { added: number; skipped: number; errors: number }
-
 export default function ImageImportDialog({ open, onClose, existingOrders }: Props) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
-  const dropRef = useRef<HTMLDivElement>(null)
 
-  const [stage, setStage] = useState<Stage>("upload")
-  const [images, setImages] = useState<ImageItem[]>([])
-  const [loading, setLoading] = useState(false)
-  const [currentIdx, setCurrentIdx] = useState(0)
-  const [saving, setSaving] = useState(false)
+  const [stage, setStage]         = useState<Stage>("upload")
+  const [items, setItems]         = useState<FileItem[]>([])
+  const [drafts, setDrafts]       = useState<OrderDraft[]>([])
+  const [curIdx, setCurIdx]       = useState(0)
+  const [extracting, setExtracting] = useState(false)
+  const [saving, setSaving]       = useState(false)
   const [doneResult, setDoneResult] = useState<DoneResult | null>(null)
 
-  // ── File ingestion ──────────────────────────────────────────────────────────
-  const ingestFiles = useCallback((files: File[]) => {
-    const imageExtRe = /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/i
-    const valid = files.filter(f =>
-      f.type.startsWith("image/") || imageExtRe.test(f.name) || f.type === ""
-    )
-    if (valid.length === 0) {
-      toast({ title: "Không tìm thấy ảnh", description: "Vui lòng chọn file ảnh", variant: "destructive" })
-      return
-    }
+  const productNames = getProductNames(existingOrders)
 
-    // previewUrl: use createObjectURL — works natively for ALL formats including HEIC on iOS.
-    // base64: read via FileReader only for OCR API upload.
-    const readers = valid.map(file => new Promise<ImageItem>((resolve) => {
-      // Object URL works for iOS HEIC/HEIF natively; data: URLs with HEIC do NOT render in <img>
-      const previewUrl = URL.createObjectURL(file)
+  // ── File selection — READ FILES IMMEDIATELY in onChange ────────────────────
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    // Must convert FileList → Array synchronously before any async/re-render
+    const fileArray = Array.from(e.target.files ?? [])
+    if (!fileArray.length) return
 
-      const reader = new FileReader()
-      reader.onload = e => {
-        const dataUrl = e.target?.result as string
-        const base64 = (dataUrl ?? "").split(",")[1] ?? ""
-        const rawMime = file.type || "image/jpeg"
-        // OpenAI doesn't support HEIC — tell it to treat as jpeg (base64 content is same)
-        const mimeType = rawMime.includes("heic") || rawMime.includes("heif") ? "image/jpeg" : rawMime
-        resolve({
-          id: crypto.randomUUID(),
-          filename: file.name,
-          previewUrl,
-          base64,
-          mimeType,
-          extracted: null,
-          error: null,
-          processed: false,
-          form: emptyForm(),
-          dupStatus: "none",
-        })
-      }
-      reader.onerror = () => resolve({
-        id: crypto.randomUUID(), filename: file.name,
-        previewUrl, base64: "", mimeType: "image/jpeg",
-        extracted: null, error: "Không đọc được file",
-        processed: false, form: emptyForm(), dupStatus: "none",
-      })
-      reader.readAsDataURL(file)
-    }))
-
-    Promise.all(readers).then(items => {
-      setImages(prev => [...prev, ...items].slice(0, 20))
-    })
-  }, [toast])
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    ingestFiles(Array.from(e.dataTransfer.files))
-  }, [ingestFiles])
-
-  const removeImage = (id: string) => setImages(prev => prev.filter(i => i.id !== id))
-
-  // ── OCR extraction ──────────────────────────────────────────────────────────
-  const handleExtract = async () => {
-    if (images.length === 0) return
-    setLoading(true)
-    try {
-      const payload = images.map(img => ({ data: img.base64, mimeType: img.mimeType, filename: img.filename }))
-      const { results } = await callOcrExtract(payload)
-
-      setImages(prev => prev.map((img, idx) => {
-        const r = results[idx]
-        if (!r) return img
-        if (r.success && r.extracted) {
-          const form = extractedToForm(r.extracted)
-          const emailLower = form.email.toLowerCase()
-          const dup = existingOrders.some(o => (o.email || "").toLowerCase() === emailLower)
-          return { ...img, extracted: r.extracted, error: null, processed: true, form, dupStatus: dup ? "exists" : "none" }
-        }
-        return { ...img, extracted: null, error: r.error || "Không thể đọc ảnh", processed: true }
+    const newItems: FileItem[] = fileArray
+      .filter(f => f.size <= 15 * 1024 * 1024)
+      .map(f => ({
+        id: uid(),
+        file: f,
+        previewUrl: URL.createObjectURL(f),
+        status: "selected" as FileStatus,
       }))
 
-      setCurrentIdx(0)
+    const oversize = fileArray.filter(f => f.size > 15 * 1024 * 1024)
+    if (oversize.length) {
+      toast({ title: "File quá lớn", description: `${oversize.map(f => f.name).join(", ")} vượt giới hạn 15MB`, variant: "destructive" })
+    }
+
+    setItems(prev => {
+      const combined = [...prev, ...newItems]
+      if (combined.length > 20) {
+        combined.slice(20).forEach(i => { try { URL.revokeObjectURL(i.previewUrl) } catch {} })
+      }
+      return combined.slice(0, 20)
+    })
+
+    // Reset AFTER state update so same file can be selected again after removal
+    requestAnimationFrame(() => { try { e.target.value = "" } catch {} })
+  }, [toast])
+
+  const removeItem = useCallback((id: string) => {
+    setItems(prev => {
+      const found = prev.find(i => i.id === id)
+      if (found) { try { URL.revokeObjectURL(found.previewUrl) } catch {} }
+      return prev.filter(i => i.id !== id)
+    })
+  }, [])
+
+  // ── OCR Extract ────────────────────────────────────────────────────────────
+  const handleExtract = async () => {
+    if (!items.length) return
+    setExtracting(true)
+    setStage("extracting")
+
+    try {
+      const fd = new FormData()
+
+      for (const item of items) {
+        let file = item.file
+        if (isHeic(file)) {
+          try { file = await convertToJpeg(file) } catch (err: any) {
+            toast({ title: `HEIC: ${item.file.name}`, description: err.message, variant: "destructive" })
+          }
+        }
+        fd.append("images", file)
+      }
+
+      const token = localStorage.getItem("admin_token") ?? ""
+      const resp  = await fetch("/api/bot/orders/ocr-extract", {
+        method:  "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body:    fd,
+        // DO NOT set Content-Type — browser auto-sets multipart/form-data with boundary
+      })
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({})) as any
+        throw new Error(err.error || `Lỗi server ${resp.status}`)
+      }
+
+      const data = await resp.json() as { results: Array<{ filename: string; success: boolean; extracted?: any; error?: string }> }
+
+      const newDrafts: OrderDraft[] = items.map((item, i) => {
+        const result = data.results[i]
+        const draft  = defaultDraft(item)
+
+        if (!result?.success || !result.extracted) {
+          draft.ocrError = result?.error || "Không đọc được thông tin từ ảnh"
+          return draft
+        }
+
+        const ex = result.extracted
+        draft.ocrSuccess    = true
+        draft.email         = ex.email?.value        ?? ""
+        draft.password      = ex.password?.value     ?? ""
+        draft.twoFA         = ex.twoFA?.value        ?? ""
+        draft.customerName  = ex.customerName?.value ?? ""
+        draft.price         = ex.price?.value != null ? String(ex.price.value) : ""
+        draft.purchaseDate  = ex.purchaseDate?.value ?? ""
+        draft.paymentMethod = ex.paymentMethod?.value ?? ""
+        draft.warrantyDays  = ex.warrantyDays?.value != null ? String(ex.warrantyDays.value) : "0"
+        draft.status        = ex.status?.value       ?? "active"
+
+        // Product matching
+        const rawProd  = ex.productName?.value ?? ""
+        draft.productName = fuzzyMatch(rawProd, productNames) ?? rawProd
+
+        // Duplicate check
+        if (draft.email) {
+          const dup = existingOrders.find(o => o.email?.toLowerCase() === draft.email.toLowerCase())
+          draft.dupStatus = dup ? "exists" : "none"
+        }
+
+        return draft
+      })
+
+      setDrafts(newDrafts)
+      setCurIdx(0)
       setStage("review")
     } catch (err: any) {
-      toast({ title: "Lỗi kết nối", description: String(err?.message), variant: "destructive" })
+      toast({ title: "Lỗi đọc dữ liệu", description: err.message, variant: "destructive" })
+      setStage("upload")
     } finally {
-      setLoading(false)
+      setExtracting(false)
     }
   }
 
-  // ── Form update ─────────────────────────────────────────────────────────────
-  const updateForm = (id: string, patch: Partial<EditableOrder>) => {
-    setImages(prev => prev.map(img => {
-      if (img.id !== id) return img
-      const next = { ...img.form, ...patch }
-      // Auto-calc warranty expiry when warrantyDays or purchaseDate changes
-      if ("warrantyDays" in patch || "purchaseDate" in patch) {
-        const wDays = Number(next.warrantyDays) || 0
-        next.warrantyExpiry = wDays && next.purchaseDate ? addDays(next.purchaseDate, wDays) : ""
-      }
-      // Re-check dup on email change
-      const dupStatus = "email" in patch
-        ? (existingOrders.some(o => (o.email || "").toLowerCase() === (patch.email || "").toLowerCase()) ? "exists" : "none")
-        : img.dupStatus
-      return { ...img, form: next, dupStatus }
-    }))
+  // ── Update draft field ────────────────────────────────────────────────────
+  const setField = (idx: number, field: keyof OrderDraft, value: string) => {
+    setDrafts(prev => {
+      const next = [...prev]
+      next[idx]  = { ...next[idx], [field]: value }
+      return next
+    })
   }
 
-  // ── Save all ────────────────────────────────────────────────────────────────
-  const handleSaveAll = async () => {
+  // ── Save ──────────────────────────────────────────────────────────────────
+  const handleSave = async () => {
     setSaving(true)
-    let added = 0, skipped = 0, errors = 0
-    const updatedOrders = [...existingOrders] // local shadow for mid-batch dup check
+    const token = localStorage.getItem("admin_token") ?? ""
+    let added = 0, updated = 0, skipped = 0, errors = 0
 
-    for (const img of images) {
-      if (!img.processed || img.error) { errors++; continue }
-      const form = img.form
-      if (!form.email || !form.productName) { errors++; continue }
+    for (const draft of drafts) {
+      if (draft.dupStatus === "skip")                       { skipped++; continue }
+      if (!draft.ocrSuccess || !draft.email || !draft.productName) { errors++;  continue }
 
-      const dupAction = img.dupStatus === "ignored" ? "skip"
-        : img.dupStatus === "updating" ? "update"
-        : undefined
+      const wdays  = parseInt(draft.warrantyDays) || 0
+      const expiry = calcExpiry(draft.purchaseDate, wdays)
+
+      const body: Record<string, any> = {
+        email:         draft.email,
+        productName:   draft.productName,
+        price:         parseInt(draft.price) || 0,
+        warrantyDays:  wdays,
+        status:        draft.status || "active",
+      }
+      if (draft.password)      body.password      = draft.password
+      if (draft.twoFA)         body.twoFA         = draft.twoFA
+      if (draft.customerName)  body.customerName  = draft.customerName
+      if (draft.purchaseDate)  body.purchaseDate  = draft.purchaseDate
+      if (expiry)              body.expiryDate    = expiry
+      if (draft.paymentMethod) body.paymentMethod = draft.paymentMethod
+      if (draft.notes)         body.notes         = draft.notes
 
       try {
-        const result = await saveOrder(form, updatedOrders, dupAction)
-        if (!result.ok) {
-          if (result.error === "DUPLICATE") { /* handled per-card */ }
-          errors++
-        } else if (result.skipped) {
-          skipped++
+        if (draft.dupStatus === "update") {
+          const existing = existingOrders.find(o => o.email?.toLowerCase() === draft.email.toLowerCase())
+          if (!existing) { errors++; continue }
+          const r = await fetch(`/api/bot/orders/${existing.orderId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+          })
+          if (!r.ok) throw new Error("Update failed")
+          updated++
         } else {
+          const r = await fetch("/api/bot/orders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+          })
+          if (!r.ok) throw new Error("Create failed")
           added++
-          // Add to shadow so subsequent items in same batch don't re-collide
-          updatedOrders.push({ orderId: result.orderId!, email: form.email } as Order)
         }
-      } catch {
-        errors++
-      }
+      } catch { errors++ }
     }
 
     queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() })
     setSaving(false)
-    setDoneResult({ added, skipped, errors })
+    setDoneResult({ total: drafts.length, added, updated, skipped, errors })
     setStage("done")
   }
 
-  // ── Valid count for save ────────────────────────────────────────────────────
-  const validForSave = images.filter(i =>
-    i.processed && !i.error && i.form.email && i.form.productName &&
-    i.dupStatus !== "exists" // block until admin resolves dups
-  )
-  const unresolvedDups = images.filter(i => i.processed && !i.error && i.dupStatus === "exists")
-
-  const handleReset = () => {
-    // Revoke object URLs to free memory
-    images.forEach(img => { try { URL.revokeObjectURL(img.previewUrl) } catch {} })
-    setStage("upload"); setImages([]); setCurrentIdx(0); setDoneResult(null)
-  }
-
-  // ── Current image for review ────────────────────────────────────────────────
-  const cur = images[currentIdx]
+  // ── Reset ─────────────────────────────────────────────────────────────────
+  const handleReset = useCallback(() => {
+    items.forEach(i => { try { URL.revokeObjectURL(i.previewUrl) } catch {} })
+    setItems([]); setDrafts([]); setCurIdx(0)
+    setStage("upload"); setDoneResult(null); setExtracting(false); setSaving(false)
+  }, [items])
 
   if (!open) return null
 
+  const cur        = drafts[curIdx]
+  const validCount = drafts.filter(d => d.ocrSuccess && d.email && d.dupStatus !== "skip").length
+  const expiry     = cur ? calcExpiry(cur.purchaseDate, parseInt(cur.warrantyDays) || 0) : ""
+
   return (
-    // Custom modal — NOT Radix Dialog — avoids iOS Safari event interception inside fixed modals
+    /* Overlay — custom div, NOT Radix Dialog, avoids iOS Safari event interception */
     <div
-      style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: "0.5rem" }}
-      onClick={e => { if (e.target === e.currentTarget) { handleReset(); onClose() } }}
+      style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "0.5rem", overflowY: "auto" }}
     >
       {/* Backdrop */}
-      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: -1 }} />
+      <div
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)" }}
+        onClick={() => { handleReset(); onClose() }}
+      />
 
       {/* Panel */}
-      <div style={{ background: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "12px", width: "min(calc(100vw - 1rem), 860px)", maxHeight: "94dvh", overflowY: "auto", padding: "1rem", position: "relative" }}>
+      <div style={{
+        position: "relative", zIndex: 1,
+        background: "var(--color-background)", border: "1px solid var(--color-border)",
+        borderRadius: "16px", width: "100%", maxWidth: "860px",
+        padding: "1.25rem", marginTop: "0.5rem", marginBottom: "1rem",
+      }}>
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 600, fontSize: "1rem" }}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
             <Camera className="w-5 h-5" /> Thêm đơn hàng từ ảnh
-          </div>
-          <button onClick={() => { handleReset(); onClose() }} style={{ padding: "4px", borderRadius: "4px", cursor: "pointer", background: "none", border: "none", color: "var(--color-foreground)" }}>
+          </h2>
+          <button onClick={() => { handleReset(); onClose() }} className="p-1 rounded hover:bg-muted transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* ── STAGE: UPLOAD ─────────────────────────────────────────────────── */}
+        {/* ── UPLOAD ── */}
         {stage === "upload" && (
-          <div className="space-y-4 py-2">
-            {/* Drop zone — input nested INSIDE label: most iOS-reliable approach, no JS .click() */}
-            <label
-              onDrop={handleDrop}
-              onDragOver={e => e.preventDefault()}
-              className="relative block border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary hover:bg-muted/30 transition-colors"
-            >
-              <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
-              <p className="font-medium text-sm">Kéo thả ảnh vào đây hoặc bấm để chọn</p>
-              <p className="text-xs text-muted-foreground mt-1">Hỗ trợ JPG, PNG, WEBP · Tối đa 20 ảnh</p>
-              {/* Input covers entire drop zone — direct tap on iOS, no JS needed */}
-              <input type="file" accept="image/*" multiple
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
-            </label>
-
-            {/* Buttons with input nested inside label — works on iOS Safari inside Radix Dialog */}
-            <div className="flex gap-2">
-              <label className="relative flex-1 flex items-center justify-center gap-2 rounded-md border border-input bg-background h-11 px-4 text-sm font-medium cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
-                <Upload className="w-4 h-4" /> Chọn từ máy tính
-                <input type="file" accept="image/*" multiple
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
+          <div className="space-y-4">
+            {/*
+              File inputs use sr-only inside <label> — the MOST reliable iOS Safari pattern.
+              sr-only keeps the input in the accessibility tree and interactive on iOS.
+              No opacity-0 overlay, no JS .click(), no portal.
+            */}
+            <div className="space-y-3">
+              <label className="flex items-center justify-center gap-3 w-full py-5 rounded-xl border-2 border-dashed border-border bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors text-sm font-medium select-none">
+                <Upload className="w-5 h-5 shrink-0" />
+                <span>Chọn ảnh</span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                  multiple
+                  className="sr-only"
+                  onChange={handleFileChange}
+                />
               </label>
-              <label className="relative flex-1 flex items-center justify-center gap-2 rounded-md border border-input bg-background h-11 px-4 text-sm font-medium cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
-                <Camera className="w-4 h-4" /> Dùng camera
-                <input type="file" accept="image/*" capture="environment"
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
+
+              <label className="flex items-center justify-center gap-3 w-full py-4 rounded-xl border border-border bg-card cursor-pointer hover:bg-muted/30 transition-colors text-sm font-medium select-none">
+                <Camera className="w-5 h-5 shrink-0" />
+                <span>Dùng camera</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="sr-only"
+                  onChange={handleFileChange}
+                />
               </label>
             </div>
 
-            {/* Thumbnail grid */}
-            {images.length > 0 && (
-              <div className="space-y-3">
-                <p className="text-sm font-medium">{images.length} ảnh đã chọn</p>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                  {images.map(img => (
-                    <div key={img.id} className="relative group rounded-lg overflow-hidden border bg-muted aspect-square">
-                      <img src={img.previewUrl} alt={img.filename} className="w-full h-full object-cover" />
-                      <button
-                        onClick={e => { e.stopPropagation(); removeImage(img.id) }}
-                        className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X className="w-3 h-3 text-white" />
-                      </button>
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/50 p-1">
-                        <p className="text-white text-[9px] truncate">{img.filename}</p>
+            {/* File list */}
+            {items.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">{items.length}/20 ảnh đã chọn</p>
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {items.map(item => (
+                    <div key={item.id} className="flex items-center gap-3 p-3 rounded-lg border bg-card">
+                      {/* Thumbnail */}
+                      <div className="w-12 h-12 rounded-md overflow-hidden bg-muted shrink-0 flex items-center justify-center">
+                        <img
+                          src={item.previewUrl}
+                          alt=""
+                          className="w-full h-full object-cover"
+                          onError={e => { (e.target as HTMLImageElement).style.display = "none" }}
+                        />
                       </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{item.file.name}</p>
+                        <p className="text-xs text-muted-foreground">{fmtSize(item.file.size)}</p>
+                        {item.error && <p className="text-xs text-destructive mt-0.5">{item.error}</p>}
+                      </div>
+                      <Badge variant={item.status === "error" ? "destructive" : "secondary"} className="shrink-0 text-xs">
+                        {item.status === "selected" ? "Đã chọn" : "Lỗi"}
+                      </Badge>
+                      <button onClick={() => removeItem(item.id)} className="p-1 shrink-0 text-muted-foreground hover:text-destructive transition-colors">
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            <DialogFooter className="pt-2 flex-col sm:flex-row gap-2">
-              <Button variant="outline" className="w-full sm:w-auto min-h-[44px]" onClick={() => { handleReset(); onClose() }}>Hủy</Button>
-              <Button
-                className="w-full sm:w-auto min-h-[44px]"
-                disabled={images.length === 0 || loading}
-                onClick={handleExtract}
-              >
-                {loading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Đang đọc ảnh...</> : "Đọc dữ liệu"}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1 min-h-[44px]" onClick={() => { handleReset(); onClose() }}>Hủy</Button>
+              <Button className="flex-1 min-h-[44px]" disabled={!items.length} onClick={handleExtract}>
+                Đọc dữ liệu
               </Button>
-            </DialogFooter>
+            </div>
           </div>
         )}
 
-        {/* ── STAGE: REVIEW ─────────────────────────────────────────────────── */}
-        {stage === "review" && cur && (
-          <div className="space-y-4 py-2">
-            {/* Summary bar */}
-            <div className="flex items-center gap-3 flex-wrap text-sm">
-              <span className="text-muted-foreground">Tổng: <b>{images.length}</b></span>
-              <span className="text-green-600">✓ {images.filter(i => i.processed && !i.error).length} đọc được</span>
-              <span className="text-yellow-600">⚠ {unresolvedDups.length} trùng</span>
-              <span className="text-destructive">✗ {images.filter(i => i.error).length} lỗi</span>
-            </div>
+        {/* ── EXTRACTING ── */}
+        {stage === "extracting" && (
+          <div className="py-16 flex flex-col items-center gap-4 text-center">
+            <Loader2 className="w-10 h-10 animate-spin text-primary" />
+            <p className="font-medium">Đang đọc dữ liệu từ {items.length} ảnh...</p>
+            <p className="text-sm text-muted-foreground">AI đang phân tích, vui lòng đợi</p>
+          </div>
+        )}
 
+        {/* ── REVIEW ── */}
+        {stage === "review" && cur && (
+          <div className="space-y-4">
             {/* Nav */}
-            {images.length > 1 && (
-              <div className="flex items-center gap-2">
-                <Button size="icon" variant="outline" disabled={currentIdx === 0} onClick={() => setCurrentIdx(i => i - 1)}>
+            {drafts.length > 1 && (
+              <div className="flex items-center justify-between">
+                <Button variant="outline" size="sm" disabled={curIdx === 0} onClick={() => setCurIdx(i => i - 1)}>
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
-                <div className="flex gap-1 flex-wrap">
-                  {images.map((img, idx) => (
-                    <button
-                      key={img.id}
-                      onClick={() => setCurrentIdx(idx)}
-                      className={`w-7 h-7 rounded text-xs font-mono border transition-colors ${
-                        idx === currentIdx ? "bg-primary text-primary-foreground border-primary" :
-                        img.error ? "border-destructive text-destructive" :
-                        img.dupStatus === "exists" ? "border-yellow-400 text-yellow-600" :
-                        img.processed ? "border-green-500 text-green-600" : "border-border"
-                      }`}
-                    >
-                      {idx + 1}
-                    </button>
-                  ))}
+                <div className="text-center">
+                  <p className="text-sm font-medium">Ảnh {curIdx + 1} / {drafts.length}</p>
+                  <p className="text-xs text-muted-foreground truncate max-w-40">{cur.fileItem.file.name}</p>
                 </div>
-                <Button size="icon" variant="outline" disabled={currentIdx === images.length - 1} onClick={() => setCurrentIdx(i => i + 1)}>
+                <Button variant="outline" size="sm" disabled={curIdx === drafts.length - 1} onClick={() => setCurIdx(i => i + 1)}>
                   <ChevronRight className="w-4 h-4" />
                 </Button>
-                <span className="text-xs text-muted-foreground ml-auto">{currentIdx + 1} / {images.length}</span>
               </div>
             )}
 
-            {/* Card */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Original image */}
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                  <ImageIcon className="w-3 h-3" /> Ảnh gốc — {cur.filename}
-                </p>
-                <div className="rounded-lg border overflow-hidden bg-muted max-h-[380px]">
-                  <img src={cur.previewUrl} alt={cur.filename} className="w-full h-full object-contain" style={{ maxHeight: 380 }} />
+            <div className="grid md:grid-cols-2 gap-4">
+              {/* Left: image + status */}
+              <div className="space-y-3">
+                <div className="rounded-xl overflow-hidden border bg-muted max-h-[380px]">
+                  <img src={cur.fileItem.previewUrl} alt="" className="w-full h-full object-contain max-h-[380px]" />
                 </div>
-              </div>
 
-              {/* Form / error */}
-              <div>
-                {cur.error ? (
-                  <div className="rounded-lg border border-destructive bg-red-50/30 dark:bg-red-950/20 p-4 flex items-start gap-3 h-full">
-                    <XCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-medium text-sm text-destructive">Không đọc được ảnh</p>
-                      <p className="text-xs text-muted-foreground mt-1">{cur.error}</p>
-                      <Button size="sm" variant="outline" className="mt-3" onClick={() => removeImage(cur.id)}>Bỏ ảnh này</Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {/* Dup warning */}
-                    {cur.dupStatus === "exists" && (
-                      <div className="rounded-lg border border-yellow-400 bg-yellow-50/30 dark:bg-yellow-950/20 p-3">
-                        <p className="text-sm font-medium text-yellow-700 dark:text-yellow-400 flex items-center gap-1.5">
-                          <AlertTriangle className="w-4 h-4" /> Tài khoản này đã có trong hệ thống
-                        </p>
-                        <div className="flex gap-2 mt-2 flex-wrap">
-                          <Button size="sm" variant="outline" className="text-xs"
-                            onClick={() => setImages(p => p.map(i => i.id === cur.id ? { ...i, dupStatus: "ignored" } : i))}>
-                            Bỏ qua
-                          </Button>
-                          <Button size="sm" variant="outline" className="text-xs text-yellow-700 dark:text-yellow-400 border-yellow-400"
-                            onClick={() => setImages(p => p.map(i => i.id === cur.id ? { ...i, dupStatus: "updating" } : i))}>
-                            Cập nhật đơn cũ
-                          </Button>
-                          <Button size="sm" variant="ghost" className="text-xs text-muted-foreground"
-                            onClick={() => removeImage(cur.id)}>
-                            Hủy ảnh này
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {(cur.dupStatus === "ignored" || cur.dupStatus === "updating") && (
-                      <div className="rounded-lg border border-border bg-muted/30 p-2 text-xs text-muted-foreground flex items-center gap-2">
-                        {cur.dupStatus === "ignored"
-                          ? <><CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground" /> Sẽ bỏ qua đơn này</>
-                          : <><CheckCircle2 className="w-3.5 h-3.5 text-yellow-600" /> Sẽ cập nhật đơn cũ</>}
-                        <button className="ml-auto underline" onClick={() => setImages(p => p.map(i => i.id === cur.id ? { ...i, dupStatus: "exists" } : i))}>Đổi lại</button>
-                      </div>
-                    )}
-
-                    {/* Fields */}
-                    <ReviewField
-                      label="Email / tài khoản *"
-                      conf={cur.extracted?.email.confidence ?? "low"}
-                      value={cur.form.email}
-                      onChange={v => updateForm(cur.id, { email: v })}
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <ReviewField label="Mật khẩu" conf={cur.extracted?.password.confidence ?? "low"}
-                        value={cur.form.password} onChange={v => updateForm(cur.id, { password: v })} />
-                      <ReviewField label="2FA" conf={cur.extracted?.twoFA.confidence ?? "high"}
-                        value={cur.form.twoFA} onChange={v => updateForm(cur.id, { twoFA: v })} />
-                    </div>
-                    <ReviewField
-                      label="Sản phẩm *"
-                      conf={cur.extracted?.productName.confidence ?? "low"}
-                      value={cur.form.productName}
-                      onChange={v => updateForm(cur.id, { productName: v })}
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <ReviewField label="Giá bán (VNĐ)" conf={cur.extracted?.price.confidence ?? "low"}
-                        value={cur.form.price} onChange={v => updateForm(cur.id, { price: v })} type="number" />
-                      <ReviewField label="Khách hàng" conf={cur.extracted?.customerName.confidence ?? "low"}
-                        value={cur.form.customerName} onChange={v => updateForm(cur.id, { customerName: v })} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <ReviewField label="Ngày mua" conf={cur.extracted?.purchaseDate.confidence ?? "low"}
-                        value={cur.form.purchaseDate} onChange={v => updateForm(cur.id, { purchaseDate: v })} type="date" />
-                      <ReviewField label="Số ngày BH" conf={cur.extracted?.warrantyDays.confidence ?? "low"}
-                        value={cur.form.warrantyDays} onChange={v => updateForm(cur.id, { warrantyDays: v })} type="number" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="grid gap-1">
-                        <Label className="text-xs">Trạng thái</Label>
-                        <Select value={cur.form.status} onValueChange={v => updateForm(cur.id, { status: v })}>
-                          <SelectTrigger className="min-h-[40px] text-sm"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="active">Hoạt động</SelectItem>
-                            <SelectItem value="expired">Hết hạn</SelectItem>
-                            <SelectItem value="refunded">Đã hoàn tiền</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <ReviewField label="PTTT" conf={cur.extracted?.paymentMethod.confidence ?? "low"}
-                        value={cur.form.paymentMethod} onChange={v => updateForm(cur.id, { paymentMethod: v })} />
-                    </div>
-                    {cur.form.warrantyExpiry && (
-                      <p className="text-xs text-muted-foreground">
-                        Hết hạn BH: <b>{format(new Date(cur.form.warrantyExpiry), "dd/MM/yyyy")}</b>
-                      </p>
-                    )}
+                {!cur.ocrSuccess && (
+                  <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3">
+                    <p className="text-sm font-medium text-destructive">Lỗi đọc dữ liệu</p>
+                    <p className="text-xs text-muted-foreground mt-1">{cur.ocrError}</p>
                   </div>
                 )}
+
+                {cur.dupStatus === "exists" && (
+                  <div className="rounded-lg bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-300 dark:border-yellow-700 p-3 space-y-2">
+                    <p className="text-sm font-medium text-yellow-700 dark:text-yellow-400">⚠ Tài khoản này đã tồn tại trong đơn hàng</p>
+                    <div className="flex gap-2 flex-wrap">
+                      <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setField(curIdx, "dupStatus", "update")}>Cập nhật đơn cũ</Button>
+                      <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setField(curIdx, "dupStatus", "skip")}>Bỏ qua</Button>
+                    </div>
+                  </div>
+                )}
+                {cur.dupStatus === "update" && <Badge variant="secondary">Sẽ cập nhật đơn cũ</Badge>}
+                {cur.dupStatus === "skip"   && <Badge variant="outline">Bỏ qua đơn này</Badge>}
+              </div>
+
+              {/* Right: edit form */}
+              <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                <F label="Email / Tài khoản *" value={cur.email}         onChange={v => setField(curIdx, "email", v)} />
+                <F label="Mật khẩu"            value={cur.password}      onChange={v => setField(curIdx, "password", v)} type="password" />
+                <F label="Mã 2FA"              value={cur.twoFA}         onChange={v => setField(curIdx, "twoFA", v)} />
+                <F label="Sản phẩm *"          value={cur.productName}   onChange={v => setField(curIdx, "productName", v)} list={productNames} />
+                <F label="Giá bán (VNĐ)"       value={cur.price}         onChange={v => setField(curIdx, "price", v)} type="number" />
+                <F label="Khách hàng"          value={cur.customerName}  onChange={v => setField(curIdx, "customerName", v)} />
+                <F label="Ngày mua"            value={cur.purchaseDate}  onChange={v => setField(curIdx, "purchaseDate", v)} type="date" />
+                <div className="grid gap-1">
+                  <Label className="text-xs">Trạng thái</Label>
+                  <Select value={cur.status} onValueChange={v => setField(curIdx, "status", v)}>
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Hoạt động</SelectItem>
+                      <SelectItem value="expired">Hết hạn</SelectItem>
+                      <SelectItem value="refunded">Hoàn tiền</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <F label="Số ngày bảo hành"   value={cur.warrantyDays}  onChange={v => setField(curIdx, "warrantyDays", v)} type="number" />
+                {expiry && <p className="text-xs text-muted-foreground px-0.5">Hết bảo hành: {fmtDate(expiry)}</p>}
+                <F label="Phương thức TT"     value={cur.paymentMethod} onChange={v => setField(curIdx, "paymentMethod", v)} />
+                <F label="Ghi chú"            value={cur.notes}         onChange={v => setField(curIdx, "notes", v)} />
               </div>
             </div>
 
-            <DialogFooter className="pt-2 flex-col sm:flex-row gap-2">
-              <Button variant="outline" className="w-full sm:w-auto min-h-[44px]" onClick={() => setStage("upload")}>← Quay lại</Button>
-              <Button
-                className="w-full sm:w-auto min-h-[44px]"
-                disabled={saving || validForSave.length === 0 || unresolvedDups.length > 0}
-                onClick={handleSaveAll}
-              >
+            <div className="flex items-center gap-2 pt-2 border-t flex-wrap">
+              <Button variant="outline" className="min-h-[44px]" onClick={() => setStage("upload")}>← Quay lại</Button>
+              <span className="text-xs text-muted-foreground flex-1">
+                {validCount} đơn hợp lệ / {drafts.length} ảnh
+              </span>
+              <Button className="min-h-[44px]" disabled={saving || validCount === 0} onClick={handleSave}>
                 {saving
-                  ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Đang lưu...</>
-                  : <><Save className="w-4 h-4 mr-2" /> Lưu {validForSave.length} đơn hợp lệ</>}
+                  ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Đang lưu...</>
+                  : `Lưu ${validCount} đơn hợp lệ`}
               </Button>
-            </DialogFooter>
-            {unresolvedDups.length > 0 && (
-              <p className="text-xs text-center text-yellow-600 dark:text-yellow-400">
-                ⚠ Còn {unresolvedDups.length} đơn bị trùng — hãy chọn "Bỏ qua" hoặc "Cập nhật" trước khi lưu
-              </p>
-            )}
+            </div>
           </div>
         )}
 
-        {/* ── STAGE: DONE ───────────────────────────────────────────────────── */}
+        {/* ── DONE ── */}
         {stage === "done" && doneResult && (
-          <div className="py-6 space-y-4">
-            <div className={`rounded-xl p-5 flex items-start gap-3 ${doneResult.errors > 0 || doneResult.skipped > 0 ? "bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800" : "bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800"}`}>
-              {doneResult.errors > 0 ? <AlertTriangle className="w-6 h-6 text-yellow-600 shrink-0 mt-0.5" /> : <CheckCircle2 className="w-6 h-6 text-green-600 shrink-0 mt-0.5" />}
-              <div>
+          <div className="space-y-4 py-4">
+            <div className={`rounded-xl p-5 flex items-start gap-3 ${
+              doneResult.errors > 0
+                ? "bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800"
+                : "bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800"
+            }`}>
+              {doneResult.errors > 0
+                ? <AlertTriangle className="w-6 h-6 text-yellow-600 shrink-0 mt-0.5" />
+                : <CheckCircle2  className="w-6 h-6 text-green-600 shrink-0 mt-0.5" />}
+              <div className="space-y-1">
                 <p className="font-semibold">Hoàn tất!</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {doneResult.added} đơn đã lưu · {doneResult.skipped} bỏ qua · {doneResult.errors} lỗi
+                <p className="text-sm text-muted-foreground">
+                  Tổng {doneResult.total} ảnh
+                  {doneResult.added   > 0 && <> · <span className="text-green-600 font-medium">{doneResult.added} đơn mới</span></>}
+                  {doneResult.updated > 0 && <> · {doneResult.updated} cập nhật</>}
+                  {doneResult.skipped > 0 && <> · {doneResult.skipped} bỏ qua</>}
+                  {doneResult.errors  > 0 && <> · <span className="text-destructive">{doneResult.errors} lỗi</span></>}
                 </p>
               </div>
             </div>
@@ -647,27 +585,16 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
   )
 }
 
-// ── Sub-component: ReviewField ────────────────────────────────────────────────
-function ReviewField({
-  label, conf, value, onChange, type = "text"
-}: {
-  label: string
-  conf: Confidence
-  value: string
-  onChange: (v: string) => void
-  type?: string
+// ── Field helper ───────────────────────────────────────────────────────────────
+function F({ label, value, onChange, type = "text", list }: {
+  label: string; value: string; onChange: (v: string) => void; type?: string; list?: string[]
 }) {
+  const listId = list?.length ? `fl-${label.replace(/\W/g, "")}` : undefined
   return (
     <div className="grid gap-1">
-      <Label className="text-xs flex items-center gap-0.5">
-        {label}{fieldBadge(conf)}
-      </Label>
-      <Input
-        type={type}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        className={inputClass(conf)}
-      />
+      <Label className="text-xs">{label}</Label>
+      <Input type={type} value={value} onChange={e => onChange(e.target.value)} className="h-9 text-sm" list={listId} />
+      {listId && <datalist id={listId}>{list!.map(n => <option key={n} value={n} />)}</datalist>}
     </div>
   )
 }

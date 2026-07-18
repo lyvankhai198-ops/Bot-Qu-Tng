@@ -1,0 +1,380 @@
+VIẾT LẠI HOÀN TOÀN TÍNH NĂNG “THÊM ĐƠN HÀNG TỪ ẢNH”
+
+Bản hiện tại đang lỗi trên iPhone: chọn ảnh xong nhưng ảnh không được load ổn định. Hãy bỏ luồng upload cũ và viết lại sạch từ đầu.
+
+Mục tiêu:
+Admin tải ảnh chụp “Chi tiết đơn hàng”, hệ thống tự đọc dữ liệu, hiển thị bản xem trước để kiểm tra rồi mới lưu thành đơn hàng.
+
+Không sửa các chức năng khác.
+
+--------------------------------------------------
+1. GIAO DIỆN
+--------------------------------------------------
+
+Trong trang “Đơn hàng”, giữ nút:
+
+“Thêm từ ảnh”
+
+Khi bấm vào, mở modal gồm:
+
+- Khu vực chọn ảnh
+- Nút “Chọn ảnh”
+- Nút “Dùng camera”
+- Danh sách ảnh đã chọn
+- Nút “Đọc dữ liệu”
+- Nút “Hủy”
+
+Trên điện thoại không dùng nội dung “Chọn từ máy tính”, đổi thành:
+
+“Chọn ảnh”
+
+Hỗ trợ tối đa 20 ảnh một lần.
+
+--------------------------------------------------
+2. VIẾT LẠI INPUT ẢNH
+--------------------------------------------------
+
+Phải sử dụng input file thật:
+
+<input
+  type="file"
+  accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+  multiple
+/>
+
+Phải xử lý trực tiếp sự kiện onChange.
+
+Ngay khi chọn ảnh:
+
+- Đọc toàn bộ event.target.files ngay lập tức
+- Chuyển thành Array
+- Lưu File object thật vào state
+- Tạo thumbnail
+- Hiển thị tên file
+- Hiển thị dung lượng
+- Hiển thị trạng thái “Đã chọn”
+
+Không reset input hoặc state trước khi lưu File object.
+
+Không để modal render lại làm mất danh sách ảnh.
+
+Cho phép chọn lại cùng một ảnh sau khi đã xóa.
+
+--------------------------------------------------
+3. TƯƠNG THÍCH IPHONE
+--------------------------------------------------
+
+Phải test trên Safari iPhone.
+
+Đảm bảo:
+
+- Chọn ảnh từ Photos xong phải hiện thumbnail ngay
+- Không bị mất file sau khi quay lại trình duyệt
+- Hỗ trợ ảnh chụp màn hình dài
+- Hỗ trợ JPG, PNG, WEBP
+- Hỗ trợ HEIC/HEIF từ iPhone
+
+Nếu OCR không đọc trực tiếp HEIC/HEIF thì chuyển ảnh sang JPEG trước khi gửi OCR.
+
+Không được âm thầm bỏ qua ảnh không hỗ trợ.
+
+Nếu có lỗi phải hiển thị rõ lý do.
+
+--------------------------------------------------
+4. DANH SÁCH ẢNH ĐÃ CHỌN
+--------------------------------------------------
+
+Mỗi ảnh hiển thị thành một thẻ gồm:
+
+- Thumbnail
+- Tên file
+- Dung lượng
+- Trạng thái
+- Nút xóa
+
+Trạng thái gồm:
+
+- Đã chọn
+- Đang tải
+- Đang đọc
+- Thành công
+- Cần kiểm tra
+- Lỗi
+
+Nút “Đọc dữ liệu” chỉ được bật khi có ít nhất một ảnh hợp lệ.
+
+--------------------------------------------------
+5. ĐỌC DỮ LIỆU TỪ ẢNH
+--------------------------------------------------
+
+Ảnh mẫu là ảnh “Chi tiết đơn hàng” có các trường như:
+
+- Sản phẩm
+- Loại đơn
+- Số lượng
+- Số tiền
+- Khách hàng
+- Trạng thái
+- Tạo lúc
+- Thanh toán
+- Giao lúc
+- Phương thức
+- Email/tài khoản
+- Mật khẩu
+- 2FA nếu có
+
+Không cần sử dụng Mã đơn.
+
+Email/tài khoản đã giao là thông tin chính để nhận dạng.
+
+Ví dụ ảnh có:
+
+Sản phẩm:
+GROK SUPER 30D BHF
+
+Số tiền:
+90.000đ
+
+Khách hàng:
+Tự Mã Trọng Đạt
+
+Trạng thái:
+Đã giao
+
+Thanh toán:
+10:37:12 18/7/2026
+
+Giao lúc:
+10:37:14 18/7/2026
+
+Phương thức:
+vietqr
+
+Email/tài khoản:
+robertyteoG@outlook.com
+
+Mật khẩu:
+GrokSuperPro123#
+
+Hệ thống phải tách đúng dữ liệu sang từng trường.
+
+--------------------------------------------------
+6. QUY TẮC NGÀY MUA
+--------------------------------------------------
+
+Ngày mua được chọn theo thứ tự ưu tiên:
+
+1. Thời gian thanh toán
+2. Thời gian giao
+3. Thời gian tạo
+
+Khi lưu đơn chỉ cần lấy phần ngày.
+
+Ví dụ:
+
+10:37:12 18/7/2026
+
+Ngày mua được lưu là:
+
+18/07/2026
+
+--------------------------------------------------
+7. QUY TẮC BẢO HÀNH
+--------------------------------------------------
+
+Tự nhận diện số ngày bảo hành từ tên sản phẩm.
+
+Ví dụ:
+
+- GROK SUPER 30D BHF → 30 ngày
+- GROK SUPER 10D BHF → 10 ngày
+- GROK SUPER 8-10D BHF → lấy theo cấu hình sản phẩm
+- GROK SUPER 3 THÁNG BHF → 90 ngày
+- NO WARRANTY → 0 ngày
+
+Ưu tiên sử dụng số ngày bảo hành đã cấu hình trong sản phẩm trên web.
+
+Nếu không xác định được thì bắt buộc admin chọn thủ công trước khi lưu.
+
+Ngày hết bảo hành:
+
+Ngày mua + số ngày bảo hành
+
+--------------------------------------------------
+8. MÀN HÌNH XEM TRƯỚC
+--------------------------------------------------
+
+Sau khi OCR xong, không lưu ngay.
+
+Hiển thị form cho từng ảnh gồm:
+
+- Email/tài khoản
+- Mật khẩu
+- 2FA
+- Sản phẩm
+- Giá bán
+- Khách hàng
+- Ngày mua
+- Số ngày sử dụng
+- Số ngày bảo hành
+- Ngày hết bảo hành
+- Trạng thái
+- Phương thức thanh toán
+- Ghi chú
+
+Admin được sửa tất cả các trường trước khi lưu.
+
+Hiển thị ảnh gốc bên trên hoặc cạnh form để đối chiếu.
+
+Trên điện thoại hiển thị theo một cột.
+
+--------------------------------------------------
+9. NHẬN DIỆN SẢN PHẨM
+--------------------------------------------------
+
+So khớp tên đọc từ ảnh với danh sách sản phẩm trong hệ thống.
+
+Ví dụ:
+
+“GROK SUPER 30D BHF”
+
+phải khớp với sản phẩm tương ứng đã có trong web.
+
+Cho phép so khớp không phân biệt:
+
+- Chữ hoa/chữ thường
+- Khoảng trắng thừa
+- Dấu gạch ngang
+- Một vài ký tự OCR sai nhẹ
+
+Nếu không khớp chính xác, hiển thị danh sách sản phẩm để admin chọn.
+
+Không tự tạo sản phẩm mới.
+
+--------------------------------------------------
+10. CHỐNG TRÙNG
+--------------------------------------------------
+
+Trước khi lưu, kiểm tra Email/tài khoản.
+
+Nếu email đã tồn tại, hiển thị cảnh báo:
+
+“Tài khoản này đã tồn tại trong đơn hàng.”
+
+Cho admin chọn:
+
+- Bỏ qua
+- Cập nhật đơn cũ
+- Hủy
+
+Không tự ghi đè.
+
+Không dùng Mã đơn để kiểm tra trùng.
+
+--------------------------------------------------
+11. LƯU NHIỀU ẢNH
+--------------------------------------------------
+
+Nếu admin chọn nhiều ảnh:
+
+- Mỗi ảnh tạo một bản nháp riêng
+- Hiển thị toàn bộ bản nháp
+- Admin có thể sửa từng đơn
+- Có nút “Lưu tất cả đơn hợp lệ”
+
+Sau khi lưu hiển thị:
+
+- Tổng số ảnh
+- Số đơn thành công
+- Số đơn bị trùng
+- Số đơn cần kiểm tra
+- Số ảnh lỗi
+
+--------------------------------------------------
+12. UPLOAD BACKEND
+--------------------------------------------------
+
+Frontend gửi File object bằng FormData.
+
+Không tự đặt Content-Type multipart/form-data.
+
+Frontend và backend phải thống nhất cùng một field:
+
+images
+
+Backend phải nhận nhiều ảnh.
+
+Giới hạn tối thiểu:
+
+- 15MB mỗi ảnh
+- Tối đa 20 ảnh
+
+Nếu vượt giới hạn phải báo rõ.
+
+--------------------------------------------------
+13. BẢO MẬT
+--------------------------------------------------
+
+Ảnh có thể chứa tài khoản và mật khẩu.
+
+Yêu cầu:
+
+- Không ghi mật khẩu, 2FA hoặc nội dung OCR nhạy cảm vào console/log
+- Không lưu ảnh vĩnh viễn
+- Xóa ảnh tạm sau khi OCR xong
+- Mật khẩu và 2FA phải dùng cơ chế bảo mật hiện tại của hệ thống
+- Không trả mật khẩu trong API không cần thiết
+
+Chỉ dùng log kỹ thuật như:
+
+- Số file
+- Tên file
+- Dung lượng
+- MIME type
+- Trạng thái OCR
+
+--------------------------------------------------
+14. XỬ LÝ LỖI
+--------------------------------------------------
+
+Phải hiển thị lỗi cụ thể:
+
+- Không nhận được ảnh
+- File không hợp lệ
+- File quá lớn
+- Không tạo được thumbnail
+- Upload thất bại
+- Server không nhận được ảnh
+- Không đọc được chữ
+- Không tìm thấy email
+- Không nhận diện được sản phẩm
+- Ngày mua không hợp lệ
+
+Không để nút đứng im mà không có thông báo.
+
+--------------------------------------------------
+15. QUY TRÌNH SỬ DỤNG CUỐI CÙNG
+--------------------------------------------------
+
+Luồng phải ngắn:
+
+1. Bấm “Thêm từ ảnh”
+2. Chọn một hoặc nhiều ảnh
+3. Thumbnail hiện ngay
+4. Bấm “Đọc dữ liệu”
+5. Hệ thống tự điền thông tin
+6. Admin kiểm tra và sửa nếu cần
+7. Bấm “Lưu tất cả đơn hợp lệ”
+
+Hãy xóa hoặc thay thế toàn bộ code upload ảnh cũ nếu code cũ gây xung đột.
+
+Sau khi hoàn thành phải test thật trên:
+
+- Safari iPhone
+- Chrome Android
+- Trình duyệt máy tính
+- Ảnh JPG
+- Ảnh PNG
+- Ảnh HEIC
+- Một ảnh
+- Nhiều ảnh
