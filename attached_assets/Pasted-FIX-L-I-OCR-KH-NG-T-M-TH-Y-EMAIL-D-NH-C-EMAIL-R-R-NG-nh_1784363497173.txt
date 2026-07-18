@@ -1,0 +1,183 @@
+FIX LỖI OCR KHÔNG TÌM THẤY EMAIL DÙ ẢNH CÓ EMAIL RÕ RÀNG
+
+Ảnh mẫu hiện có dòng:
+
+Email/tài khoản: robertyteoG@outlook.com
+
+Nhưng hệ thống lại báo:
+
+“Không tìm thấy email/tài khoản trong ảnh”
+
+Đây là lỗi ở bước OCR hoặc parser email. Hãy sửa triệt để như sau:
+
+1. Không phụ thuộc duy nhất vào nhãn “Email/tài khoản”
+
+Parser phải tìm email trong toàn bộ văn bản OCR bằng regex, kể cả khi OCR không đọc đúng nhãn.
+
+Regex email:
+
+[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}
+
+Ưu tiên lấy email xuất hiện gần các nhãn:
+
+- Email/tài khoản
+- Email
+- Tài khoản
+- Account
+- Tài khoản đã giao
+
+Nhưng nếu không tìm thấy nhãn, vẫn phải quét toàn bộ raw text để lấy email.
+
+2. Ghép các dòng OCR bị tách
+
+OCR có thể tách email thành nhiều phần như:
+
+robertyteoG@
+outlook.com
+
+hoặc:
+
+robertyteoG @ outlook.com
+
+Phải tạo bản text chuẩn hóa:
+
+- Ghép dòng gần nhau
+- Xóa khoảng trắng quanh @
+- Xóa khoảng trắng quanh dấu chấm
+- Ghép email bị xuống dòng
+
+Ví dụ:
+
+robertyteoG @ outlook . com
+
+phải chuẩn hóa thành:
+
+robertyteoG@outlook.com
+
+3. Không sửa sai ký tự trong email
+
+Không tự động thay:
+
+- O thành 0
+- I thành l
+- G thành 6
+
+trong toàn bộ email nếu không chắc chắn.
+
+Phải giữ nguyên giá trị OCR gốc và chỉ normalize:
+
+- khoảng trắng
+- xuống dòng
+- dấu câu thừa ở đầu/cuối
+
+4. Crop vùng tài khoản đã giao
+
+Ảnh có bố cục cố định.
+
+Vùng chứa email nằm gần cuối ảnh, dưới tiêu đề:
+
+“Tài khoản đã giao”
+
+Hãy OCR thêm lần hai riêng vùng này nếu lần OCR toàn ảnh không tìm thấy email.
+
+Quy trình:
+
+- OCR toàn ảnh
+- Nếu không có email:
+  - tìm vùng dưới “Tài khoản đã giao”
+  - crop vùng cuối ảnh
+  - phóng to 2x hoặc 3x
+  - tăng độ tương phản
+  - OCR lại vùng crop
+- Sau đó chạy regex email lần nữa
+
+5. Tiền xử lý ảnh trước OCR
+
+Tạo các bản thử:
+
+- ảnh gốc
+- grayscale
+- tăng contrast
+- sharpen nhẹ
+- resize 2x
+
+Chọn kết quả nào tìm được nhiều trường hợp lệ nhất.
+
+Không chỉ OCR ảnh thumbnail đã bị thu nhỏ trên giao diện.
+
+Phải dùng File ảnh gốc người dùng upload.
+
+6. Không báo lỗi toàn bộ nếu thiếu email
+
+Nếu OCR đọc được một số trường nhưng chưa tìm được email:
+
+- Vẫn hiển thị các trường đã đọc được
+- Highlight riêng trường email
+- Cho admin nhập email thủ công
+- Không xóa sạch sản phẩm, giá, khách hàng, ngày mua đã đọc được
+
+Thông báo:
+
+“Chưa nhận diện được email. Vui lòng kiểm tra hoặc nhập thủ công.”
+
+Không dùng thông báo chung “Lỗi đọc dữ liệu” nếu OCR vẫn đọc được các trường khác.
+
+7. Không xóa dữ liệu cũ khi OCR lại
+
+Nếu admin đã sửa hoặc điền một số trường, bấm OCR lại không được reset toàn bộ form thành rỗng.
+
+Chỉ cập nhật trường mới tìm thấy.
+
+Không ghi đè trường admin đã chỉnh nếu không được xác nhận.
+
+8. Trả raw OCR trong chế độ debug
+
+Endpoint OCR cần trả:
+
+{
+  rawText: "...",
+  rawLines: [],
+  parsedFields: {},
+  emailCandidates: [],
+  preprocessingMethod: ""
+}
+
+Chỉ bật rawText cho admin debug.
+
+Không log password hoặc 2FA trong production.
+
+9. Test đúng ảnh mẫu
+
+Ảnh mẫu phải trả tối thiểu:
+
+{
+  "email": "robertyteoG@outlook.com",
+  "password": "GrokSuperPro123#",
+  "productRaw": "GROK SUPER 30D BHF",
+  "price": 90000,
+  "customer": "Tự Mã Trọng Đạt",
+  "purchaseDate": "2026-07-18",
+  "paymentMethod": "vietqr"
+}
+
+10. Kiểm tra lỗi crop sai ảnh
+
+Ảnh hiển thị trên web là ảnh chụp màn hình dài.
+
+Đảm bảo backend nhận đúng ảnh gốc, không phải:
+
+- thumbnail
+- preview canvas chất lượng thấp
+- ảnh đã resize quá nhỏ
+- ảnh bị cắt mất phần cuối chứa email
+
+Thêm kiểm tra kích thước ảnh backend nhận được:
+
+- width
+- height
+- file size
+
+Không ghi nội dung nhạy cảm vào log.
+
+Mục tiêu:
+Ảnh có email rõ như mẫu thì hệ thống bắt buộc phải nhận diện được. Nếu OCR toàn ảnh không đọc được, phải tự crop và OCR lại vùng “Tài khoản đã giao”.

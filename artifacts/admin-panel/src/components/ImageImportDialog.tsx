@@ -54,6 +54,7 @@ interface OrderDraft extends OrderDraftFields {
   fileItem: FileItem
   ocrSuccess: boolean
   ocrError?: string
+  emailWarning?: string   // set khi OCR thành công nhưng thiếu email
   confidence: ConfMap    // per-field confidence từ OCR
   dupStatus: DupStatus
 }
@@ -232,6 +233,8 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
           extracted?: Record<string, { value: any; confidence: Conf }>
           confidence?: number
           error?: string
+          emailWarning?: string    // set khi OCR thành công nhưng không nhận ra email
+          emailCandidates?: string[]
         }>
       }
 
@@ -240,14 +243,16 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
         const draft  = defaultDraft(item)
 
         if (!result?.success || !result.extracted) {
+          // Thực sự thất bại (Tesseract crash, ảnh trắng…)
           draft.ocrError = result?.error || "Không đọc được thông tin từ ảnh"
-          // Đánh dấu tất cả trường bắt buộc là low để hiển thị highlight
           draft.confidence = { email: "low", productName: "low", price: "low", purchaseDate: "low", warrantyDays: "low" }
           return draft
         }
 
         const ex = result.extracted
+        // ocrSuccess = true kể cả khi email chưa tìm thấy — form vẫn hiển thị để admin sửa
         draft.ocrSuccess = true
+        if (result.emailWarning) draft.emailWarning = result.emailWarning
 
         // Gán giá trị + lưu confidence per field để highlight
         const confMap: ConfMap = {}
@@ -530,10 +535,19 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
                   <img src={cur.fileItem.previewUrl} alt="" className="w-full h-full object-contain max-h-[380px]" />
                 </div>
 
+                {/* Thất bại hoàn toàn — không đọc được gì */}
                 {!cur.ocrSuccess && (
                   <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3">
                     <p className="text-sm font-medium text-destructive">Lỗi đọc dữ liệu</p>
                     <p className="text-xs text-muted-foreground mt-1">{cur.ocrError}</p>
+                  </div>
+                )}
+
+                {/* OCR đọc được các trường nhưng thiếu email — cho admin nhập tay */}
+                {cur.ocrSuccess && cur.emailWarning && (
+                  <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 p-3">
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400">⚠ Chưa nhận diện được email</p>
+                    <p className="text-xs text-muted-foreground mt-1">Vui lòng kiểm tra ảnh hoặc nhập email thủ công vào trường bên phải.</p>
                   </div>
                 )}
 

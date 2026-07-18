@@ -50673,6 +50673,27 @@ async function runTesseract(buffer, mimeType) {
 function normalizeOCR(raw) {
   return raw.replace(/[|¦]/g, "I").replace(/[`'']/g, "'").replace(/(\d)O(\d)/g, "$10$2").replace(/^O(\d)/gm, "0$1").replace(/\s*:\s*/g, ": ").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
+function stitchEmails(text) {
+  let t = text.replace(/([A-Za-z0-9._%+\-]+@)\s*\n\s*([A-Za-z0-9.\-]+\.[A-Za-z]{2,})/g, "$1$2");
+  t = t.replace(/([A-Za-z0-9._%+\-]+)\s*\n\s*@\s*([A-Za-z0-9.\-]+\.[A-Za-z]{2,})/g, "$1@$2");
+  t = t.replace(/([A-Za-z0-9._%+\-])\s+@\s+([A-Za-z0-9.\-])/g, "$1@$2");
+  t = t.replace(/([A-Za-z0-9])\s+\.\s+([A-Za-z0-9])/g, "$1.$2");
+  return t;
+}
+function scanForEmails(text) {
+  const EMAIL_RE = /[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g;
+  const candidates = [];
+  const seen = /* @__PURE__ */ new Set();
+  let m;
+  while ((m = EMAIL_RE.exec(text)) !== null) {
+    const e = m[0].toLowerCase();
+    if (!seen.has(e)) {
+      seen.add(e);
+      candidates.push(m[0]);
+    }
+  }
+  return candidates;
+}
 function parsePrice(text) {
   if (!text) return null;
   const digits = text.replace(/[^\d]/g, "");
@@ -50758,20 +50779,30 @@ function parseRules(text, existingProducts = []) {
     paymentMethod: { value: null, confidence: "low" },
     warrantyDays: { value: null, confidence: "low" }
   };
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const stitched = stitchEmails(text);
+  const lines = stitched.split("\n").map((l) => l.trim()).filter(Boolean);
   const emailRaw = getValueAfterLabel(lines, [
     "email/t\xE0i kho\u1EA3n",
     "email / t\xE0i kho\u1EA3n",
     "email/tai khoan",
+    "t\xE0i kho\u1EA3n \u0111\xE3 giao",
+    "tai khoan da giao",
     "email",
     "t\xE0i kho\u1EA3n",
-    "tai khoan"
+    "tai khoan",
+    "account"
   ]);
   if (emailRaw && emailRaw !== "-") {
     result.email = {
       value: emailRaw.toLowerCase(),
       confidence: emailRaw.includes("@") ? "high" : "medium"
     };
+  }
+  if (!result.email.value) {
+    const candidates = scanForEmails(stitched);
+    if (candidates.length) {
+      result.email = { value: candidates[0].toLowerCase(), confidence: "medium" };
+    }
   }
   const passRaw = getValueAfterLabel(lines, ["m\u1EADt kh\u1EA9u", "mat khau", "password"]);
   if (passRaw && passRaw !== "-") result.password = { value: passRaw, confidence: "high" };
@@ -50909,13 +50940,20 @@ async function runOCR(req, res) {
       const normalized = normalizeOCR(rawText);
       const fields = parseRules(normalized, existingProducts);
       const confidence = calcOverallConfidence(fields);
+      const rawLines = normalized.split("\n").map((l) => l.trim()).filter(Boolean);
+      const emailCandidates = scanForEmails(stitchEmails(rawText));
       const safeLog = { email: fields.email.value ?? "\u2014", product: fields.productRaw.value ?? fields.productName.value ?? "\u2014", price: fields.price.value ?? "\u2014", purchaseDate: fields.purchaseDate.value ?? "\u2014" };
       console.info(`OCR done: ${filename} | conf=${confidence} |`, safeLog);
-      if (!fields.email.value) {
-        results.push({ filename, success: false, error: "Kh\xF4ng t\xECm th\u1EA5y email/t\xE0i kho\u1EA3n trong \u1EA3nh", rawLines: normalized.split("\n").map((l) => l.trim()).filter(Boolean) });
-        continue;
-      }
-      results.push({ filename, success: true, extracted: fields, confidence, rawLines: normalized.split("\n").map((l) => l.trim()).filter(Boolean) });
+      const emailWarning = !fields.email.value ? "Ch\u01B0a nh\u1EADn di\u1EC7n \u0111\u01B0\u1EE3c email. Vui l\xF2ng ki\u1EC3m tra \u1EA3nh ho\u1EB7c nh\u1EADp th\u1EE7 c\xF4ng." : void 0;
+      results.push({
+        filename,
+        success: true,
+        extracted: fields,
+        confidence,
+        emailWarning,
+        emailCandidates,
+        rawLines
+      });
     } catch (err) {
       console.error(`OCR error ${filename}:`, err.message);
       results.push({ filename, success: false, error: err.message });
