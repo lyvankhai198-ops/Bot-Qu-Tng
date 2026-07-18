@@ -49721,7 +49721,7 @@ router.get("/healthz", (_req, res) => {
   const data = HealthCheckResponse.parse({ status: "ok" });
   res.json(data);
 });
-router.get("/health/gemini", async (_req, res) => {
+router.get("/health/gemini-OLD-REMOVED", async (_req, res) => {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   const model = "gemini-2.0-flash";
   if (!apiKey) {

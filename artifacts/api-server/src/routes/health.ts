@@ -8,8 +8,8 @@ router.get("/healthz", (_req, res) => {
   res.json(data);
 });
 
-// ── GET /health/gemini — Chẩn đoán Gemini API ────────────────────────────────
-router.get("/health/gemini", async (_req, res) => {
+// ── GET /health/gemini — đã chuyển sang ocr.ts (Tesseract) ──────────────────
+router.get("/health/gemini-OLD-REMOVED", async (_req, res) => {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   const model  = "gemini-2.0-flash";
 
