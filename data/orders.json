@@ -1,0 +1,16 @@
+{
+  "ORD1AC006": {
+    "email": "JavenryKriewall@hotmail.com",
+    "productName": "Grok",
+    "price": 10000,
+    "costPrice": 15000,
+    "purchaseDate": "2026-07-18T00:00:00.000Z",
+    "warrantyPeriod": "10",
+    "warrantyExpiry": "2026-07-30T00:00:00.000Z",
+    "expiryDate": "2026-07-31T00:00:00.000Z",
+    "status": "active",
+    "notes": "Jaha",
+    "orderId": "ORD1AC006",
+    "createdAt": "2026-07-17T23:53:29.171Z"
+  }
+}
