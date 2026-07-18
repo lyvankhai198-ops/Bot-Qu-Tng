@@ -33,19 +33,18 @@ LANG = {
         # Check order / Support — order lookup
         "check_order_ask": (
             "📦 <b>KIỂM TRA ĐƠN HÀNG</b>\n\n"
-            "Vui lòng nhập <b>mã đơn hàng</b> hoặc <b>email tài khoản</b> đã mua:"
+            "Vui lòng nhập <b>email tài khoản</b> đã mua:"
         ),
         "support_ask": (
             "💬 <b>HỖ TRỢ KHÁCH HÀNG</b>\n\n"
-            "Vui lòng nhập <b>mã đơn hàng</b> hoặc <b>email tài khoản</b> đã mua:"
+            "Vui lòng nhập <b>email tài khoản</b> đã mua:"
         ),
         "order_not_found": (
             "❌ <b>Không tìm thấy đơn hàng.</b>\n\n"
-            "Vui lòng kiểm tra lại mã đơn hoặc email và thử lại."
+            "Vui lòng kiểm tra lại email và thử lại."
         ),
         "order_display": (
             "📦 <b>THÔNG TIN ĐƠN HÀNG</b>\n\n"
-            "🔖 Mã đơn: <code>{order_id}</code>\n"
             "📧 Email: <code>{email}</code>\n"
             "📦 Sản phẩm: <b>{product}</b>\n"
             "📅 Ngày mua: <b>{purchase}</b>\n"
@@ -369,19 +368,18 @@ LANG = {
         # Check order / Support
         "check_order_ask": (
             "📦 <b>CHECK YOUR ORDER</b>\n\n"
-            "Please enter your <b>order ID</b> or <b>account email</b>:"
+            "Please enter your <b>account email</b>:"
         ),
         "support_ask": (
             "💬 <b>CUSTOMER SUPPORT</b>\n\n"
-            "Please enter your <b>order ID</b> or <b>account email</b>:"
+            "Please enter your <b>account email</b>:"
         ),
         "order_not_found": (
             "❌ <b>Order not found.</b>\n\n"
-            "Please check your order ID or email and try again."
+            "Please check your email and try again."
         ),
         "order_display": (
             "📦 <b>ORDER DETAILS</b>\n\n"
-            "🔖 Order ID: <code>{order_id}</code>\n"
             "📧 Email: <code>{email}</code>\n"
             "📦 Product: <b>{product}</b>\n"
             "📅 Purchase date: <b>{purchase}</b>\n"

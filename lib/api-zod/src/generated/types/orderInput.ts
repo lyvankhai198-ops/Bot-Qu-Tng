@@ -7,7 +7,6 @@
  */
 
 export interface OrderInput {
-  orderId?: string;
   email: string;
   productName: string;
   price?: number | null;

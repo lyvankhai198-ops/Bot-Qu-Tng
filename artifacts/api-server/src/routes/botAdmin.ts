@@ -340,7 +340,7 @@ router.get("/bot/orders", requireAuth, (_req: any, res: any) => {
 router.post("/bot/orders", requireAuth, (req: any, res: any) => {
   const body = req.body ?? {};
   const orders: any = readJson("orders", {}) ?? {};
-  const orderId = body.orderId || ("ORD" + crypto.randomUUID().slice(0, 6).toUpperCase());
+  const orderId = "ORD" + crypto.randomUUID().slice(0, 6).toUpperCase();
   const order = { ...body, orderId, createdAt: now() };
   orders[orderId] = order;
   writeJson("orders", orders);
@@ -423,7 +423,6 @@ function buildReplacementMessage(req_: any, email: string, password: string, two
   const lines: string[] = [];
   if (isEN) {
     lines.push(`✅ <b>WARRANTY REQUEST RESOLVED</b>\n`);
-    lines.push(`📦 Order: <code>${req_.orderId}</code>`);
     if (req_.productName) lines.push(`🛍 Product: <b>${req_.productName}</b>`);
     lines.push(`\n🔑 <b>Replacement Account:</b>`);
     lines.push(`📧 Email/Account: <code>${email}</code>`);
@@ -433,7 +432,6 @@ function buildReplacementMessage(req_: any, email: string, password: string, two
     lines.push(`\nPlease verify your account immediately after receiving.`);
   } else {
     lines.push(`✅ <b>YÊU CẦU BẢO HÀNH ĐÃ ĐƯỢC GIẢI QUYẾT</b>\n`);
-    lines.push(`📦 Mã đơn: <code>${req_.orderId}</code>`);
     if (req_.productName) lines.push(`🛍 Sản phẩm: <b>${req_.productName}</b>`);
     lines.push(`\n🔑 <b>Tài khoản thay thế:</b>`);
     lines.push(`📧 Email/Tài khoản: <code>${email}</code>`);
@@ -498,8 +496,7 @@ router.post("/bot/warranty/:id/resend-ack", requireAuth, async (req: any, res: a
   if (!req_.acknowledgedAt) {
     res.status(400).json({ ok: false, message: "Yêu cầu chưa được tiếp nhận" }); return;
   }
-  const orderId = req_.orderId || "N/A";
-  const msg = `✅ <b>YÊU CẦU ĐÃ ĐƯỢC TIẾP NHẬN</b>\n\nMã đơn: <code>${orderId}</code>\n\nShop đã nhận được yêu cầu bảo hành của bạn và đang tiến hành kiểm tra. Kết quả xử lý sẽ được bot thông báo ngay khi hoàn tất. Vui lòng chờ và không gửi lại yêu cầu trùng lặp.`;
+  const msg = `✅ <b>YÊU CẦU ĐÃ ĐƯỢC TIẾP NHẬN</b>\n\nShop đã nhận được yêu cầu bảo hành của bạn và đang tiến hành kiểm tra. Kết quả xử lý sẽ được bot thông báo ngay khi hoàn tất. Vui lòng chờ và không gửi lại yêu cầu trùng lặp.`;
   const result = await sendTelegramMessage(req_.userId, msg);
   if (result.ok) {
     requests[idx] = { ...req_, ackNotifSentStatus: "sent", ackNotifSentAt: now(), ackNotifError: null };

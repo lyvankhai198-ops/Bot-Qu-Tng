@@ -39,8 +39,7 @@ export default function Orders() {
   const filteredOrders = useMemo(() => {
     if (!orders) return []
     return orders.filter(o => {
-      const matchSearch = (o.email || "").toLowerCase().includes(search.toLowerCase()) || 
-                          (o.orderId || "").toLowerCase().includes(search.toLowerCase()) ||
+      const matchSearch = (o.email || "").toLowerCase().includes(search.toLowerCase()) ||
                           (o.productName || "").toLowerCase().includes(search.toLowerCase())
       const matchStatus = filterStatus === "all" || o.status === filterStatus
       return matchSearch && matchStatus
@@ -124,7 +123,7 @@ export default function Orders() {
             <div className="relative w-full">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Tìm mã đơn, email, sản phẩm..."
+                placeholder="Tìm email, sản phẩm..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="pl-9 bg-background min-h-[44px]"
@@ -176,7 +175,6 @@ export default function Orders() {
                       <span className="text-xs text-muted-foreground ml-auto">BH: {formatDate(order.warrantyExpiry)}</span>
                     )}
                   </div>
-                  <code className="text-xs text-muted-foreground font-mono">{order.orderId.slice(0, 8)}...</code>
                 </div>
               ))
             ) : (
@@ -191,7 +189,6 @@ export default function Orders() {
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>
-                  <TableHead>Mã đơn</TableHead>
                   <TableHead>Sản phẩm</TableHead>
                   <TableHead>Email khách hàng</TableHead>
                   <TableHead>Giá bán</TableHead>
@@ -204,7 +201,7 @@ export default function Orders() {
                 {isLoading ? (
                   Array(5).fill(0).map((_, i) => (
                     <TableRow key={i}>
-                      <TableCell colSpan={7} className="h-14">
+                      <TableCell colSpan={6} className="h-14">
                         <div className="h-4 bg-muted animate-pulse rounded w-full" />
                       </TableCell>
                     </TableRow>
@@ -212,7 +209,6 @@ export default function Orders() {
                 ) : filteredOrders.length > 0 ? (
                   filteredOrders.map(order => (
                     <TableRow key={order.orderId}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{order.orderId.slice(0, 8)}...</TableCell>
                       <TableCell className="font-medium">{order.productName}</TableCell>
                       <TableCell className="font-mono text-sm">{order.email}</TableCell>
                       <TableCell>{formatCurrency(order.price)}</TableCell>
@@ -234,7 +230,7 @@ export default function Orders() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                    <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
                       Không tìm thấy đơn hàng.
                     </TableCell>
                   </TableRow>

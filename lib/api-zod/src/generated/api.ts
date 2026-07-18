@@ -308,7 +308,6 @@ export const ListOrdersResponse = zod.array(ListOrdersResponseItem)
  * @summary Create a new order
  */
 export const CreateOrderBody = zod.object({
-  "orderId": zod.string().optional(),
   "email": zod.string(),
   "productName": zod.string(),
   "price": zod.number().nullish(),
@@ -373,7 +372,6 @@ export const UpdateOrderParams = zod.object({
 })
 
 export const UpdateOrderBody = zod.object({
-  "orderId": zod.string().optional(),
   "email": zod.string(),
   "productName": zod.string(),
   "price": zod.number().nullish(),

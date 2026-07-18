@@ -383,7 +383,6 @@ export default function Warranty() {
                           <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/20">Chờ xử lý</Badge>
                           <span className="text-sm text-muted-foreground">{format(new Date(req.submittedAt), 'dd/MM/yyyy HH:mm')}</span>
                         </div>
-                        <code className="text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded">{req.orderId}</code>
                       </div>
                       <div>
                         <h4 className="font-medium">{req.email || (req as any).username || "Ẩn danh"}</h4>
@@ -439,7 +438,6 @@ export default function Warranty() {
                           <Badge className="bg-blue-600 text-white">Đang xử lý</Badge>
                           <span className="text-sm font-medium">{req.email || (req as any).username || "Ẩn danh"}</span>
                         </div>
-                        <code className="text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded">{req.orderId}</code>
                       </div>
                       <div className="bg-muted/50 p-3 rounded-lg text-sm border border-border/50">{req.description}</div>
                       <div className="text-xs text-muted-foreground space-y-1">
@@ -511,7 +509,6 @@ export default function Warranty() {
                         </span>
                       </div>
                       <div className="text-xs text-muted-foreground space-y-1">
-                        <div>📦 Mã đơn: <code className="bg-muted px-1 rounded">{req.orderId}</code></div>
                         {r.replacementEmail && (
                           <>
                             <div>📧 TK thay thế: <code className="bg-muted px-1 rounded">{r.replacementEmail}</code></div>

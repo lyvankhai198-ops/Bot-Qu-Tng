@@ -1096,8 +1096,6 @@ components:
       type: object
       required: [email, productName]
       properties:
-        orderId:
-          type: string
         email:
           type: string
         productName:

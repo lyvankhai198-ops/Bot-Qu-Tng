@@ -290,7 +290,7 @@ def get_order(order_id: str):
 
 def add_order(order: dict) -> str:
     orders = load("orders", {})
-    order_id = order.get("orderId") or ("ORD" + str(uuid.uuid4())[:6].upper())
+    order_id = "ORD" + str(uuid.uuid4())[:6].upper()
     order["orderId"] = order_id
     order.setdefault("createdAt", datetime.now().isoformat())
     order.setdefault("status", "active")
@@ -323,8 +323,8 @@ def find_order_by_email(email: str):
     return None
 
 def find_order(query: str):
-    """Find by order ID or email."""
-    return get_order(query) or find_order_by_email(query)
+    """Find by email only."""
+    return find_order_by_email(query)
 
 # ─── Warranty Requests ────────────────────────────────────────────────────
 
