@@ -418,7 +418,15 @@ export const ListWarrantyResponseItem = zod.object({
   "submittedAt": zod.string(),
   "status": zod.string(),
   "resolution": zod.string().nullish(),
-  "resolvedAt": zod.string().nullish()
+  "resolvedAt": zod.string().nullish(),
+  "resolvedBy": zod.string().nullish(),
+  "replacementEmail": zod.string().nullish(),
+  "replacementPassword": zod.string().nullish(),
+  "replacementTwoFA": zod.string().nullish(),
+  "replacementNote": zod.string().nullish(),
+  "sentStatus": zod.string().nullish(),
+  "sentError": zod.string().nullish(),
+  "sentAt": zod.string().nullish()
 })
 export const ListWarrantyResponse = zod.array(ListWarrantyResponseItem)
 
@@ -433,6 +441,7 @@ export const ResolveWarrantyReplacementParams = zod.object({
 export const ResolveWarrantyReplacementBody = zod.object({
   "email": zod.string(),
   "password": zod.string(),
+  "twoFA": zod.string().optional(),
   "note": zod.string().optional()
 })
 
@@ -472,6 +481,19 @@ export const ResolveWarrantyRejectBody = zod.object({
 })
 
 export const ResolveWarrantyRejectResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Retry sending replacement account to user
+ */
+export const ResendWarrantyReplacementParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ResendWarrantyReplacementResponse = zod.object({
   "ok": zod.boolean(),
   "message": zod.string()
 })

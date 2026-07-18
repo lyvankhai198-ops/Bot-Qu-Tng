@@ -1,0 +1,62 @@
+Sửa lại quy trình xử lý bảo hành.
+
+Hiện tại sau khi admin chọn “Gửi tài khoản thay thế” và đánh dấu yêu cầu là “Đã giải quyết”, hệ thống mới chỉ lưu tài khoản mới trên web nhưng bot chưa gửi thông tin đó cho người dùng.
+
+Yêu cầu sửa:
+
+1. Khi admin xử lý bảo hành theo phương án “Gửi tài khoản thay thế”, phải có các ô:
+   - Tài khoản/email mới
+   - Mật khẩu mới
+   - Mã 2FA hoặc thông tin bổ sung nếu có
+   - Ghi chú
+   - Nút “Xác nhận và gửi cho khách”
+
+2. Sau khi admin bấm xác nhận:
+   - Lưu đầy đủ tài khoản thay thế vào yêu cầu bảo hành.
+   - Cập nhật trạng thái thành “Đã giải quyết”.
+   - Bot tự động gửi tin nhắn riêng đến đúng Telegram user đã gửi yêu cầu.
+   - Không chỉ gửi mỗi email mới, phải gửi đầy đủ thông tin đăng nhập.
+
+3. Mẫu tin nhắn bot gửi cho khách:
+
+✅ YÊU CẦU BẢO HÀNH ĐÃ ĐƯỢC GIẢI QUYẾT
+
+Mã đơn: {order_code}
+Sản phẩm: {product_name}
+
+Tài khoản thay thế:
+Email/Tài khoản: {replacement_account}
+Mật khẩu: {replacement_password}
+2FA/Thông tin bổ sung: {replacement_extra}
+Ghi chú: {replacement_note}
+
+Vui lòng kiểm tra tài khoản ngay sau khi nhận.
+
+4. Nếu không có 2FA hoặc ghi chú thì tự ẩn các dòng trống.
+
+5. Chỉ chuyển trạng thái sang “Đã giải quyết” khi bot gửi thành công.
+
+6. Nếu bot gửi thất bại:
+   - Giữ trạng thái “Chờ gửi lại” hoặc “Gửi thất bại”.
+   - Hiển thị rõ nguyên nhân lỗi trên web.
+   - Có nút “Gửi lại”.
+   - Không làm mất thông tin tài khoản thay thế đã nhập.
+
+7. Lưu lịch sử:
+   - Thời gian xử lý.
+   - Admin đã xử lý.
+   - Nội dung đã gửi.
+   - Telegram user nhận.
+   - Trạng thái gửi thành công hoặc thất bại.
+
+8. Tài khoản mới phải chỉ được gửi cho đúng người sở hữu yêu cầu bảo hành, không được gửi nhầm sang user khác.
+
+9. Sau khi gửi thành công, trong mục “Đã xử lý” trên web phải hiển thị:
+   - Mã đơn
+   - Email tài khoản cũ
+   - Tài khoản thay thế
+   - Thời gian xử lý
+   - Trạng thái “Đã gửi cho khách”
+
+Hãy kiểm tra thực tế toàn bộ luồng:
+Người dùng báo lỗi → admin nhập tài khoản thay thế → xác nhận → bot gửi đầy đủ tài khoản mới đến người dùng → web cập nhật trạng thái thành công.

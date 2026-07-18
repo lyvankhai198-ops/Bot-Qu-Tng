@@ -357,34 +357,117 @@ router.get("/bot/warranty", requireAuth, (_req: any, res: any) => {
   res.json(requests.sort((a: any, b: any) => b.submittedAt?.localeCompare(a.submittedAt ?? "") ?? 0));
 });
 
-// ── Warranty resolve helpers ─────────────────────────────────────────────────
-function queueDirectMessage(userId: string, message: string) {
-  const pending: any[] = readJson("pending_broadcasts", []) ?? [];
-  pending.push({ message, target: `user:${userId}`, queued_at: now() });
-  writeJson("pending_broadcasts", pending);
+// ── Telegram direct send ─────────────────────────────────────────────────────
+const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
+
+async function sendTelegramMessage(userId: string, message: string): Promise<{ ok: boolean; error?: string }> {
+  if (!TG_TOKEN) return { ok: false, error: "TELEGRAM_BOT_TOKEN not set" };
+  try {
+    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: userId, text: message, parse_mode: "HTML" }),
+    });
+    const data: any = await resp.json();
+    if (data.ok) return { ok: true };
+    return { ok: false, error: data.description ?? "Telegram error" };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? "Network error" };
+  }
+}
+
+function buildReplacementMessage(req_: any, email: string, password: string, twoFA?: string, note?: string): string {
+  const userLang = readJson("user_states", {} as any)?.[req_.userId]?.lang ?? "vi";
+  const isEN = userLang === "en";
+  const lines: string[] = [];
+  if (isEN) {
+    lines.push(`✅ <b>WARRANTY REQUEST RESOLVED</b>\n`);
+    lines.push(`📦 Order: <code>${req_.orderId}</code>`);
+    if (req_.productName) lines.push(`🛍 Product: <b>${req_.productName}</b>`);
+    lines.push(`\n🔑 <b>Replacement Account:</b>`);
+    lines.push(`📧 Email/Account: <code>${email}</code>`);
+    lines.push(`🔒 Password: <code>${password}</code>`);
+    if (twoFA) lines.push(`🛡 2FA / Extra info: <code>${twoFA}</code>`);
+    if (note) lines.push(`📝 Note: ${note}`);
+    lines.push(`\nPlease verify your account immediately after receiving.`);
+  } else {
+    lines.push(`✅ <b>YÊU CẦU BẢO HÀNH ĐÃ ĐƯỢC GIẢI QUYẾT</b>\n`);
+    lines.push(`📦 Mã đơn: <code>${req_.orderId}</code>`);
+    if (req_.productName) lines.push(`🛍 Sản phẩm: <b>${req_.productName}</b>`);
+    lines.push(`\n🔑 <b>Tài khoản thay thế:</b>`);
+    lines.push(`📧 Email/Tài khoản: <code>${email}</code>`);
+    lines.push(`🔒 Mật khẩu: <code>${password}</code>`);
+    if (twoFA) lines.push(`🛡 2FA/Thông tin bổ sung: <code>${twoFA}</code>`);
+    if (note) lines.push(`📝 Ghi chú: ${note}`);
+    lines.push(`\nVui lòng kiểm tra tài khoản ngay sau khi nhận.`);
+  }
+  return lines.join("\n");
 }
 
 // ── POST /bot/warranty/:id/replacement ──────────────────────────────────────
-router.post("/bot/warranty/:id/replacement", requireAuth, (req: any, res: any) => {
+router.post("/bot/warranty/:id/replacement", requireAuth, async (req: any, res: any) => {
   const { id } = req.params;
-  const { email, password, note } = req.body ?? {};
+  const { email, password, twoFA, note } = req.body ?? {};
+  if (!email || !password) { res.status(400).json({ ok: false, message: "Email và mật khẩu là bắt buộc" }); return; }
+
   const requests: any[] = readJson("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r: any) => r.id === id);
   if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
   const req_ = requests[idx];
-  requests[idx] = { ...req_, status: "resolved", resolution: `replacement:${email}`, resolvedAt: now() };
-  writeJson("warranty_requests", requests);
-  // Update order status
-  const orders: any = readJson("orders", {}) ?? {};
-  if (req_.orderId && orders[req_.orderId]) {
-    orders[req_.orderId].status = "warranted";
-    writeJson("orders", orders);
+
+  // Store replacement info first
+  const replacementData = {
+    replacementEmail: email,
+    replacementPassword: password,
+    replacementTwoFA: twoFA || null,
+    replacementNote: note || null,
+    resolvedAt: now(),
+    resolvedBy: "web-admin",
+  };
+
+  // Send via Telegram
+  const message = buildReplacementMessage(req_, email, password, twoFA, note);
+  const result = await sendTelegramMessage(req_.userId, message);
+
+  if (result.ok) {
+    requests[idx] = { ...req_, ...replacementData, status: "resolved", resolution: `replacement:${email}`, sentStatus: "sent", sentAt: now(), sentError: null };
+    writeJson("warranty_requests", requests);
+    // Update order status
+    const orders: any = readJson("orders", {}) ?? {};
+    if (req_.orderId && orders[req_.orderId]) { orders[req_.orderId].status = "warranted"; writeJson("orders", orders); }
+    addLog("WARRANTY_REPLACEMENT", `${id} → ${email} | sent OK`, "web-admin");
+    res.json({ ok: true, message: "Đã gửi tài khoản thay thế cho khách" });
+  } else {
+    requests[idx] = { ...req_, ...replacementData, status: "send_failed", resolution: `replacement:${email}`, sentStatus: "failed", sentError: result.error, sentAt: null };
+    writeJson("warranty_requests", requests);
+    addLog("WARRANTY_REPLACEMENT_FAIL", `${id} → ${email} | ${result.error}`, "web-admin");
+    res.status(500).json({ ok: false, message: `Lưu thành công nhưng gửi Telegram thất bại: ${result.error}` });
   }
-  // Notify user via bot
-  const msg = `✅ <b>Yêu cầu bảo hành đã được chấp nhận!</b>\n\n📧 Tài khoản mới:\nEmail: <code>${email}</code>\nMật khẩu: <code>${password}</code>${note ? `\n\n📝 Ghi chú: ${note}` : ""}`;
-  queueDirectMessage(req_.userId, msg);
-  addLog("WARRANTY_REPLACEMENT", `${id} → ${email}`, "web-admin");
-  res.json({ ok: true, message: "Đã gửi tài khoản thay thế" });
+});
+
+// ── POST /bot/warranty/:id/resend ────────────────────────────────────────────
+router.post("/bot/warranty/:id/resend", requireAuth, async (req: any, res: any) => {
+  const { id } = req.params;
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  if (!req_.replacementEmail || !req_.replacementPassword) {
+    res.status(400).json({ ok: false, message: "Không có thông tin tài khoản thay thế để gửi lại" }); return;
+  }
+  const message = buildReplacementMessage(req_, req_.replacementEmail, req_.replacementPassword, req_.replacementTwoFA, req_.replacementNote);
+  const result = await sendTelegramMessage(req_.userId, message);
+  if (result.ok) {
+    requests[idx] = { ...req_, status: "resolved", sentStatus: "sent", sentAt: now(), sentError: null };
+    writeJson("warranty_requests", requests);
+    addLog("WARRANTY_RESEND", `${id} → ${req_.replacementEmail} | OK`, "web-admin");
+    res.json({ ok: true, message: "Đã gửi lại thành công" });
+  } else {
+    requests[idx] = { ...req_, sentStatus: "failed", sentError: result.error };
+    writeJson("warranty_requests", requests);
+    res.status(500).json({ ok: false, message: `Gửi lại thất bại: ${result.error}` });
+  }
 });
 
 // ── POST /bot/warranty/:id/refund ────────────────────────────────────────────

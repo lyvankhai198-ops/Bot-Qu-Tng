@@ -18,4 +18,12 @@ export interface WarrantyRequest {
   status: string;
   resolution?: string | null;
   resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  replacementEmail?: string | null;
+  replacementPassword?: string | null;
+  replacementTwoFA?: string | null;
+  replacementNote?: string | null;
+  sentStatus?: string | null;
+  sentError?: string | null;
+  sentAt?: string | null;
 }

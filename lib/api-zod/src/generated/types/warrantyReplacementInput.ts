@@ -9,5 +9,6 @@
 export interface WarrantyReplacementInput {
   email: string;
   password: string;
+  twoFA?: string;
   note?: string;
 }

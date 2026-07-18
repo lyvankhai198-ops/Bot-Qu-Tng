@@ -542,6 +542,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/ActionResult"
 
+  /bot/warranty/{id}/resend:
+    post:
+      operationId: resendWarrantyReplacement
+      tags: [bot]
+      summary: Retry sending replacement account to user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
   /bot/intro:
     get:
       operationId: getIntro
@@ -937,6 +958,30 @@ components:
         resolvedAt:
           type: string
           nullable: true
+        resolvedBy:
+          type: string
+          nullable: true
+        replacementEmail:
+          type: string
+          nullable: true
+        replacementPassword:
+          type: string
+          nullable: true
+        replacementTwoFA:
+          type: string
+          nullable: true
+        replacementNote:
+          type: string
+          nullable: true
+        sentStatus:
+          type: string
+          nullable: true
+        sentError:
+          type: string
+          nullable: true
+        sentAt:
+          type: string
+          nullable: true
 
     WarrantyReplacementInput:
       type: object
@@ -945,6 +990,8 @@ components:
         email:
           type: string
         password:
+          type: string
+        twoFA:
           type: string
         note:
           type: string
