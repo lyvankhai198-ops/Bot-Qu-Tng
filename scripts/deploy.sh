@@ -20,7 +20,10 @@ echo "✓ api-server built"
 echo "▶ Pushing to GitHub..."
 git add -A
 git commit -m "deploy: $(date '+%Y-%m-%d %H:%M')" --allow-empty
-echo "✓ committed"
+# Dùng GITHUB_TOKEN (classic PAT, scope: repo) để push qua HTTPS
+REPO_URL="https://lyvankhai198-ops:${GITHUB_TOKEN}@github.com/lyvankhai198-ops/Bot-Qu-Tng.git"
+git push "${REPO_URL}" main || git push "${REPO_URL}" main --force
+echo "✓ pushed to GitHub"
 
 # ── 4. VPS: git pull + restart ────────────────────────────────────────────────
 echo "▶ VPS: git pull + restart..."
