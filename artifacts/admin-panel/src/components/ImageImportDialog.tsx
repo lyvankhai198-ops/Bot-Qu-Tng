@@ -207,8 +207,6 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
 
   // ── File ingestion ──────────────────────────────────────────────────────────
   const ingestFiles = useCallback((files: File[]) => {
-    // Accept any image file — iOS HEIC/HEIF, empty type from some browsers, etc.
-    // Unsupported types (e.g. HEIC) will fail at OCR stage with a clear error.
     const imageExtRe = /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/i
     const valid = files.filter(f =>
       f.type.startsWith("image/") || imageExtRe.test(f.name) || f.type === ""
@@ -218,19 +216,23 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
       return
     }
 
+    // previewUrl: use createObjectURL — works natively for ALL formats including HEIC on iOS.
+    // base64: read via FileReader only for OCR API upload.
     const readers = valid.map(file => new Promise<ImageItem>((resolve) => {
+      // Object URL works for iOS HEIC/HEIF natively; data: URLs with HEIC do NOT render in <img>
+      const previewUrl = URL.createObjectURL(file)
+
       const reader = new FileReader()
       reader.onload = e => {
         const dataUrl = e.target?.result as string
-        if (!dataUrl) { resolve({ id: crypto.randomUUID(), filename: file.name, previewUrl: "", base64: "", mimeType: "image/jpeg", extracted: null, error: "Không đọc được file", processed: false, form: emptyForm(), dupStatus: "none" }); return }
-        const base64 = dataUrl.split(",")[1] ?? ""
-        // Normalise MIME: iOS HEIC often comes as image/heic or empty — send as jpeg to OpenAI
+        const base64 = (dataUrl ?? "").split(",")[1] ?? ""
         const rawMime = file.type || "image/jpeg"
+        // OpenAI doesn't support HEIC — tell it to treat as jpeg (base64 content is same)
         const mimeType = rawMime.includes("heic") || rawMime.includes("heif") ? "image/jpeg" : rawMime
         resolve({
           id: crypto.randomUUID(),
           filename: file.name,
-          previewUrl: dataUrl,
+          previewUrl,
           base64,
           mimeType,
           extracted: null,
@@ -240,7 +242,12 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
           dupStatus: "none",
         })
       }
-      reader.onerror = () => resolve({ id: crypto.randomUUID(), filename: file.name, previewUrl: "", base64: "", mimeType: "image/jpeg", extracted: null, error: "Không đọc được file", processed: false, form: emptyForm(), dupStatus: "none" })
+      reader.onerror = () => resolve({
+        id: crypto.randomUUID(), filename: file.name,
+        previewUrl, base64: "", mimeType: "image/jpeg",
+        extracted: null, error: "Không đọc được file",
+        processed: false, form: emptyForm(), dupStatus: "none",
+      })
       reader.readAsDataURL(file)
     }))
 
@@ -349,6 +356,8 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
   const unresolvedDups = images.filter(i => i.processed && !i.error && i.dupStatus === "exists")
 
   const handleReset = () => {
+    // Revoke object URLs to free memory
+    images.forEach(img => { try { URL.revokeObjectURL(img.previewUrl) } catch {} })
     setStage("upload"); setImages([]); setCurrentIdx(0); setDoneResult(null)
   }
 
@@ -367,32 +376,39 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
         {/* ── STAGE: UPLOAD ─────────────────────────────────────────────────── */}
         {stage === "upload" && (
           <div className="space-y-4 py-2">
-            {/* Drop zone */}
-            <div
-              ref={dropRef}
+            {/* Drop zone — label wraps the multi-file input so tap works natively on iOS */}
+            <label
+              htmlFor="ocr-file-multi"
+              ref={dropRef as any}
               onDrop={handleDrop}
               onDragOver={e => e.preventDefault()}
-              className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary hover:bg-muted/30 transition-colors"
-              onClick={() => fileRef.current?.click()}
+              className="block border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary hover:bg-muted/30 transition-colors"
             >
               <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
               <p className="font-medium text-sm">Kéo thả ảnh vào đây hoặc bấm để chọn</p>
               <p className="text-xs text-muted-foreground mt-1">Hỗ trợ JPG, PNG, WEBP · Tối đa 20 ảnh</p>
-            </div>
+            </label>
 
+            {/* Label-based triggers — most reliable on iOS; no JS .click() needed */}
             <div className="flex gap-2">
-              <Button variant="outline" className="flex-1 min-h-[44px]" onClick={() => fileRef.current?.click()}>
-                <Upload className="w-4 h-4 mr-2" /> Chọn từ máy tính
-              </Button>
-              <Button variant="outline" className="flex-1 min-h-[44px]" onClick={() => cameraRef.current?.click()}>
-                <Camera className="w-4 h-4 mr-2" /> Dùng camera
-              </Button>
+              <label htmlFor="ocr-file-multi" className="flex-1">
+                <div className="flex items-center justify-center gap-2 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground h-11 px-4 py-2 text-sm font-medium cursor-pointer transition-colors w-full">
+                  <Upload className="w-4 h-4" /> Chọn từ máy tính
+                </div>
+              </label>
+              <label htmlFor="ocr-file-camera" className="flex-1">
+                <div className="flex items-center justify-center gap-2 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground h-11 px-4 py-2 text-sm font-medium cursor-pointer transition-colors w-full">
+                  <Camera className="w-4 h-4" /> Dùng camera
+                </div>
+              </label>
             </div>
 
-            {/* sr-only instead of hidden — iOS Safari blocks .click() on display:none inputs */}
-            <input ref={fileRef} type="file" accept="image/*" multiple className="sr-only"
+            {/* Inputs rendered outside dialog scroll context for max iOS compat */}
+            <input id="ocr-file-multi" ref={fileRef} type="file" accept="image/*" multiple
+              className="absolute w-px h-px opacity-0 pointer-events-none"
               onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only"
+            <input id="ocr-file-camera" ref={cameraRef} type="file" accept="image/*" capture="environment"
+              className="absolute w-px h-px opacity-0 pointer-events-none"
               onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
 
             {/* Thumbnail grid */}
