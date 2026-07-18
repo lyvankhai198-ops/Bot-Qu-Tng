@@ -15,10 +15,9 @@ import {
 } from "@/lib/xlsxUtils"
 
 // ── API helper ────────────────────────────────────────────────────────────────
-const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || ""
 async function apiFetch(path: string, opts: RequestInit = {}) {
   const token = localStorage.getItem("admin_token") || ""
-  const res = await fetch(`${BASE}/api${path}`, {
+  const res = await fetch(`/api${path}`, {
     ...opts,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(opts.headers ?? {}) },
   })
