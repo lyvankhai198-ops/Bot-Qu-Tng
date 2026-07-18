@@ -283,6 +283,8 @@ export type IntroConfigButtonsItem = {
 export interface IntroConfig {
   title?: string;
   content?: string;
+  titleEn?: string;
+  contentEn?: string;
   photoUrl?: string;
   videoUrl?: string;
   buttons?: IntroConfigButtonsItem[];

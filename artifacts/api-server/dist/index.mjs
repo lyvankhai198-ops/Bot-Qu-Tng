@@ -51207,7 +51207,7 @@ router2.put("/bot/orders/:orderId/items/:itemId", requireAuth, (req, res) => {
   res.json({ ok: true, item: items[idx] });
 });
 router2.get("/bot/intro", requireAuth, (_req, res) => {
-  const defaults = { title: "Gi\u1EDBi thi\u1EC7u", content: "", photoUrl: "", videoUrl: "", buttons: [] };
+  const defaults = { title: "Gi\u1EDBi thi\u1EC7u", content: "", titleEn: "Introduction", contentEn: "", photoUrl: "", videoUrl: "", buttons: [] };
   res.json({ ...defaults, ...readJson("intro", {}) ?? {} });
 });
 router2.put("/bot/intro", requireAuth, (req, res) => {
