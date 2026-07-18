@@ -34,41 +34,94 @@ export type RowIssue = {
   severity: "error" | "warning"
 }
 
-// ── Column aliases ────────────────────────────────────────────────────────────
+// ── Normalise Vietnamese text ─────────────────────────────────────────────────
+// "đ" / "Đ" (U+0111 / U+0110) do NOT decompose in NFD — they must be mapped
+// explicitly before the NFD + combining-mark strip.
+export function normalize(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[đĐ]/g, "d")          // ← the critical fix: đ has no NFD decomposition
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // strip all combining diacritical marks
+    .replace(/supper/g, "super")     // common product name typo
+    .replace(/[-_\s]+/g, " ")
+    .trim()
+}
+
+// ── Column header → field mapping ─────────────────────────────────────────────
+// Keys are all in *normalised* form (no diacritics, đ→d, lower-case, spaces).
 const COL_ALIASES: Record<string, string> = {
-  "stt": "stt",
-  "mã đơn": "orderCode", "ma don": "orderCode", "order_code": "orderCode",
-  "mã đơn hàng": "orderCode", "ordercode": "orderCode",
-  "sản phẩm": "productName", "san pham": "productName", "product": "productName",
-  "tên sản phẩm": "productName", "ten san pham": "productName",
-  "số lượng": "quantity", "so luong": "quantity", "sl": "quantity",
-  "quantity": "quantity", "qty": "quantity",
-  "số tiền": "totalPrice", "so tien": "totalPrice", "amount": "totalPrice",
-  "total_price": "totalPrice", "tổng tiền": "totalPrice", "tong tien": "totalPrice",
-  "giá": "totalPrice", "gia": "totalPrice",
-  "trạng thái": "status", "trang thai": "status", "status": "status",
-  "khách hàng": "customerName", "khach hang": "customerName",
-  "customer": "customerName", "customer_name": "customerName",
-  "email slot": "customerEmail", "customer_email": "customerEmail",
-  "email khách": "customerEmail", "email khach": "customerEmail",
-  "tạo lúc": "createdAt", "tao luc": "createdAt", "created_at": "createdAt",
-  "ngày tạo": "createdAt", "ngay tao": "createdAt",
-  "thanh toán": "paymentAt", "thanh toan": "paymentAt", "payment_at": "paymentAt",
-  "ngày thanh toán": "paymentAt", "ngay thanh toan": "paymentAt",
-  "đã giao": "deliveredAt", "da giao": "deliveredAt",
-  "delivered_at": "deliveredAt", "ngày giao": "deliveredAt", "ngay giao": "deliveredAt",
-  "tài khoản đã giao": "deliveredAccounts", "tai khoan da giao": "deliveredAccounts",
-  "delivered_accounts": "deliveredAccounts", "accounts": "deliveredAccounts",
-  "tài khoản": "deliveredAccounts",
+  "stt":                   "stt",
+  // order code
+  "ma don":                "orderCode",
+  "ma don hang":           "orderCode",
+  "ordercode":             "orderCode",
+  "order code":            "orderCode",
+  "order id":              "orderCode",
+  // product
+  "san pham":              "productName",
+  "ten san pham":          "productName",
+  "product":               "productName",
+  "product name":          "productName",
+  // quantity
+  "so luong":              "quantity",
+  "sl":                    "quantity",
+  "quantity":              "quantity",
+  "qty":                   "quantity",
+  // price / total
+  "so tien":               "totalPrice",
+  "tong tien":             "totalPrice",
+  "amount":                "totalPrice",
+  "total price":           "totalPrice",
+  "total":                 "totalPrice",
+  "gia":                   "totalPrice",
+  // status
+  "trang thai":            "status",
+  "status":                "status",
+  // customer
+  "khach hang":            "customerName",
+  "customer":              "customerName",
+  "customer name":         "customerName",
+  "ten khach":             "customerName",
+  // customer email / slot email
+  "email slot":            "customerEmail",
+  "customer email":        "customerEmail",
+  "email khach":           "customerEmail",
+  "email":                 "customerEmail",
+  // dates
+  "tao luc":               "createdAt",
+  "created at":            "createdAt",
+  "ngay tao":              "createdAt",
+  "thanh toan":            "paymentAt",
+  "payment at":            "paymentAt",
+  "ngay thanh toan":       "paymentAt",
+  "da giao":               "deliveredAt",
+  "delivered at":          "deliveredAt",
+  "ngay giao":             "deliveredAt",
+  // accounts
+  "tai khoan da giao":     "deliveredAccounts",
+  "delivered accounts":    "deliveredAccounts",
+  "accounts":              "deliveredAccounts",
+  "tai khoan":             "deliveredAccounts",
 }
 
 export function detectColumns(headers: string[]): Record<number, string> {
   const map: Record<number, string> = {}
   headers.forEach((h, i) => {
-    const norm = normalize(String(h || ""))
-    if (COL_ALIASES[norm]) map[i] = COL_ALIASES[norm]
+    const norm = normalize(String(h ?? ""))
+    if (norm && COL_ALIASES[norm]) map[i] = COL_ALIASES[norm]
   })
   return map
+}
+
+// Returns the list of *required* fields that were not mapped
+export function missingRequiredCols(colMap: Record<number, string>): string[] {
+  const required: Array<[string, string]> = [
+    ["orderCode", "Mã đơn"],
+    ["deliveredAccounts", "Tài khoản đã giao"],
+  ]
+  const mapped = new Set(Object.values(colMap))
+  return required.filter(([f]) => !mapped.has(f)).map(([, label]) => label)
 }
 
 // ── Date parsing ──────────────────────────────────────────────────────────────
@@ -80,7 +133,7 @@ export function parseDate(val: any): string | null {
   // Already ISO YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
 
-  // "15:05:58 18/7/2026" or "18/7/2026 15:05:58" → extract date part DD/M/YYYY
+  // "HH:MM:SS DD/MM/YYYY" or "DD/MM/YYYY HH:MM:SS" or just "DD/MM/YYYY"
   const dmyMatch = s.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/)
   if (dmyMatch) {
     const [, d, m, y] = dmyMatch
@@ -94,7 +147,7 @@ export function parseDate(val: any): string | null {
     return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`
   }
 
-  // Excel serial number
+  // Excel serial number (e.g. 46218 = 2026-07-18)
   const num = Number(s)
   if (!isNaN(num) && num > 40000 && num < 60000) {
     const d = new Date(Date.UTC(1899, 11, 30) + num * 86400000)
@@ -109,88 +162,91 @@ export function parsePrice(val: any): number {
   if (val === null || val === undefined || val === "") return 0
   if (typeof val === "number") return Math.round(val)
   let s = String(val).trim()
-  // Remove currency symbols and trailing spaces
   s = s.replace(/[đĐ₫\s]/gi, "").replace(/vnd/gi, "")
   // "90k" → 90000
   const kMatch = s.match(/^([\d.,]+)k$/i)
   if (kMatch) return Math.round(parseFloat(kMatch[1].replace(/[.,]/g, "")) * 1000)
-  // Remove thousand separators: dots followed by 3 digits, or commas
-  // Handle "20.000" (dot = thousand sep) and "20,000"
+  // Remove thousand separators
   s = s.replace(/\./g, "").replace(/,/g, "")
   return parseInt(s, 10) || 0
 }
 
 // ── Account parsing ───────────────────────────────────────────────────────────
+//
+// Cell format (from this system's export):
+//   email / password | Giao: HH:MM:SS DD/MM/YYYY
+//   email / password | Verify: 2FA_CODE | Giao: ...
+//   email:pass:2fa   | Giao: ...
+//   Liên / hệ | Verify: admin | Expiry: ... | Giao: ...   ← no real account
+//   license_key      | Giao: ...                          ← no email
+//
+// Multiple accounts in one cell are separated by newlines.
+// Strategy:
+//   1. Split by \n → one line per account candidate
+//   2. For each line: take the part BEFORE the first " | " → that's the credential
+//   3. Optionally extract twoFA from "| Verify: CODE"
+//   4. Parse credential as email/pass/2fa (separator: / or :)
+
 const EMAIL_RE = /[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/
-
-const BLACKLIST_EXACT = new Set([
-  "liên", "hôm nay", "xem chi tiết", "đã giao", "tên khách hàng",
-  "lien", "hom nay", "xem chi tiet", "da giao", "ten khach hang",
-])
-
-function isBlacklisted(s: string): boolean {
-  return BLACKLIST_EXACT.has(s.toLowerCase().trim())
-}
 
 export function parseAccounts(val: any): Account[] {
   if (val === null || val === undefined || val === "") return []
   const s = String(val).trim()
-  if (!s || isBlacklisted(s)) return []
+  if (!s) return []
 
-  // Split into lines (newline > semicolon > keep as single)
-  let lines: string[]
-  if (s.includes("\n")) {
-    lines = s.split(/\r?\n/).map(l => l.trim()).filter(l => l && !isBlacklisted(l))
-  } else if (s.includes(";")) {
-    lines = s.split(";").map(l => l.trim()).filter(l => l && !isBlacklisted(l))
-  } else {
-    // Check if there are multiple emails in one line (comma-separated)
-    const emailMatches = s.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g)
-    if (emailMatches && emailMatches.length > 1) {
-      // Multiple emails crammed together — treat each email segment as an account
-      lines = s.split(",").map(l => l.trim()).filter(l => l && !isBlacklisted(l))
-      if (lines.length <= 1) lines = [s]
-    } else {
-      lines = [s]
-    }
-  }
+  // Split into per-account lines (multi-line cells use \n)
+  const lines = s.includes("\n")
+    ? s.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+    : [s]
 
-  return lines.map(parseAccountLine).filter((a): a is Account => a !== null)
+  return lines.map(parseSingleAccountLine).filter((a): a is Account => a !== null)
 }
 
-function parseAccountLine(line: string): Account | null {
-  const s = line.trim()
-  if (!s || isBlacklisted(s)) return null
+function parseSingleAccountLine(line: string): Account | null {
+  // Split on " | " to separate credential from metadata
+  const segments = line.split("|").map(seg => seg.trim())
+  const credRaw = segments[0]  // everything before the first |
 
-  let email = "", password = "", twoFA = ""
-
-  // Try | separator first
-  if (s.includes("|")) {
-    const parts = s.split("|").map(p => p.trim())
-    email = parts[0]; password = parts[1] || ""; twoFA = parts[2] || ""
-  }
-  // Try / separator (but not if it's a URL like https://…)
-  else if (s.includes("/") && !/https?:\/\//.test(s)) {
-    const parts = s.split("/").map(p => p.trim())
-    email = parts[0]; password = parts[1] || ""; twoFA = parts[2] || ""
-  }
-  // Try : separator (but be careful not to split email with : in path)
-  else if (s.includes(":") && !s.match(/^https?:/)) {
-    const parts = s.split(":").map(p => p.trim())
-    email = parts[0]; password = parts[1] || ""; twoFA = parts[2] || ""
-  }
-  else {
-    email = s
+  // Extract twoFA from "Verify: CODE" metadata segment if present
+  let metaTwoFA = ""
+  for (const seg of segments.slice(1)) {
+    const verifyMatch = seg.match(/^Verify:\s*(.+)$/i)
+    if (verifyMatch) { metaTwoFA = verifyMatch[1].trim(); break }
   }
 
-  // Extract valid email from the email field
+  if (!credRaw) return null
+
+  // Parse credential
+  let email = "", password = "", twoFA = metaTwoFA
+
+  if (credRaw.includes("/")) {
+    // format: email / password [/ 2fa]
+    const parts = credRaw.split("/").map(p => p.trim())
+    email = parts[0]
+    password = parts[1] ?? ""
+    twoFA = parts[2] ?? metaTwoFA
+  } else if (credRaw.includes(":")) {
+    // format: email:password:2fa  (email itself contains no colon)
+    const parts = credRaw.split(":")
+    email = parts[0]
+    password = parts[1] ?? ""
+    twoFA = parts[2] ?? metaTwoFA
+  } else {
+    email = credRaw
+  }
+
+  email = email.trim()
+  password = password.trim()
+  twoFA = twoFA.trim()
+
+  // Validate: must have a real email address
   const emailMatch = email.match(EMAIL_RE)
   if (emailMatch) {
     return { email: emailMatch[0], password, twoFA, valid: true }
   }
 
-  // Not a valid email — mark as invalid so admin can review
-  if (email && !isBlacklisted(email) && email.length > 0) {
+  // No email → mark invalid so admin can see it in preview
+  if (email) {
     return { email, password, twoFA, valid: false }
   }
 
@@ -199,41 +255,28 @@ function parseAccountLine(line: string): Account | null {
 
 // ── Status mapping ────────────────────────────────────────────────────────────
 export function mapStatus(val: any): string {
-  const s = String(val || "").toLowerCase().trim()
-  if (["completed", "delivered", "success", "đã giao", "da giao", "hoàn thành", "hoan thanh"].includes(s)) return "active"
-  if (["pending", "chờ xử lý", "cho xu ly"].includes(s)) return "pending"
-  if (["cancelled", "canceled", "đã hủy", "da huy", "hủy", "huy"].includes(s)) return "cancelled"
-  if (s === "active" || s === "hoạt động" || s === "hoat dong") return "active"
+  const s = normalize(String(val ?? ""))
+  if (["completed", "delivered", "success", "da giao", "hoan thanh"].includes(s)) return "active"
+  if (["pending", "cho xu ly"].includes(s)) return "pending"
+  if (["cancelled", "canceled", "da huy", "huy"].includes(s)) return "cancelled"
+  if (["active", "hoat dong"].includes(s)) return "active"
   return "active"
 }
 
-// ── Product fuzzy matching ────────────────────────────────────────────────────
-export function normalize(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/supper/gi, "super")
-    .replace(/[-_\s]+/g, " ")
-    .trim()
-}
-
+// ── Product fuzzy matching ─────────────────────────────────────────────────────
 export function fuzzyMatchProduct(name: string, products: string[]): string | null {
   if (!name || products.length === 0) return null
   const norm = normalize(name)
 
-  // 1. Exact match
   const exact = products.find(p => normalize(p) === norm)
   if (exact) return exact
 
-  // 2. Substring match
   const sub = products.find(p => {
     const np = normalize(p)
     return np.includes(norm) || norm.includes(np)
   })
   if (sub) return sub
 
-  // 3. Token overlap ≥ 50%
   const nameTokens = new Set(norm.split(/\s+/).filter(t => t.length > 1))
   let best: string | null = null, bestScore = 0
   for (const p of products) {
@@ -245,12 +288,15 @@ export function fuzzyMatchProduct(name: string, products: string[]): string | nu
   return best
 }
 
-// ── Compute purchase date (priority: paymentAt > deliveredAt > createdAt) ─────
-export function resolvePurchaseDate(paymentAt: string | null, deliveredAt: string | null, createdAt: string | null): string | null {
+// ── Date helpers ──────────────────────────────────────────────────────────────
+export function resolvePurchaseDate(
+  paymentAt: string | null,
+  deliveredAt: string | null,
+  createdAt: string | null,
+): string | null {
   return paymentAt || deliveredAt || createdAt || null
 }
 
-// ── Compute expiry/warranty from delivered date + product days ────────────────
 export function addDaysToDate(dateStr: string, days: number): string | null {
   if (!dateStr || !days) return null
   try {
@@ -262,7 +308,7 @@ export function addDaysToDate(dateStr: string, days: number): string | null {
   }
 }
 
-// ── Build validated row from raw column map ───────────────────────────────────
+// ── Build one validated row from raw cells ────────────────────────────────────
 export function buildRow(
   rowIndex: number,
   colMap: Record<number, string>,
@@ -271,93 +317,87 @@ export function buildRow(
   existingItemEmails: Set<string>,
   knownProducts: { name: string; warrantyDays: number; usageDays: number }[],
 ): ParsedRow {
-  const get = (field: string) => {
-    const idx = Object.entries(colMap).find(([, f]) => f === field)?.[0]
-    return idx !== undefined ? cells[Number(idx)] : undefined
+  const get = (field: string): any => {
+    for (const [idxStr, f] of Object.entries(colMap)) {
+      if (f === field) return cells[Number(idxStr)]
+    }
+    return undefined
   }
 
-  const orderCode = String(get("orderCode") || "").trim().toUpperCase()
-  const productNameRaw = String(get("productName") || "").trim()
-  const quantity = parseInt(String(get("quantity") || "1"), 10) || 1
+  const orderCode = String(get("orderCode") ?? "").trim().toUpperCase()
+  const productNameRaw = String(get("productName") ?? "").trim()
+  const quantityRaw = get("quantity")
+  const quantity = parseInt(String(quantityRaw ?? "1"), 10) || 1
   const totalPrice = parsePrice(get("totalPrice"))
-  const statusRaw = String(get("status") || "").trim()
-  const customerName = String(get("customerName") || "").trim()
-  const customerEmail = String(get("customerEmail") || "").trim()
+  const statusRaw = String(get("status") ?? "").trim()
+  const customerName = String(get("customerName") ?? "").trim()
+  const customerEmail = String(get("customerEmail") ?? "").trim()
   const createdAt = parseDate(get("createdAt"))
   const paymentAt = parseDate(get("paymentAt"))
   const deliveredAt = parseDate(get("deliveredAt"))
   const deliveredAccountsRaw = get("deliveredAccounts")
 
-  // Dates
   const purchaseDate = resolvePurchaseDate(paymentAt, deliveredAt, createdAt)
   const originalDeliveredAt = deliveredAt || paymentAt || createdAt || null
 
-  // Product matching
   const productNames = knownProducts.map(p => p.name)
   const productNameMapped = fuzzyMatchProduct(productNameRaw, productNames)
   const matchedProduct = knownProducts.find(p => p.name === productNameMapped)
   const warrantyDays = matchedProduct?.warrantyDays ?? 0
   const usageDays = matchedProduct?.usageDays ?? 0
 
-  // Dates from product config
-  const expiryDate = originalDeliveredAt && usageDays ? addDaysToDate(originalDeliveredAt, usageDays) : null
-  const warrantyEndDate = originalDeliveredAt && warrantyDays ? addDaysToDate(originalDeliveredAt, warrantyDays) : null
+  const expiryDate = originalDeliveredAt && usageDays
+    ? addDaysToDate(originalDeliveredAt, usageDays) : null
+  const warrantyEndDate = originalDeliveredAt && warrantyDays
+    ? addDaysToDate(originalDeliveredAt, warrantyDays) : null
 
   const accounts = parseAccounts(deliveredAccountsRaw)
   const validAccounts = accounts.filter(a => a.valid)
   const status = mapStatus(statusRaw)
   const unitPrice = quantity > 0 && totalPrice > 0 ? Math.round(totalPrice / quantity) : totalPrice
 
-  // Duplicate checks
-  const dupOrderExists = existingOrderIds.has(orderCode)
-  const dupAccountEmails = validAccounts.map(a => a.email).filter(e => existingItemEmails.has(e.toLowerCase()))
+  const dupOrderExists = !!orderCode && existingOrderIds.has(orderCode)
+  const dupAccountEmails = validAccounts
+    .map(a => a.email)
+    .filter(e => existingItemEmails.has(e.toLowerCase()))
 
-  // Validation
   const issues: RowIssue[] = []
-  if (!orderCode) issues.push({ code: "missing_code", label: "Thiếu mã đơn", severity: "error" })
-  if (!productNameRaw) issues.push({ code: "missing_product", label: "Thiếu sản phẩm", severity: "error" })
-  else if (!productNameMapped) issues.push({ code: "no_product_match", label: "Không tìm thấy sản phẩm", severity: "warning" })
-  if (!purchaseDate) issues.push({ code: "no_purchase_date", label: "Sai ngày / thiếu ngày mua", severity: "warning" })
-  if (validAccounts.length === 0) issues.push({ code: "no_accounts", label: "Không đọc được tài khoản", severity: "warning" })
-  else if (validAccounts.length !== quantity) {
+  if (!orderCode)
+    issues.push({ code: "missing_code", label: "Thiếu mã đơn", severity: "error" })
+  if (!productNameRaw)
+    issues.push({ code: "missing_product", label: "Thiếu sản phẩm", severity: "error" })
+  else if (!productNameMapped)
+    issues.push({ code: "no_product_match", label: "Không tìm thấy sản phẩm phù hợp", severity: "warning" })
+  if (!purchaseDate)
+    issues.push({ code: "no_purchase_date", label: "Sai ngày / thiếu ngày mua", severity: "warning" })
+  if (validAccounts.length === 0)
+    issues.push({ code: "no_accounts", label: "Không đọc được tài khoản hợp lệ", severity: "warning" })
+  else if (validAccounts.length !== quantity)
     issues.push({
       code: "qty_mismatch",
-      label: `Khai báo ${quantity} TK nhưng đọc được ${validAccounts.length}`,
+      label: `Khai báo ${quantity} TK, đọc được ${validAccounts.length}`,
       severity: "warning",
     })
-  }
-  if (dupOrderExists) issues.push({ code: "dup_order", label: "Trùng mã đơn", severity: "warning" })
-  if (dupAccountEmails.length > 0) {
-    issues.push({ code: "dup_accounts", label: `${dupAccountEmails.length} tài khoản đã tồn tại`, severity: "warning" })
-  }
-  if (accounts.some(a => !a.valid && a.email)) {
-    issues.push({ code: "invalid_accounts", label: "Có tài khoản không nhận dạng được email", severity: "warning" })
-  }
+  if (dupOrderExists)
+    issues.push({ code: "dup_order", label: "Mã đơn đã tồn tại", severity: "warning" })
+  if (dupAccountEmails.length > 0)
+    issues.push({
+      code: "dup_accounts",
+      label: `${dupAccountEmails.length} tài khoản đã tồn tại`,
+      severity: "warning",
+    })
 
   const hasError = issues.some(i => i.severity === "error")
-  const hasWarning = issues.some(i => i.severity === "warning")
-  const rowStatus: ParsedRow["rowStatus"] = hasError ? "error" : hasWarning ? "warning" : "valid"
+  const rowStatus: ParsedRow["rowStatus"] = hasError ? "error"
+    : issues.length > 0 ? "warning"
+    : "valid"
 
   return {
-    rowIndex,
-    orderCode,
-    productNameRaw,
-    productNameMapped,
-    quantity,
-    totalPrice,
-    unitPrice,
-    status,
-    customerName,
-    customerEmail,
-    purchaseDate,
-    originalDeliveredAt,
-    expiryDate,
-    warrantyEndDate,
-    warrantyDays,
-    usageDays,
-    accounts,
-    issues,
-    rowStatus,
+    rowIndex, orderCode, productNameRaw, productNameMapped,
+    quantity, totalPrice, unitPrice, status,
+    customerName, customerEmail,
+    purchaseDate, originalDeliveredAt, expiryDate, warrantyEndDate,
+    warrantyDays, usageDays, accounts, issues, rowStatus,
     conflictAction: "skip",
     dupOrderExists,
     dupAccountEmails,
