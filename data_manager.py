@@ -442,16 +442,26 @@ def find_order_with_items(query: str) -> dict:
     # 2. Full chain search (original, current, replacement history)
     order_id, matched_item = find_item_by_any_account(query)
     if order_id and matched_item:
-        order_item_count = len(all_items.get(order_id, []))
-        return {
-            "order": orders.get(order_id),
-            "items": [matched_item],
-            "lookupType": "email",
-            "matchedItem": matched_item,
-            "isMultiAccountOrder": order_item_count > 1,
-        }
+        # Primary: exact key lookup
+        found_order = orders.get(order_id)
+        # Secondary: scan by orderId field (guards against case/format key mismatch)
+        if not found_order:
+            for o in orders.values():
+                if o.get("orderId", "") == order_id:
+                    found_order = o
+                    break
+        if found_order:
+            order_item_count = len(all_items.get(order_id, []))
+            return {
+                "order": found_order,
+                "items": [matched_item],
+                "lookupType": "email",
+                "matchedItem": matched_item,
+                "isMultiAccountOrder": order_item_count > 1,
+            }
+        # If order still not resolved, fall through to email fallback below
 
-    # 3. Fallback: email in orders.json (old single-account structure without items)
+    # 3. Fallback: email in orders.json header (legacy or unresolved above)
     email_lower = query.lower()
     for order in orders.values():
         if order.get("email", "").lower() == email_lower:
