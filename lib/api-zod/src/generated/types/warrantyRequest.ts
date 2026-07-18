@@ -5,14 +5,18 @@
  * Bot Quà Tặng AI Admin API
  * OpenAPI spec version: 0.2.0
  */
+import type { WarrantyAccount } from './warrantyAccount';
 
 export interface WarrantyRequest {
   id: string;
+  type?: string | null;
   userId: string;
   username?: string;
   firstName?: string;
-  orderId: string;
-  email?: string;
+  orderId?: string | null;
+  email?: string | null;
+  accounts?: WarrantyAccount[] | null;
+  notFoundAccounts?: string[] | null;
   description: string;
   submittedAt: string;
   status: string;

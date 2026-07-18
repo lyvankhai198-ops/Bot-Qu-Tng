@@ -69,6 +69,26 @@ LANG = {
             "Chúng tôi sẽ xử lý trong thời gian sớm nhất. Cảm ơn bạn!"
         ),
 
+        # Multi-account support
+        "support_multi_ask": (
+            "💬 <b>HỖ TRỢ KHÁCH HÀNG</b>\n\n"
+            "Vui lòng nhập <b>email/tài khoản</b> cần hỗ trợ.\n"
+            "Bạn có thể nhập một hoặc <b>nhiều tài khoản</b>, mỗi tài khoản một dòng.\n\n"
+            "<i>(Tối đa {max} tài khoản mỗi yêu cầu)</i>"
+        ),
+        "support_multi_empty": "❌ Vui lòng nhập ít nhất một email/tài khoản.",
+        "support_multi_too_many": "❌ Tối đa <b>{max}</b> tài khoản mỗi yêu cầu. Vui lòng gửi ít hơn.",
+        "support_multi_desc_ask": (
+            "✏️ <b>MÔ TẢ LỖI</b>\n\n"
+            "Vui lòng mô tả ngắn gọn lỗi của các tài khoản đã chọn:\n\n"
+            "Ví dụ: Die tài khoản / Rớt gói / Không đăng nhập được"
+        ),
+        "support_multi_sent": (
+            "✅ <b>Đã gửi yêu cầu hỗ trợ thành công!</b>\n\n"
+            "Số tài khoản báo lỗi: <b>{n}</b>\n\n"
+            "Chúng tôi sẽ xử lý trong thời gian sớm nhất. Cảm ơn bạn!"
+        ),
+
         # Order status labels
         "days_left": "{n} ngày",
         "expired": "Đã hết hạn",
@@ -383,6 +403,26 @@ LANG = {
         "report_sent": (
             "✅ <b>Your support request has been submitted!</b>\n\n"
             "We will process it as soon as possible. Thank you!"
+        ),
+
+        # Multi-account support
+        "support_multi_ask": (
+            "💬 <b>CUSTOMER SUPPORT</b>\n\n"
+            "Please enter the <b>email/account(s)</b> you need help with.\n"
+            "You can enter one or <b>multiple accounts</b>, one per line.\n\n"
+            "<i>(Maximum {max} accounts per request)</i>"
+        ),
+        "support_multi_empty": "❌ Please enter at least one email/account.",
+        "support_multi_too_many": "❌ Maximum <b>{max}</b> accounts per request. Please submit fewer.",
+        "support_multi_desc_ask": (
+            "✏️ <b>DESCRIBE THE ISSUE</b>\n\n"
+            "Please briefly describe the issue with your selected account(s):\n\n"
+            "E.g.: Account banned / Plan dropped / Cannot login"
+        ),
+        "support_multi_sent": (
+            "✅ <b>Support request submitted successfully!</b>\n\n"
+            "Accounts reported: <b>{n}</b>\n\n"
+            "We'll process it as soon as possible. Thank you!"
         ),
 
         # Order status labels

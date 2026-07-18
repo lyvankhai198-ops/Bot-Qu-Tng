@@ -6,6 +6,10 @@ import {
   useResolveWarrantyReject,
   useResendWarrantyReplacement,
   useResendWarrantyAckNotif,
+  useResolveWarrantyAccountReplacement,
+  useResolveWarrantyAccountRefund,
+  useResolveWarrantyAccountReject,
+  useResendWarrantyAccountReplacement,
   getListWarrantyQueryKey,
 } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
@@ -17,9 +21,9 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
-import type { WarrantyRequest } from "@workspace/api-client-react"
+import type { WarrantyRequest, WarrantyAccount } from "@workspace/api-client-react"
 import { format } from "date-fns"
-import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle, Clock } from "lucide-react"
+import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle, Clock, Users, ChevronDown, ChevronUp } from "lucide-react"
 
 // Parse ?id=xxx from URL hash (e.g. #/warranty?id=abc123)
 function getUrlTargetId(): string | null {
@@ -29,33 +33,43 @@ function getUrlTargetId(): string | null {
   return new URLSearchParams(hash.slice(qIdx)).get("id")
 }
 
+type ModalType = "replace" | "refund" | "reject" | null
+
 export default function Warranty() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const invalidate = () => queryClient.invalidateQueries({ queryKey: getListWarrantyQueryKey() })
 
   const { data: warranties, isLoading } = useListWarranty({ query: { queryKey: getListWarrantyQueryKey() } })
+
+  // Single-request mutations
   const replaceM   = useResolveWarrantyReplacement({ mutation: { onSuccess: invalidate } })
   const refundM    = useResolveWarrantyRefund({ mutation: { onSuccess: invalidate } })
   const rejectM    = useResolveWarrantyReject({ mutation: { onSuccess: invalidate } })
   const resendM    = useResendWarrantyReplacement({ mutation: { onSuccess: invalidate } })
   const ackResendM = useResendWarrantyAckNotif({ mutation: { onSuccess: invalidate } })
 
-  const [activeReq, setActiveReq] = useState<WarrantyRequest | null>(null)
-  const [modalType, setModalType] = useState<"replace" | "refund" | "reject" | null>(null)
+  // Group sub-account mutations
+  const accReplaceM = useResolveWarrantyAccountReplacement({ mutation: { onSuccess: invalidate } })
+  const accRefundM  = useResolveWarrantyAccountRefund({ mutation: { onSuccess: invalidate } })
+  const accRejectM  = useResolveWarrantyAccountReject({ mutation: { onSuccess: invalidate } })
+  const accResendM  = useResendWarrantyAccountReplacement({ mutation: { onSuccess: invalidate } })
 
-  // Replacement fields
+  // Modal state — shared for single and group
+  const [activeReq,  setActiveReq]  = useState<WarrantyRequest | null>(null)
+  const [activeAcc,  setActiveAcc]  = useState<WarrantyAccount | null>(null)   // for group sub-account
+  const [modalType,  setModalType]  = useState<ModalType>(null)
+
+  // Form fields
   const [rEmail,    setREmail]    = useState("")
   const [rPassword, setRPassword] = useState("")
   const [rTwoFA,    setRTwoFA]    = useState("")
   const [rNote,     setRNote]     = useState("")
-  // Refund fields
   const [refAmount, setRefAmount] = useState("")
   const [refNote,   setRefNote]   = useState("")
-  // Reject field
   const [rejReason, setRejReason] = useState("")
 
-  // Deep-link: highlight target warranty from URL
+  // Deep-link highlight
   const [targetId, setTargetId] = useState<string | null>(null)
   const targetRef = useRef<HTMLDivElement | null>(null)
 
@@ -70,11 +84,19 @@ export default function Warranty() {
     }
   }, [targetId, warranties])
 
-  const openModal = (req: WarrantyRequest, type: "replace" | "refund" | "reject") => {
-    setActiveReq(req); setModalType(type)
+  const openModal = (req: WarrantyRequest, type: ModalType, acc?: WarrantyAccount) => {
+    setActiveReq(req)
+    setActiveAcc(acc ?? null)
+    setModalType(type)
     setREmail(""); setRPassword(""); setRTwoFA(""); setRNote("")
     setRefAmount(""); setRefNote(""); setRejReason("")
   }
+
+  const isGroupMode = activeAcc !== null
+
+  const isBusy = isGroupMode
+    ? (accReplaceM.isPending || accRefundM.isPending || accRejectM.isPending)
+    : (replaceM.isPending || refundM.isPending || rejectM.isPending)
 
   const handleResolve = async () => {
     if (!activeReq || !modalType) return
@@ -84,22 +106,39 @@ export default function Warranty() {
         if (!rEmail || !rPassword) {
           toast({ title: "Lỗi", description: "Điền đủ email và mật khẩu", variant: "destructive" }); return
         }
-        const result = await replaceM.mutateAsync({ id, data: { email: rEmail, password: rPassword, twoFA: rTwoFA || undefined, note: rNote || undefined } })
-        if ((result as any)?.ok === false) {
-          toast({ title: "Lưu thành công nhưng gửi thất bại", description: (result as any).message, variant: "destructive" })
+        if (isGroupMode && activeAcc) {
+          const result = await accReplaceM.mutateAsync({ id, accId: activeAcc.id, data: { email: rEmail, password: rPassword, twoFA: rTwoFA || undefined, note: rNote || undefined } })
+          if ((result as any)?.ok === false) {
+            toast({ title: "Lưu OK nhưng gửi thất bại", description: (result as any).message, variant: "destructive" })
+          } else {
+            toast({ title: "✅ Đã gửi thành công", description: `Khách nhận được TK thay thế cho ${activeAcc.email}` })
+          }
         } else {
-          toast({ title: "✅ Đã gửi thành công", description: "Khách hàng đã nhận được tài khoản mới" })
+          const result = await replaceM.mutateAsync({ id, data: { email: rEmail, password: rPassword, twoFA: rTwoFA || undefined, note: rNote || undefined } })
+          if ((result as any)?.ok === false) {
+            toast({ title: "Lưu thành công nhưng gửi thất bại", description: (result as any).message, variant: "destructive" })
+          } else {
+            toast({ title: "✅ Đã gửi thành công", description: "Khách hàng đã nhận được tài khoản mới" })
+          }
         }
       } else if (modalType === "refund") {
         if (!refAmount) { toast({ title: "Lỗi", description: "Điền số tiền hoàn", variant: "destructive" }); return }
-        await refundM.mutateAsync({ id, data: { amount: Number(refAmount), note: refNote || undefined } })
+        if (isGroupMode && activeAcc) {
+          await accRefundM.mutateAsync({ id, accId: activeAcc.id, data: { amount: Number(refAmount), note: refNote || undefined } })
+        } else {
+          await refundM.mutateAsync({ id, data: { amount: Number(refAmount), note: refNote || undefined } })
+        }
         toast({ title: "Thành công", description: "Đã xử lý hoàn tiền" })
       } else if (modalType === "reject") {
         if (!rejReason) { toast({ title: "Lỗi", description: "Điền lý do từ chối", variant: "destructive" }); return }
-        await rejectM.mutateAsync({ id, data: { reason: rejReason } })
-        toast({ title: "Thành công", description: "Đã từ chối yêu cầu" })
+        if (isGroupMode && activeAcc) {
+          await accRejectM.mutateAsync({ id, accId: activeAcc.id, data: { reason: rejReason } })
+        } else {
+          await rejectM.mutateAsync({ id, data: { reason: rejReason } })
+        }
+        toast({ title: "Thành công", description: "Đã từ chối" })
       }
-      setModalType(null); setActiveReq(null)
+      setModalType(null); setActiveReq(null); setActiveAcc(null)
     } catch {
       toast({ title: "Lỗi", description: "Xử lý thất bại", variant: "destructive" })
     }
@@ -110,7 +149,16 @@ export default function Warranty() {
       await resendM.mutateAsync({ id: req.id })
       toast({ title: "✅ Gửi lại thành công", description: "Khách hàng đã nhận được thông tin" })
     } catch {
-      toast({ title: "Gửi lại thất bại", description: "Kiểm tra token bot hoặc thử lại sau", variant: "destructive" })
+      toast({ title: "Gửi lại thất bại", variant: "destructive" })
+    }
+  }
+
+  const handleAccResend = async (req: WarrantyRequest, acc: WarrantyAccount) => {
+    try {
+      await accResendM.mutateAsync({ id: req.id, accId: acc.id })
+      toast({ title: "✅ Gửi lại thành công", description: `Đã gửi lại cho tài khoản ${acc.email}` })
+    } catch {
+      toast({ title: "Gửi lại thất bại", variant: "destructive" })
     }
   }
 
@@ -120,26 +168,49 @@ export default function Warranty() {
       if ((result as any)?.ok === false) {
         toast({ title: "Gửi lại thất bại", description: (result as any).message, variant: "destructive" })
       } else {
-        toast({ title: "✅ Đã gửi lại thông báo tiếp nhận", description: "Khách hàng đã được thông báo" })
+        toast({ title: "✅ Đã gửi lại thông báo tiếp nhận" })
       }
     } catch {
-      toast({ title: "Gửi lại thất bại", description: "Kiểm tra token bot hoặc thử lại sau", variant: "destructive" })
+      toast({ title: "Gửi lại thất bại", variant: "destructive" })
     }
   }
 
-  const pendingWarranties    = warranties?.filter(w => w.status === "pending")    || []
-  const processingWarranties = warranties?.filter(w => w.status === "processing") || []
-  const resolvedWarranties   = warranties?.filter(w => !["pending", "processing"].includes(w.status)) || []
+  // Separate single vs group
+  const singleWarranties = warranties?.filter((w: any) => !w.type || w.type !== "group") || []
+  const groupWarranties  = warranties?.filter((w: any) => w.type === "group") || []
+
+  const pendingSingle    = singleWarranties.filter(w => w.status === "pending")
+  const processingSingle = singleWarranties.filter(w => w.status === "processing")
+  const resolvedSingle   = singleWarranties.filter(w => !["pending", "processing"].includes(w.status))
+
+  const pendingGroup    = groupWarranties.filter(w => w.status === "pending")
+  const processingGroup = groupWarranties.filter(w => w.status === "processing")
+  const resolvedGroup   = groupWarranties.filter(w => !["pending", "processing"].includes(w.status))
+
+  const totalPending    = pendingSingle.length    + pendingGroup.length
+  const totalProcessing = processingSingle.length + processingGroup.length
+  const totalResolved   = resolvedSingle.length   + resolvedGroup.length
 
   const sentStatusBadge = (req: WarrantyRequest) => {
-    if (req.status === "rejected")          return <Badge variant="destructive">Từ chối</Badge>
-    if (req.status === "processing")        return <Badge className="bg-blue-600 text-white">Đang xử lý</Badge>
-    if ((req as any).sentStatus === "sent") return <Badge className="bg-green-600 text-white">Đã gửi cho khách</Badge>
+    if (req.status === "rejected")            return <Badge variant="destructive">Từ chối</Badge>
+    if (req.status === "processing")          return <Badge className="bg-blue-600 text-white">Đang xử lý</Badge>
+    if ((req as any).sentStatus === "sent")   return <Badge className="bg-green-600 text-white">Đã gửi cho khách</Badge>
     if ((req as any).sentStatus === "failed") return <Badge variant="destructive">Gửi thất bại</Badge>
     return <Badge variant="secondary">Đã xử lý</Badge>
   }
 
-  // Card wrapper — highlighted if it's the deep-linked target
+  const accStatusBadge = (acc: WarrantyAccount) => {
+    if (acc.status === "rejected")          return <Badge variant="destructive" className="text-xs">Từ chối</Badge>
+    if (acc.status === "resolved") {
+      if (acc.sentStatus === "sent")        return <Badge className="bg-green-600 text-white text-xs">Đã gửi</Badge>
+      if (acc.sentStatus === "failed")      return <Badge variant="destructive" className="text-xs">Gửi thất bại</Badge>
+      return <Badge className="bg-green-600 text-white text-xs">Đã xử lý</Badge>
+    }
+    if (acc.status === "processing")        return <Badge className="bg-blue-600 text-white text-xs">Đang xử lý</Badge>
+    return <Badge variant="outline" className="text-xs bg-yellow-500/10 text-yellow-600 border-yellow-500/20">Chờ</Badge>
+  }
+
+  // Card wrapper with deep-link highlight
   const WarrantyCard = ({ req, children }: { req: WarrantyRequest; children: React.ReactNode }) => {
     const isTarget = req.id === targetId
     return (
@@ -149,6 +220,135 @@ export default function Warranty() {
       >
         {children}
       </div>
+    )
+  }
+
+  // ── Group Warranty Card ──────────────────────────────────────────────────────
+  const GroupCard = ({ req }: { req: WarrantyRequest }) => {
+    const r = req as any
+    const [expanded, setExpanded] = useState(true)
+    const accounts: WarrantyAccount[] = r.accounts ?? []
+    const n = accounts.length
+    const pendingCount = accounts.filter(a => a.status === "pending").length
+    const ackFailed = r.ackNotifSentStatus === "failed"
+
+    return (
+      <WarrantyCard req={req}>
+        {/* Header */}
+        <div className="flex flex-wrap items-center gap-2 justify-between">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Users className="w-4 h-4 text-purple-500" />
+            <Badge variant="outline" className={
+              req.status === "pending"    ? "bg-yellow-500/10 text-yellow-600 border-yellow-500/20" :
+              req.status === "processing" ? "bg-blue-500/10 text-blue-600 border-blue-500/20" :
+              "bg-green-500/10 text-green-600 border-green-500/20"
+            }>
+              {req.status === "pending" ? "Chờ xử lý" : req.status === "processing" ? "Đang xử lý" : "Đã xử lý"} — {n} TK
+            </Badge>
+            <span className="text-sm font-medium">@{r.username || "?"}</span>
+          </div>
+          <span className="text-xs text-muted-foreground">{format(new Date(req.submittedAt), 'dd/MM/yyyy HH:mm')}</span>
+        </div>
+
+        {/* Description */}
+        <div className="bg-muted/50 p-3 rounded-lg text-sm border border-border/50">
+          <span className="text-muted-foreground text-xs">Lý do: </span>{req.description}
+        </div>
+
+        {/* Processing info */}
+        {req.status !== "pending" && (
+          <div className="text-xs text-muted-foreground space-y-1">
+            {r.acknowledgedAt && (
+              <div>✅ Tiếp nhận lúc: {format(new Date(r.acknowledgedAt), 'dd/MM/yyyy HH:mm')}
+                {r.acknowledgedBy && <span className="ml-1">(Admin #{r.acknowledgedBy})</span>}
+              </div>
+            )}
+            {r.ackNotifSentStatus === "sent" && r.ackNotifSentAt && (
+              <div className="text-green-600">📨 Đã thông báo khách lúc: {format(new Date(r.ackNotifSentAt), 'dd/MM/yyyy HH:mm')}</div>
+            )}
+          </div>
+        )}
+
+        {/* Ack notif failed */}
+        {ackFailed && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 space-y-2">
+            <div className="flex items-center gap-2 text-red-600 text-xs font-medium">
+              <AlertTriangle className="w-4 h-4" /> Gửi thông báo tiếp nhận cho khách thất bại
+            </div>
+            {r.ackNotifError && <p className="text-xs text-muted-foreground">{r.ackNotifError}</p>}
+            <Button size="sm" className="w-full min-h-[40px] bg-blue-600 hover:bg-blue-700" onClick={() => handleResendAck(req)} disabled={ackResendM.isPending}>
+              <SendHorizonal className="w-4 h-4 mr-2" />
+              {ackResendM.isPending ? "Đang gửi lại..." : "Gửi lại thông báo tiếp nhận"}
+            </Button>
+          </div>
+        )}
+
+        {/* Accounts list */}
+        <div className="border border-border/50 rounded-lg overflow-hidden">
+          <button
+            className="w-full flex items-center justify-between px-4 py-2 bg-muted/30 text-sm font-medium hover:bg-muted/50 transition-colors"
+            onClick={() => setExpanded(!expanded)}
+          >
+            <span>Danh sách tài khoản ({n}) {pendingCount > 0 && <span className="text-yellow-600">• {pendingCount} chờ xử lý</span>}</span>
+            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+          {expanded && (
+            <div className="divide-y divide-border/50">
+              {accounts.map((acc) => (
+                <div key={acc.id} className="p-3 space-y-2">
+                  {/* Account row */}
+                  <div className="flex flex-wrap items-center gap-2 justify-between">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {accStatusBadge(acc)}
+                      <code className="text-xs bg-muted px-2 py-0.5 rounded">{acc.email}</code>
+                      {acc.productName && <span className="text-xs text-muted-foreground">{acc.productName}</span>}
+                    </div>
+                    {acc.resolvedAt && <span className="text-xs text-muted-foreground">{format(new Date(acc.resolvedAt), 'dd/MM HH:mm')}</span>}
+                  </div>
+
+                  {/* Resolved info */}
+                  {acc.status === "resolved" && acc.replacementEmail && (
+                    <div className="text-xs text-muted-foreground space-y-1 pl-1">
+                      <div>📧 TK mới: <code className="bg-muted px-1 rounded">{acc.replacementEmail}</code></div>
+                      <div>🔒 MK: <code className="bg-muted px-1 rounded">{acc.replacementPassword}</code></div>
+                      {acc.replacementTwoFA && <div>🛡 2FA: <code className="bg-muted px-1 rounded">{acc.replacementTwoFA}</code></div>}
+                    </div>
+                  )}
+                  {acc.status === "rejected" && acc.resolution && (
+                    <div className="text-xs text-muted-foreground pl-1">❌ Lý do: {acc.resolution.replace("reject:", "")}</div>
+                  )}
+
+                  {/* Sent failed → resend */}
+                  {acc.sentStatus === "failed" && acc.replacementEmail && (
+                    <div className="bg-red-500/10 border border-red-500/20 rounded p-2 space-y-1">
+                      <div className="text-xs text-red-600 font-medium flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Gửi thất bại</div>
+                      {acc.sentError && <p className="text-xs text-muted-foreground">{acc.sentError}</p>}
+                      <Button size="sm" className="w-full min-h-[36px] text-xs bg-blue-600 hover:bg-blue-700" onClick={() => handleAccResend(req, acc)} disabled={accResendM.isPending}>
+                        <SendHorizonal className="w-3 h-3 mr-1" /> Gửi lại
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Action buttons (only when pending or processing) */}
+                  {["pending", "processing"].includes(acc.status) && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700" onClick={() => openModal(req, "replace", acc)}>
+                        <RefreshCcw className="w-3 h-3 mr-1" /> TK mới
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => openModal(req, "refund", acc)}>
+                        <DollarSign className="w-3 h-3 mr-1" /> Hoàn tiền
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-8 text-xs text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject", acc)}>
+                        <XCircle className="w-3 h-3 mr-1" /> Từ chối
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </WarrantyCard>
     )
   }
 
@@ -166,15 +366,16 @@ export default function Warranty() {
           <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
             <CardTitle className="flex items-center text-base md:text-lg">
               <ShieldAlert className="w-5 h-5 mr-2 text-yellow-500" />
-              Chờ xử lý ({pendingWarranties.length})
+              Chờ xử lý ({totalPending})
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             {isLoading ? (
               <div className="p-6 text-center text-muted-foreground">Đang tải...</div>
-            ) : pendingWarranties.length > 0 ? (
+            ) : totalPending > 0 ? (
               <div className="divide-y divide-border/50">
-                {pendingWarranties.map(req => (
+                {/* Single requests */}
+                {pendingSingle.map(req => (
                   <WarrantyCard key={req.id} req={req}>
                     <div className="space-y-3">
                       <div className="flex flex-wrap items-center gap-2 justify-between">
@@ -185,7 +386,7 @@ export default function Warranty() {
                         <code className="text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded">{req.orderId}</code>
                       </div>
                       <div>
-                        <h4 className="font-medium">{req.email || req.username || "Ẩn danh"}</h4>
+                        <h4 className="font-medium">{req.email || (req as any).username || "Ẩn danh"}</h4>
                         <div className="mt-2 bg-muted/50 p-3 rounded-lg text-sm border border-border/50">{req.description}</div>
                       </div>
                     </div>
@@ -202,6 +403,10 @@ export default function Warranty() {
                     </div>
                   </WarrantyCard>
                 ))}
+                {/* Group requests */}
+                {pendingGroup.map(req => (
+                  <GroupCard key={req.id} req={req} />
+                ))}
               </div>
             ) : (
               <div className="p-10 text-center text-muted-foreground flex flex-col items-center">
@@ -213,34 +418,30 @@ export default function Warranty() {
         </Card>
 
         {/* ── Processing ──────────────────────────────────────────── */}
-        {processingWarranties.length > 0 && (
+        {totalProcessing > 0 && (
           <Card className="border-blue-500/30">
             <CardHeader className="pb-3 border-b border-border/50 bg-blue-500/5">
               <CardTitle className="flex items-center text-base md:text-lg text-blue-700 dark:text-blue-400">
                 <Clock className="w-5 h-5 mr-2" />
-                Đang xử lý ({processingWarranties.length})
+                Đang xử lý ({totalProcessing})
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               <div className="divide-y divide-border/50">
-                {processingWarranties.map(req => {
+                {/* Single processing */}
+                {processingSingle.map(req => {
                   const r = req as any
                   const ackFailed = r.ackNotifSentStatus === "failed"
                   return (
                     <WarrantyCard key={req.id} req={req}>
-                      {/* Header */}
                       <div className="flex flex-wrap items-center gap-2 justify-between">
                         <div className="flex items-center gap-2 flex-wrap">
                           <Badge className="bg-blue-600 text-white">Đang xử lý</Badge>
-                          <span className="text-sm font-medium">{req.email || req.username || "Ẩn danh"}</span>
+                          <span className="text-sm font-medium">{req.email || (req as any).username || "Ẩn danh"}</span>
                         </div>
                         <code className="text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded">{req.orderId}</code>
                       </div>
-
-                      {/* Description */}
                       <div className="bg-muted/50 p-3 rounded-lg text-sm border border-border/50">{req.description}</div>
-
-                      {/* Ack info */}
                       <div className="text-xs text-muted-foreground space-y-1">
                         {r.acknowledgedAt && (
                           <div>✅ Tiếp nhận lúc: {format(new Date(r.acknowledgedAt), 'dd/MM/yyyy HH:mm')}
@@ -251,27 +452,18 @@ export default function Warranty() {
                           <div className="text-green-600">📨 Đã thông báo khách lúc: {format(new Date(r.ackNotifSentAt), 'dd/MM/yyyy HH:mm')}</div>
                         )}
                       </div>
-
-                      {/* Ack notif failed → resend button */}
                       {ackFailed && (
                         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 space-y-2">
                           <div className="flex items-center gap-2 text-red-600 text-xs font-medium">
                             <AlertTriangle className="w-4 h-4" /> Gửi thông báo tiếp nhận cho khách thất bại
                           </div>
                           {r.ackNotifError && <p className="text-xs text-muted-foreground">{r.ackNotifError}</p>}
-                          <Button
-                            size="sm"
-                            className="w-full min-h-[40px] bg-blue-600 hover:bg-blue-700"
-                            onClick={() => handleResendAck(req)}
-                            disabled={ackResendM.isPending}
-                          >
+                          <Button size="sm" className="w-full min-h-[40px] bg-blue-600 hover:bg-blue-700" onClick={() => handleResendAck(req)} disabled={ackResendM.isPending}>
                             <SendHorizonal className="w-4 h-4 mr-2" />
                             {ackResendM.isPending ? "Đang gửi lại..." : "Gửi lại thông báo tiếp nhận"}
                           </Button>
                         </div>
                       )}
-
-                      {/* Action buttons (can still resolve from processing state) */}
                       <div className="flex flex-col sm:flex-row gap-2">
                         <Button size="sm" className="w-full sm:flex-1 min-h-[44px] bg-blue-600 hover:bg-blue-700" onClick={() => openModal(req, "replace")}>
                           <RefreshCcw className="w-4 h-4 mr-2" /> Tài khoản mới
@@ -286,36 +478,38 @@ export default function Warranty() {
                     </WarrantyCard>
                   )
                 })}
+                {/* Group processing */}
+                {processingGroup.map(req => (
+                  <GroupCard key={req.id} req={req} />
+                ))}
               </div>
             </CardContent>
           </Card>
         )}
 
         {/* ── Resolved / Rejected ─────────────────────────────────── */}
-        {resolvedWarranties.length > 0 && (
+        {totalResolved > 0 && (
           <Card>
             <CardHeader className="pb-3 border-b border-border/50">
-              <CardTitle className="text-base md:text-lg">Đã xử lý ({resolvedWarranties.length})</CardTitle>
+              <CardTitle className="text-base md:text-lg">Đã xử lý ({totalResolved})</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               <div className="divide-y divide-border/50">
-                {resolvedWarranties.slice(0, 20).map(req => {
+                {/* Single resolved */}
+                {resolvedSingle.slice(0, 20).map(req => {
                   const r = req as any
                   const isFailed = r.sentStatus === "failed"
                   return (
                     <WarrantyCard key={req.id} req={req}>
-                      {/* Header row */}
                       <div className="flex flex-wrap items-center gap-2 justify-between">
                         <div className="flex items-center gap-2 flex-wrap">
                           {sentStatusBadge(req)}
-                          <span className="text-sm font-medium">{req.email || req.username}</span>
+                          <span className="text-sm font-medium">{req.email || (req as any).username}</span>
                         </div>
                         <span className="text-xs text-muted-foreground">
                           {req.resolvedAt ? format(new Date(req.resolvedAt), 'dd/MM/yyyy HH:mm') : "-"}
                         </span>
                       </div>
-
-                      {/* Order info */}
                       <div className="text-xs text-muted-foreground space-y-1">
                         <div>📦 Mã đơn: <code className="bg-muted px-1 rounded">{req.orderId}</code></div>
                         {r.replacementEmail && (
@@ -331,20 +525,13 @@ export default function Warranty() {
                         )}
                         {r.sentAt && <div>✅ Đã gửi lúc: {format(new Date(r.sentAt), 'dd/MM/yyyy HH:mm')}</div>}
                       </div>
-
-                      {/* Failed send error + resend */}
                       {isFailed && (
                         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 space-y-2">
                           <div className="flex items-center gap-2 text-red-600 text-xs font-medium">
                             <AlertTriangle className="w-4 h-4" /> Gửi Telegram thất bại
                           </div>
                           {r.sentError && <p className="text-xs text-muted-foreground">{r.sentError}</p>}
-                          <Button
-                            size="sm"
-                            className="w-full min-h-[40px] bg-blue-600 hover:bg-blue-700"
-                            onClick={() => handleResend(req)}
-                            disabled={resendM.isPending}
-                          >
+                          <Button size="sm" className="w-full min-h-[40px] bg-blue-600 hover:bg-blue-700" onClick={() => handleResend(req)} disabled={resendM.isPending}>
                             <SendHorizonal className="w-4 h-4 mr-2" />
                             {resendM.isPending ? "Đang gửi lại..." : "Gửi lại cho khách"}
                           </Button>
@@ -353,17 +540,22 @@ export default function Warranty() {
                     </WarrantyCard>
                   )
                 })}
+                {/* Group resolved */}
+                {resolvedGroup.slice(0, 10).map(req => (
+                  <GroupCard key={req.id} req={req} />
+                ))}
               </div>
             </CardContent>
           </Card>
         )}
       </div>
 
-      {/* ── Replacement Modal ──────────────────────────────────────── */}
-      <Dialog open={modalType === "replace"} onOpenChange={open => !open && setModalType(null)}>
+      {/* ── Modal (shared single + group sub-account) ──────────── */}
+      {/* Replacement Modal */}
+      <Dialog open={modalType === "replace"} onOpenChange={open => !open && (setModalType(null), setActiveAcc(null))}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Gửi tài khoản thay thế</DialogTitle>
+            <DialogTitle>Gửi tài khoản thay thế{activeAcc ? ` — ${activeAcc.email}` : ""}</DialogTitle>
             <DialogDescription>Điền đầy đủ thông tin — bot sẽ gửi ngay cho khách</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -385,21 +577,21 @@ export default function Warranty() {
             </div>
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setModalType(null)}>Hủy</Button>
-            <Button className="w-full sm:w-auto min-h-[44px] bg-blue-600 hover:bg-blue-700" onClick={handleResolve} disabled={replaceM.isPending}>
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => { setModalType(null); setActiveAcc(null) }}>Hủy</Button>
+            <Button className="w-full sm:w-auto min-h-[44px] bg-blue-600 hover:bg-blue-700" onClick={handleResolve} disabled={isBusy}>
               <SendHorizonal className="w-4 h-4 mr-2" />
-              {replaceM.isPending ? "Đang gửi..." : "Xác nhận và gửi cho khách"}
+              {isBusy ? "Đang gửi..." : "Xác nhận và gửi cho khách"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ── Refund Modal ───────────────────────────────────────────── */}
-      <Dialog open={modalType === "refund"} onOpenChange={open => !open && setModalType(null)}>
+      {/* Refund Modal */}
+      <Dialog open={modalType === "refund"} onOpenChange={open => !open && (setModalType(null), setActiveAcc(null))}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Hoàn tiền</DialogTitle>
-            <DialogDescription>Ghi nhận hoàn tiền cho đơn hàng</DialogDescription>
+            <DialogTitle>Hoàn tiền{activeAcc ? ` — ${activeAcc.email}` : ""}</DialogTitle>
+            <DialogDescription>Ghi nhận hoàn tiền</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -412,19 +604,19 @@ export default function Warranty() {
             </div>
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setModalType(null)}>Hủy</Button>
-            <Button className="w-full sm:w-auto min-h-[44px]" onClick={handleResolve} disabled={refundM.isPending}>
-              {refundM.isPending ? "Đang xử lý..." : "Xác nhận hoàn"}
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => { setModalType(null); setActiveAcc(null) }}>Hủy</Button>
+            <Button className="w-full sm:w-auto min-h-[44px]" onClick={handleResolve} disabled={isBusy}>
+              {isBusy ? "Đang xử lý..." : "Xác nhận hoàn"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ── Reject Modal ───────────────────────────────────────────── */}
-      <Dialog open={modalType === "reject"} onOpenChange={open => !open && setModalType(null)}>
+      {/* Reject Modal */}
+      <Dialog open={modalType === "reject"} onOpenChange={open => !open && (setModalType(null), setActiveAcc(null))}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Từ chối bảo hành</DialogTitle>
+            <DialogTitle>Từ chối bảo hành{activeAcc ? ` — ${activeAcc.email}` : ""}</DialogTitle>
             <DialogDescription>Lý do từ chối sẽ được gửi cho khách hàng</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -434,9 +626,9 @@ export default function Warranty() {
             </div>
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setModalType(null)}>Hủy</Button>
-            <Button variant="destructive" className="w-full sm:w-auto min-h-[44px]" onClick={handleResolve} disabled={rejectM.isPending}>
-              {rejectM.isPending ? "Đang xử lý..." : "Xác nhận từ chối"}
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => { setModalType(null); setActiveAcc(null) }}>Hủy</Button>
+            <Button variant="destructive" className="w-full sm:w-auto min-h-[44px]" onClick={handleResolve} disabled={isBusy}>
+              {isBusy ? "Đang xử lý..." : "Xác nhận từ chối"}
             </Button>
           </DialogFooter>
         </DialogContent>

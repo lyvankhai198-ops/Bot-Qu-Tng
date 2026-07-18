@@ -246,21 +246,269 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 # ─── 💬 Hỗ Trợ — order lookup entry ─────────────────────────────────────────
 
+# ─── 💬 Multi-Account Support ─────────────────────────────────────────────────
+
+_MW_MAX_DEFAULT = 20
+
+def _mw_compute_account(order: dict, settings: dict) -> dict:
+    data = db.calc_order_display(order, settings)
+    return {
+        "orderId":     order.get("orderId", ""),
+        "email":       order.get("email", ""),
+        "productName": order.get("productName") or order.get("type") or "?",
+        "warrantyOk":  data.get("_warranty_ok"),
+        "daysLeft":    data.get("_remaining_days"),
+    }
+
+def _mw_summary_text(L: str, found: list, not_found: list, blocked: list) -> str:
+    vi = L == "vi"
+    total = len(found) + len(not_found) + len(blocked)
+    lines = [
+        f"📋 <b>{'KẾT QUẢ TRA CỨU' if vi else 'LOOKUP RESULTS'}</b>",
+        f"{'Đã nhập' if vi else 'Entered'}: <b>{total}</b> {'tài khoản' if vi else 'account(s)'}",
+    ]
+    if found:
+        lines.append(f"\n✅ <b>{'Tìm thấy' if vi else 'Found'} ({len(found)})</b>:")
+        for i, a in enumerate(found, 1):
+            wok = a.get("warrantyOk")
+            days = a.get("daysLeft")
+            if wok is True:
+                w = f"✅ {'Còn BH' if vi else 'In warranty'} ({days} {'ngày' if vi else 'days'})" if days else f"✅ {'Còn BH' if vi else 'In warranty'}"
+            elif wok is False:
+                w = f"❌ {'Hết BH' if vi else 'Expired'}"
+            else:
+                w = "N/A"
+            lines.append(f"  {i}. <code>{a['email']}</code> — {a.get('productName','?')} | {w}")
+    if not_found:
+        lines.append(f"\n❌ <b>{'Không tìm thấy' if vi else 'Not found'} ({len(not_found)})</b>:")
+        for e in not_found:
+            lines.append(f"  • <code>{e}</code>")
+    if blocked:
+        lines.append(f"\n⚠️ <b>{'Bỏ qua — đang có yêu cầu xử lý' if vi else 'Skipped — open request exists'} ({len(blocked)})</b>:")
+        for e in blocked:
+            lines.append(f"  • <code>{e}</code>")
+    return "\n".join(lines)
+
+def _mw_select_text(L: str, found: list, selected: set) -> str:
+    vi = L == "vi"
+    lines = [f"🔘 <b>{'Chọn tài khoản cần báo lỗi' if vi else 'Select accounts to report'}</b> ({'bấm để chọn/bỏ' if vi else 'tap to toggle'}):\n"]
+    for i, a in enumerate(found):
+        icon = "✅" if i in selected else "☐"
+        lines.append(f"{icon} {i+1}. <code>{a['email']}</code>")
+    lines.append(f"\n{'Đã chọn' if vi else 'Selected'}: <b>{len(selected)}</b>")
+    return "\n".join(lines)
+
+def _mw_initial_kb(L: str, n: int) -> InlineKeyboardMarkup:
+    vi = L == "vi"
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"📋 {'Báo lỗi tất cả' if vi else 'Report all'} ({n})", callback_data="mw:all"),
+        InlineKeyboardButton(f"🔘 {'Chọn cụ thể' if vi else 'Pick accounts'}", callback_data="mw:pick"),
+    ], [
+        InlineKeyboardButton(f"🔙 {'Quay lại' if vi else 'Back'}", callback_data="mw:back"),
+    ]])
+
+def _mw_select_kb(L: str, found: list, selected: set) -> InlineKeyboardMarkup:
+    vi = L == "vi"
+    rows = []
+    for i, a in enumerate(found):
+        icon = "✅" if i in selected else "☐"
+        short = a["email"][:22] + "…" if len(a["email"]) > 22 else a["email"]
+        rows.append([InlineKeyboardButton(f"{icon} {i+1}. {short}", callback_data=f"mw:t:{i}")])
+    n = len(selected)
+    confirm_lbl = f"✅ {'Xác nhận' if vi else 'Confirm'} ({n})" if n else (f"{'Chọn ít nhất 1' if vi else 'Pick at least 1'}")
+    rows.append([
+        InlineKeyboardButton(confirm_lbl, callback_data="mw:ok" if n else "mw:noop"),
+        InlineKeyboardButton(f"🔙 {'Quay lại' if vi else 'Back'}", callback_data="mw:back"),
+    ])
+    return InlineKeyboardMarkup(rows)
+
 async def handle_support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     L = lang(user.id)
-    settings = db.get_settings()
-
-    if not settings.get("support_enabled", True):
+    if not db.get_settings().get("support_enabled", True):
         await update.message.reply_text(t(L, "support_disabled"))
         return
-
-    db.set_user_state(user.id, "conv_state", "support_lookup")
+    max_acc = int(db.get_settings().get("maxAccountsPerRequest", _MW_MAX_DEFAULT))
+    db.set_user_state(user.id, "conv_state", "support_multi_input")
     await update.message.reply_text(
-        t(L, "support_ask"),
+        t(L, "support_multi_ask").format(max=max_acc),
         parse_mode=ParseMode.HTML,
         reply_markup=back_keyboard(user.id),
     )
+
+async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Parse multi-line email input, look up orders, show summary with action buttons."""
+    user = update.effective_user
+    L = lang(user.id)
+    text = update.message.text.strip()
+    settings = db.get_settings()
+    max_acc = int(settings.get("maxAccountsPerRequest", _MW_MAX_DEFAULT))
+
+    # Parse + dedup
+    seen: set = set()
+    emails: list = []
+    for line in text.splitlines():
+        e = line.strip()
+        if e and e.lower() not in seen:
+            seen.add(e.lower())
+            emails.append(e)
+
+    if not emails:
+        await update.message.reply_text(t(L, "support_multi_empty"), parse_mode=ParseMode.HTML)
+        return
+    if len(emails) > max_acc:
+        await update.message.reply_text(t(L, "support_multi_too_many").format(max=max_acc), parse_mode=ParseMode.HTML)
+        return
+
+    open_emails = db.get_open_warranty_emails(user.id)
+    found: list = []
+    not_found: list = []
+    blocked: list = []
+
+    for e in emails:
+        order = db.find_order(e)
+        if not order:
+            not_found.append(e)
+            continue
+        em = order.get("email", e).lower()
+        if em in open_emails:
+            blocked.append(e)
+            continue
+        found.append(_mw_compute_account(order, settings))
+
+    if not found:
+        summary = _mw_summary_text(L, found, not_found, blocked)
+        no_valid = "Không có tài khoản hợp lệ nào để báo lỗi." if L == "vi" else "No valid accounts to report."
+        await update.message.reply_text(summary + "\n\n" + no_valid, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
+        db.clear_user_state(user.id, "conv_state")
+        return
+
+    db.set_user_state(user.id, "_mw_found", _json.dumps(found, ensure_ascii=False))
+    db.set_user_state(user.id, "_mw_not_found", _json.dumps(not_found, ensure_ascii=False))
+    db.set_user_state(user.id, "_mw_sel", ",".join(str(i) for i in range(len(found))))
+    db.clear_user_state(user.id, "conv_state")
+
+    await update.message.reply_text(
+        _mw_summary_text(L, found, not_found, blocked),
+        parse_mode=ParseMode.HTML,
+        reply_markup=_mw_initial_kb(L, len(found)),
+    )
+
+async def callback_multi_warranty(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle mw:* inline keyboard callbacks for multi-account warranty flow."""
+    query = update.callback_query
+    user  = query.from_user
+    L     = lang(user.id)
+    data  = query.data  # mw:all | mw:pick | mw:t:N | mw:ok | mw:back | mw:noop
+
+    if data == "mw:noop":
+        vi = L == "vi"
+        await query.answer("Vui lòng chọn ít nhất 1 tài khoản." if vi else "Select at least 1 account.", show_alert=True)
+        return
+
+    if data == "mw:back":
+        await query.answer()
+        for key in ("_mw_found", "_mw_not_found", "_mw_sel", "conv_state"):
+            db.clear_user_state(user.id, key)
+        await query.message.reply_text(
+            t(L, "welcome", name=user.first_name or "User"),
+            parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id),
+        )
+        return
+
+    state = db.get_user_state(user.id)
+    found_json = state.get("_mw_found", "[]")
+    try:
+        found = _json.loads(found_json)
+    except Exception:
+        found = []
+    if not found:
+        await query.answer("Phiên đã hết hạn. Vui lòng nhập lại." if L == "vi" else "Session expired.", show_alert=True)
+        return
+
+    sel_str = state.get("_mw_sel", ",".join(str(i) for i in range(len(found))))
+    selected = set(int(x) for x in sel_str.split(",") if x.strip().isdigit())
+
+    if data == "mw:all":
+        await query.answer()
+        db.set_user_state(user.id, "_mw_sel", ",".join(str(i) for i in range(len(found))))
+        db.set_user_state(user.id, "conv_state", "support_multi_desc")
+        await query.message.reply_text(t(L, "support_multi_desc_ask"), parse_mode=ParseMode.HTML, reply_markup=back_keyboard(user.id))
+        return
+
+    if data == "mw:pick":
+        await query.answer()
+        try:
+            await query.edit_message_text(
+                _mw_select_text(L, found, selected), parse_mode=ParseMode.HTML,
+                reply_markup=_mw_select_kb(L, found, selected),
+            )
+        except Exception:
+            pass
+        return
+
+    if data.startswith("mw:t:"):
+        try:
+            idx = int(data[5:])
+        except ValueError:
+            await query.answer(); return
+        if idx in selected: selected.discard(idx)
+        else: selected.add(idx)
+        db.set_user_state(user.id, "_mw_sel", ",".join(str(i) for i in sorted(selected)))
+        await query.answer()
+        try:
+            await query.edit_message_text(
+                _mw_select_text(L, found, selected), parse_mode=ParseMode.HTML,
+                reply_markup=_mw_select_kb(L, found, selected),
+            )
+        except Exception:
+            pass
+        return
+
+    if data == "mw:ok":
+        if not selected:
+            await query.answer("Vui lòng chọn ít nhất 1 tài khoản." if L == "vi" else "Select at least 1.", show_alert=True)
+            return
+        await query.answer()
+        db.set_user_state(user.id, "conv_state", "support_multi_desc")
+        await query.message.reply_text(t(L, "support_multi_desc_ask"), parse_mode=ParseMode.HTML, reply_markup=back_keyboard(user.id))
+        return
+
+    await query.answer()
+
+async def handle_multi_warranty_desc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Receive description and create the group warranty request."""
+    user = update.effective_user
+    L    = lang(user.id)
+    description = update.message.text.strip()
+
+    state = db.get_user_state(user.id)
+    try:
+        found = _json.loads(state.get("_mw_found", "[]"))
+    except Exception:
+        found = []
+    sel_str = state.get("_mw_sel", ",".join(str(i) for i in range(len(found))))
+    selected_indices = sorted(int(x) for x in sel_str.split(",") if x.strip().isdigit() and int(x) < len(found))
+    selected_accounts = [found[i] for i in selected_indices]
+
+    for key in ("conv_state", "_mw_found", "_mw_not_found", "_mw_sel"):
+        db.clear_user_state(user.id, key)
+
+    if not selected_accounts:
+        await update.message.reply_text(t(L, "support_multi_empty"), parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
+        return
+
+    req_id = db.add_group_warranty_request(user.id, user.username, user.first_name, selected_accounts, description, L)
+    db.add_log("GROUP_WARRANTY", f"@{user.username} ({user.id}) | {len(selected_accounts)} accounts", "")
+
+    await update.message.reply_text(
+        t(L, "support_multi_sent").format(n=len(selected_accounts)),
+        parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id),
+    )
+
+    req = db.get_warranty_request(req_id)
+    if req:
+        Thread(target=_notify_admins_warranty, args=(req, None), daemon=True).start()
 
 # ─── 📦 Kiểm Tra Đơn Hàng — order lookup entry ───────────────────────────────
 
@@ -463,6 +711,10 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         state = db.get_user_state(user.id).get("conv_state")
         if state in ("support_lookup", "check_lookup"):
             await handle_order_lookup(update, context)
+        elif state == "support_multi_input":
+            await handle_multi_account_input(update, context)
+        elif state == "support_multi_desc":
+            await handle_multi_warranty_desc(update, context)
         elif state == "report_issue":
             await handle_report_issue_input(update, context)
         else:
@@ -522,7 +774,30 @@ def _tg_send_markup(token: str, chat_id: int, text: str, markup: dict | None = N
     db.add_log("NOTIF_SEND_FAIL", f"chat_id={chat_id}", "bot")
     return False
 
+def _build_group_notif_msg(req: dict, tag: str = "🔔", urgency: str = "") -> str:
+    accounts = req.get("accounts", [])
+    n = len(accounts)
+    description = req.get("description", "")
+    username = req.get("username", "")
+    user_id = req.get("userId", "")
+    submitted = req.get("submittedAt", "")
+    try:
+        ts = datetime.fromisoformat(submitted).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        ts = submitted
+    lines = [f"{tag} <b>YÊU CẦU BẢO HÀNH MỚI{urgency} — {n} TÀI KHOẢN</b>\n"]
+    lines.append(f"👤 Khách: @{username} (<code>{user_id}</code>)")
+    lines.append(f"📦 Số tài khoản: <b>{n}</b>")
+    lines.append(f"📝 Lỗi: <i>{description}</i>")
+    lines.append("\nDanh sách tài khoản:")
+    for i, acc in enumerate(accounts, 1):
+        lines.append(f"  {i}. <code>{acc.get('email','')}</code> — {acc.get('productName','?')}")
+    lines.append(f"\n🕐 Thời gian: {ts}")
+    return "\n".join(lines)
+
 def _build_warranty_notif_msg(req: dict, order: dict | None, tag: str = "🔔", urgency: str = "") -> str:
+    if req.get("type") == "group":
+        return _build_group_notif_msg(req, tag, urgency)
     order_id    = req.get("orderId", "N/A")
     email       = req.get("email", "N/A")
     description = req.get("description", "")
@@ -662,14 +937,23 @@ async def callback_warranty_ack(update: Update, context: ContextTypes.DEFAULT_TY
     db.add_log("WARRANTY_ACK", f"{req_id} by @{user.username or user.id}", "bot")
 
     # Send confirmation to customer
-    order_id = req.get("orderId", "N/A")
-    cust_msg = (
-        f"✅ <b>YÊU CẦU ĐÃ ĐƯỢC TIẾP NHẬN</b>\n\n"
-        f"Mã đơn: <code>{order_id}</code>\n\n"
-        f"Shop đã nhận được yêu cầu bảo hành của bạn và đang tiến hành kiểm tra. "
-        f"Kết quả xử lý sẽ được bot thông báo ngay khi hoàn tất. "
-        f"Vui lòng chờ và không gửi lại yêu cầu trùng lặp."
-    )
+    if req.get("type") == "group":
+        n = len(req.get("accounts", []))
+        cust_msg = (
+            f"✅ <b>YÊU CẦU ĐÃ ĐƯỢC TIẾP NHẬN</b>\n\n"
+            f"Shop đã tiếp nhận yêu cầu hỗ trợ gồm <b>{n}</b> tài khoản và đang tiến hành kiểm tra. "
+            f"Kết quả xử lý sẽ được bot thông báo ngay khi hoàn tất. "
+            f"Vui lòng chờ và không gửi lại yêu cầu trùng lặp."
+        )
+    else:
+        order_id = req.get("orderId", "N/A")
+        cust_msg = (
+            f"✅ <b>YÊU CẦU ĐÃ ĐƯỢC TIẾP NHẬN</b>\n\n"
+            f"Mã đơn: <code>{order_id}</code>\n\n"
+            f"Shop đã nhận được yêu cầu bảo hành của bạn và đang tiến hành kiểm tra. "
+            f"Kết quả xử lý sẽ được bot thông báo ngay khi hoàn tất. "
+            f"Vui lòng chờ và không gửi lại yêu cầu trùng lặp."
+        )
     try:
         sent_ok = _tg_send(TOKEN, int(req["userId"]), cust_msg)
     except Exception as e:
@@ -795,6 +1079,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_order,         pattern=r"^order:"))
     app.add_handler(CallbackQueryHandler(callback_warranty_ack,  pattern=r"^warranty_ack:"))
     app.add_handler(CallbackQueryHandler(callback_warranty_noop, pattern=r"^warranty_noop$"))
+    app.add_handler(CallbackQueryHandler(callback_multi_warranty,  pattern=r"^mw:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
 
     logger.info("Bot is polling...")

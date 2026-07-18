@@ -411,11 +411,31 @@ export const DeleteOrderResponse = zod.object({
  */
 export const ListWarrantyResponseItem = zod.object({
   "id": zod.string(),
+  "type": zod.string().nullish(),
   "userId": zod.string(),
   "username": zod.string().optional(),
   "firstName": zod.string().optional(),
+  "orderId": zod.string().nullish(),
+  "email": zod.string().nullish(),
+  "accounts": zod.array(zod.object({
+  "id": zod.string(),
   "orderId": zod.string(),
-  "email": zod.string().optional(),
+  "email": zod.string(),
+  "productName": zod.string().nullish(),
+  "description": zod.string().nullish(),
+  "status": zod.string(),
+  "resolution": zod.string().nullish(),
+  "replacementEmail": zod.string().nullish(),
+  "replacementPassword": zod.string().nullish(),
+  "replacementTwoFA": zod.string().nullish(),
+  "replacementNote": zod.string().nullish(),
+  "sentStatus": zod.string().nullish(),
+  "sentError": zod.string().nullish(),
+  "sentAt": zod.string().nullish(),
+  "resolvedAt": zod.string().nullish(),
+  "resolvedBy": zod.string().nullish()
+})).nullish(),
+  "notFoundAccounts": zod.array(zod.string()).nullish(),
   "description": zod.string(),
   "submittedAt": zod.string(),
   "status": zod.string(),
@@ -527,6 +547,78 @@ export const UpdateNotificationSettingsResponse = zod.object({
   "reminder1Minutes": zod.number().optional(),
   "reminder2Minutes": zod.number().optional(),
   "urgentMinutes": zod.number().optional()
+})
+
+
+/**
+ * @summary Send replacement account for a sub-item in a group warranty
+ */
+export const ResolveWarrantyAccountReplacementParams = zod.object({
+  "id": zod.coerce.string(),
+  "accId": zod.coerce.string()
+})
+
+export const ResolveWarrantyAccountReplacementBody = zod.object({
+  "email": zod.string(),
+  "password": zod.string(),
+  "twoFA": zod.string().optional(),
+  "note": zod.string().optional()
+})
+
+export const ResolveWarrantyAccountReplacementResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Refund a sub-item in a group warranty
+ */
+export const ResolveWarrantyAccountRefundParams = zod.object({
+  "id": zod.coerce.string(),
+  "accId": zod.coerce.string()
+})
+
+export const ResolveWarrantyAccountRefundBody = zod.object({
+  "amount": zod.number(),
+  "note": zod.string().optional()
+})
+
+export const ResolveWarrantyAccountRefundResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Reject a sub-item in a group warranty
+ */
+export const ResolveWarrantyAccountRejectParams = zod.object({
+  "id": zod.coerce.string(),
+  "accId": zod.coerce.string()
+})
+
+export const ResolveWarrantyAccountRejectBody = zod.object({
+  "reason": zod.string()
+})
+
+export const ResolveWarrantyAccountRejectResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Resend replacement account message for a sub-item
+ */
+export const ResendWarrantyAccountReplacementParams = zod.object({
+  "id": zod.coerce.string(),
+  "accId": zod.coerce.string()
+})
+
+export const ResendWarrantyAccountReplacementResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
 })
 
 

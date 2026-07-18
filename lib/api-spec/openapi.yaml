@@ -576,6 +576,128 @@ paths:
               schema:
                 $ref: "#/components/schemas/NotificationSettings"
 
+  /bot/warranty/{id}/accounts/{accId}/replacement:
+    post:
+      operationId: resolveWarrantyAccountReplacement
+      tags: [bot]
+      summary: Send replacement account for a sub-item in a group warranty
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: accId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyAccountReplacementInput"
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/warranty/{id}/accounts/{accId}/refund:
+    post:
+      operationId: resolveWarrantyAccountRefund
+      tags: [bot]
+      summary: Refund a sub-item in a group warranty
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: accId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyRefundInput"
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/warranty/{id}/accounts/{accId}/reject:
+    post:
+      operationId: resolveWarrantyAccountReject
+      tags: [bot]
+      summary: Reject a sub-item in a group warranty
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: accId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyRejectInput"
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/warranty/{id}/accounts/{accId}/resend:
+    post:
+      operationId: resendWarrantyAccountReplacement
+      tags: [bot]
+      summary: Resend replacement account message for a sub-item
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: accId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
   /bot/warranty/{id}/resend-ack:
     post:
       operationId: resendWarrantyAckNotif
@@ -1007,12 +1129,77 @@ components:
           type: string
           nullable: true
 
-    WarrantyRequest:
+    WarrantyAccount:
       type: object
-      required: [id, userId, orderId, description, submittedAt, status]
+      required: [id, orderId, email, status]
       properties:
         id:
           type: string
+        orderId:
+          type: string
+        email:
+          type: string
+        productName:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+        resolution:
+          type: string
+          nullable: true
+        replacementEmail:
+          type: string
+          nullable: true
+        replacementPassword:
+          type: string
+          nullable: true
+        replacementTwoFA:
+          type: string
+          nullable: true
+        replacementNote:
+          type: string
+          nullable: true
+        sentStatus:
+          type: string
+          nullable: true
+        sentError:
+          type: string
+          nullable: true
+        sentAt:
+          type: string
+          nullable: true
+        resolvedAt:
+          type: string
+          nullable: true
+        resolvedBy:
+          type: string
+          nullable: true
+
+    WarrantyAccountReplacementInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        twoFA:
+          type: string
+        note:
+          type: string
+
+    WarrantyRequest:
+      type: object
+      required: [id, userId, description, submittedAt, status]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          nullable: true
         userId:
           type: string
         username:
@@ -1021,8 +1208,20 @@ components:
           type: string
         orderId:
           type: string
+          nullable: true
         email:
           type: string
+          nullable: true
+        accounts:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/WarrantyAccount"
+        notFoundAccounts:
+          type: array
+          nullable: true
+          items:
+            type: string
         description:
           type: string
         submittedAt:

@@ -378,6 +378,18 @@ router.delete("/bot/orders/:orderId", requireAuth, (req: any, res: any) => {
   res.json({ ok: true, message: "Đã xoá" });
 });
 
+// ── Group warranty status helper ─────────────────────────────────────────────
+function _recomputeGroupStatus(req: any): void {
+  const accs: any[] = req.accounts ?? [];
+  const statuses = accs.map((a: any) => a.status ?? "pending");
+  if (statuses.length > 0 && statuses.every((s: string) => ["resolved", "rejected"].includes(s))) {
+    req.status = "resolved";
+    if (!req.resolvedAt) req.resolvedAt = now();
+  } else if (req.acknowledgedAt || statuses.some((s: string) => s === "processing")) {
+    if (req.status !== "resolved") req.status = "processing";
+  }
+}
+
 // ── GET /bot/warranty ────────────────────────────────────────────────────────
 router.get("/bot/warranty", requireAuth, (_req: any, res: any) => {
   const requests: any[] = readJson("warranty_requests", []) ?? [];
@@ -499,6 +511,114 @@ router.post("/bot/warranty/:id/resend-ack", requireAuth, async (req: any, res: a
     writeJson("warranty_requests", requests);
     res.json({ ok: false, message: `Gửi lại thất bại: ${result.error}` });
   }
+});
+
+// ── POST /bot/warranty/:id/accounts/:accId/replacement ──────────────────────
+router.post("/bot/warranty/:id/accounts/:accId/replacement", requireAuth, async (req: any, res: any) => {
+  const { id, accId } = req.params;
+  const { email, password, twoFA, note } = req.body ?? {};
+  if (!email || !password) { res.status(400).json({ ok: false, message: "Email và mật khẩu là bắt buộc" }); return; }
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id && r.type === "group");
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  const accIdx = (req_.accounts ?? []).findIndex((a: any) => a.id === accId);
+  if (accIdx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy tài khoản con" }); return; }
+  const acc = req_.accounts[accIdx];
+
+  const userLang = req_.userLang ?? "vi";
+  const isEN = userLang === "en";
+  const msgLines: string[] = [];
+  if (isEN) {
+    msgLines.push(`✅ <b>WARRANTY RESOLVED</b>\n`);
+    msgLines.push(`📧 Old account: <code>${acc.email}</code>`);
+    msgLines.push(`🔑 <b>Replacement account:</b>`);
+    msgLines.push(`📧 Email: <code>${email}</code>`);
+    msgLines.push(`🔒 Password: <code>${password}</code>`);
+    if (twoFA) msgLines.push(`🛡 2FA: <code>${twoFA}</code>`);
+    if (note) msgLines.push(`📝 Note: ${note}`);
+    msgLines.push(`\nPlease verify your account immediately after receiving.`);
+  } else {
+    msgLines.push(`✅ <b>ĐÃ GIẢI QUYẾT BẢO HÀNH</b>\n`);
+    msgLines.push(`📧 Tài khoản cũ: <code>${acc.email}</code>`);
+    msgLines.push(`🔑 <b>Tài khoản thay thế:</b>`);
+    msgLines.push(`📧 Email: <code>${email}</code>`);
+    msgLines.push(`🔒 Mật khẩu: <code>${password}</code>`);
+    if (twoFA) msgLines.push(`🛡 2FA: <code>${twoFA}</code>`);
+    if (note) msgLines.push(`📝 Ghi chú: ${note}`);
+    msgLines.push(`\nVui lòng kiểm tra tài khoản ngay sau khi nhận.`);
+  }
+  const result = await sendTelegramMessage(req_.userId, msgLines.join("\n"));
+  const replacementData = { replacementEmail: email, replacementPassword: password, replacementTwoFA: twoFA || null, replacementNote: note || null, resolvedAt: now(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "sent" : "failed", sentAt: result.ok ? now() : null, sentError: result.ok ? null : result.error };
+  requests[idx].accounts[accIdx] = { ...acc, ...replacementData };
+  _recomputeGroupStatus(requests[idx]);
+  writeJson("warranty_requests", requests);
+  addLog("GROUP_REPLACEMENT", `${id}/${accId} → ${email}`, "web-admin");
+  res.json({ ok: result.ok, sentStatus: result.ok ? "sent" : "failed", message: result.ok ? "Đã gửi tài khoản thay thế cho khách" : `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
+});
+
+// ── POST /bot/warranty/:id/accounts/:accId/refund ────────────────────────────
+router.post("/bot/warranty/:id/accounts/:accId/refund", requireAuth, async (req: any, res: any) => {
+  const { id, accId } = req.params;
+  const { amount, note } = req.body ?? {};
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id && r.type === "group");
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  const accIdx = (req_.accounts ?? []).findIndex((a: any) => a.id === accId);
+  if (accIdx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy tài khoản con" }); return; }
+  const acc = req_.accounts[accIdx];
+  requests[idx].accounts[accIdx] = { ...acc, status: "resolved", resolution: `refund:${amount}`, resolvedAt: now(), resolvedBy: "web-admin" };
+  _recomputeGroupStatus(requests[idx]);
+  writeJson("warranty_requests", requests);
+  const msg = `💰 <b>Hoàn tiền tài khoản: <code>${acc.email}</code></b>\n\nSố tiền: <b>${Number(amount).toLocaleString("vi")}đ</b>${note ? `\nGhi chú: ${note}` : ""}`;
+  await sendTelegramMessage(req_.userId, msg);
+  addLog("GROUP_REFUND", `${id}/${accId} → ${amount}đ`, "web-admin");
+  res.json({ ok: true, message: "Đã xử lý hoàn tiền" });
+});
+
+// ── POST /bot/warranty/:id/accounts/:accId/reject ────────────────────────────
+router.post("/bot/warranty/:id/accounts/:accId/reject", requireAuth, async (req: any, res: any) => {
+  const { id, accId } = req.params;
+  const { reason } = req.body ?? {};
+  if (!reason) { res.status(400).json({ ok: false, message: "Lý do là bắt buộc" }); return; }
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id && r.type === "group");
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  const accIdx = (req_.accounts ?? []).findIndex((a: any) => a.id === accId);
+  if (accIdx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy tài khoản con" }); return; }
+  const acc = req_.accounts[accIdx];
+  requests[idx].accounts[accIdx] = { ...acc, status: "rejected", resolution: `reject:${reason}`, resolvedAt: now(), resolvedBy: "web-admin" };
+  _recomputeGroupStatus(requests[idx]);
+  writeJson("warranty_requests", requests);
+  const msg = `❌ <b>Tài khoản <code>${acc.email}</code> không được bảo hành.</b>\n\nLý do: ${reason}`;
+  await sendTelegramMessage(req_.userId, msg);
+  addLog("GROUP_REJECT", `${id}/${accId}: ${reason}`, "web-admin");
+  res.json({ ok: true, message: "Đã từ chối" });
+});
+
+// ── POST /bot/warranty/:id/accounts/:accId/resend ────────────────────────────
+router.post("/bot/warranty/:id/accounts/:accId/resend", requireAuth, async (req: any, res: any) => {
+  const { id, accId } = req.params;
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id && r.type === "group");
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  const accIdx = (req_.accounts ?? []).findIndex((a: any) => a.id === accId);
+  if (accIdx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy tài khoản con" }); return; }
+  const acc = req_.accounts[accIdx];
+  if (!acc.replacementEmail || !acc.replacementPassword) { res.status(400).json({ ok: false, message: "Không có thông tin tài khoản thay thế" }); return; }
+  const fakeReq = { ...req_, orderId: acc.orderId, productName: acc.productName };
+  const message = buildReplacementMessage(fakeReq, acc.replacementEmail, acc.replacementPassword, acc.replacementTwoFA, acc.replacementNote);
+  const result = await sendTelegramMessage(req_.userId, message);
+  if (result.ok) {
+    requests[idx].accounts[accIdx] = { ...acc, sentStatus: "sent", sentAt: now(), sentError: null };
+  } else {
+    requests[idx].accounts[accIdx] = { ...acc, sentStatus: "failed", sentError: result.error };
+  }
+  writeJson("warranty_requests", requests);
+  res.json({ ok: result.ok, message: result.ok ? "Đã gửi lại thành công" : `Gửi lại thất bại: ${result.error}` });
 });
 
 // ── POST /bot/warranty/:id/resend ────────────────────────────────────────────

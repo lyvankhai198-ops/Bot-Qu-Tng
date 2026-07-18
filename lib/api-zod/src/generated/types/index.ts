@@ -29,6 +29,8 @@ export * from './newRoundInput';
 export * from './notificationSettings';
 export * from './order';
 export * from './orderInput';
+export * from './warrantyAccount';
+export * from './warrantyAccountReplacementInput';
 export * from './warrantyRefundInput';
 export * from './warrantyRejectInput';
 export * from './warrantyReplacementInput';

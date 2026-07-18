@@ -1,0 +1,165 @@
+THÊM SUPPORT NHIỀU TÀI KHOẢN CÙNG LÚC
+
+Khi người dùng nhấn Support, bot hỏi:
+
+“Vui lòng nhập email/tài khoản cần hỗ trợ.
+Bạn có thể nhập một hoặc nhiều tài khoản, mỗi tài khoản một dòng.”
+
+Ví dụ:
+
+account1@gmail.com
+account2@gmail.com
+account3@gmail.com
+
+1. Kiểm tra danh sách
+
+Bot phải:
+
+- Tách từng dòng thành một email/tài khoản.
+- Xóa dòng trống.
+- Xóa khoảng trắng thừa.
+- Loại bỏ tài khoản bị nhập trùng trong cùng danh sách.
+- Tìm từng tài khoản trong hệ thống.
+
+Sau khi kiểm tra, bot hiển thị:
+
+- Tổng số tài khoản đã nhập.
+- Số tài khoản tìm thấy.
+- Số tài khoản không tìm thấy.
+- Số tài khoản còn bảo hành.
+- Số tài khoản đã hết bảo hành.
+
+2. Hiển thị kết quả
+
+Mỗi tài khoản tìm thấy hiển thị:
+
+- Email/tài khoản.
+- Tên sản phẩm.
+- Ngày mua.
+- Thời hạn bảo hành.
+- Số ngày bảo hành còn lại.
+- Tiền hoàn dự kiến.
+- Trạng thái.
+
+Không hiển thị mật khẩu hoặc 2FA tại bước tra cứu.
+
+Các tài khoản không tìm thấy phải được liệt kê riêng.
+
+3. Chọn tài khoản cần báo lỗi
+
+Bên dưới có các nút:
+
+- Báo lỗi tất cả tài khoản hợp lệ.
+- Chọn tài khoản cần báo lỗi.
+- Quay lại.
+
+Nếu chọn riêng, bot hiển thị danh sách có nút chọn/bỏ chọn cho từng tài khoản.
+
+4. Mô tả lỗi
+
+Sau khi chọn tài khoản, bot yêu cầu:
+
+“Vui lòng mô tả ngắn gọn lỗi của các tài khoản đã chọn.”
+
+Ví dụ:
+
+- Die tài khoản.
+- Rớt gói.
+- Không đăng nhập được.
+
+Dùng chung một nội dung lỗi cho cả danh sách.
+
+Có thêm lựa chọn “Nhập lỗi riêng cho từng tài khoản” nếu cần.
+
+5. Tạo yêu cầu bảo hành
+
+Một lần gửi sẽ tạo:
+
+- Một phiếu support chung.
+- Nhiều mục tài khoản con bên trong phiếu.
+
+Mỗi tài khoản con phải có trạng thái xử lý riêng:
+
+- Chờ xử lý.
+- Đang xử lý.
+- Đã gửi tài khoản thay thế.
+- Đã hoàn tiền.
+- Bị từ chối.
+
+Admin có thể xử lý từng tài khoản riêng, không bắt buộc xử lý tất cả cùng một kết quả.
+
+6. Thông báo cho Admin
+
+Bot gửi thông báo ưu tiên:
+
+🔔 CÓ YÊU CẦU BẢO HÀNH MỚI
+
+Khách hàng: {telegram_user}
+Số lượng tài khoản: {total_accounts}
+Lỗi: {error_description}
+Thời gian: {created_at}
+
+Kèm nút:
+
+- 📋 Mở yêu cầu bảo hành.
+- ✅ Tiếp nhận xử lý.
+
+Khi Admin bấm “Tiếp nhận xử lý”, bot gửi khách:
+
+“✅ Shop đã tiếp nhận yêu cầu hỗ trợ gồm {total_accounts} tài khoản và đang tiến hành kiểm tra.”
+
+7. Xử lý trên web
+
+Trong chi tiết yêu cầu, hiển thị danh sách tất cả tài khoản.
+
+Admin có thể:
+
+- Chọn một tài khoản.
+- Chọn nhiều tài khoản.
+- Chọn tất cả.
+
+Sau đó thực hiện hàng loạt:
+
+- Gửi tài khoản thay thế.
+- Hoàn tiền.
+- Từ chối bảo hành có lý do.
+
+Nếu gửi tài khoản thay thế, mỗi tài khoản cũ phải được ghép đúng với một tài khoản mới tương ứng.
+
+Ví dụ:
+
+account1 cũ → replacement1 mới
+account2 cũ → replacement2 mới
+account3 cũ → replacement3 mới
+
+Không được gửi nhầm hoặc dùng một tài khoản mới cho nhiều tài khoản cũ.
+
+8. Thông báo kết quả cho khách
+
+Bot có thể gửi kết quả theo từng tài khoản ngay khi xử lý xong.
+
+Ví dụ:
+
+✅ ĐÃ GIẢI QUYẾT BẢO HÀNH
+
+Tài khoản cũ: account1@gmail.com
+Kết quả: Đã gửi tài khoản thay thế
+
+Tài khoản mới: replacement1@gmail.com
+Mật khẩu: {password}
+2FA: {2fa}
+
+Khi tất cả tài khoản trong phiếu đã xử lý xong, bot gửi thêm bản tổng kết:
+
+- Tổng số tài khoản.
+- Đã thay thế.
+- Đã hoàn tiền.
+- Bị từ chối.
+- Đang chờ xử lý.
+
+9. Giới hạn và chống spam
+
+- Cấu hình số tài khoản tối đa mỗi yêu cầu, mặc định 20.
+- Không cho gửi lại cùng một email nếu đang có yêu cầu chưa xử lý.
+- Nếu có tài khoản đang chờ xử lý, bot thông báo rõ tài khoản nào.
+- Không tạo yêu cầu trùng.

@@ -1,4 +1,5 @@
 - [Bot architecture](bot-architecture.md) — bot.py (5 buttons, no admin info exposed), api-server (Node.js REST), admin-panel (React), share data/ JSON files
 - [Zod codegen fix](zod-codegen-fix.md) — after codegen, patch lib/api-zod/src/generated/api.ts: replace zod.looseObject → zod.object (Zod v3 compat)
 - [Broadcast targeting](broadcast-targeting.md) — pending_broadcasts.json supports target: "all"|"has_received"|"no_received"|"user:<id>"; bot worker polls every 30s
+- [Multi-account warranty](multi-account-warranty.md) — group warranty flow: mw:* callbacks, state keys _mw_found/_mw_sel, type:"group" in warranty_requests.json, sub-account endpoints in botAdmin.ts
 - [VPS Auto-Deploy Workflow](vps-deploy.md) — sau mỗi lần cập nhật PHẢI tự push GitHub + deploy VPS qua scripts/deploy.sh

@@ -387,6 +387,107 @@ def get_warranty_request(req_id: str):
             return req
     return None
 
+# ─── Group Warranty Requests ──────────────────────────────────────────────────
+
+def add_group_warranty_request(user_id: int, username: str, first_name: str,
+                                accounts: list, description: str, user_lang: str = "vi") -> str:
+    """
+    accounts: list of dicts with {orderId, email, productName}
+    Returns the group request ID.
+    """
+    requests = load("warranty_requests", [])
+    req_id = str(uuid.uuid4())[:12]
+    account_items = []
+    for i, acc in enumerate(accounts):
+        account_items.append({
+            "id": f"{req_id}-{i}",
+            "orderId": acc.get("orderId", ""),
+            "email": acc.get("email", ""),
+            "productName": acc.get("productName", ""),
+            "description": description,
+            "status": "pending",
+            "resolution": None,
+            "replacementEmail": None,
+            "replacementPassword": None,
+            "replacementTwoFA": None,
+            "replacementNote": None,
+            "sentStatus": None,
+            "sentError": None,
+            "sentAt": None,
+            "resolvedAt": None,
+            "resolvedBy": None,
+        })
+    req = {
+        "id": req_id,
+        "type": "group",
+        "userId": str(user_id),
+        "username": username or "",
+        "firstName": first_name or "",
+        "description": description,
+        "userLang": user_lang,
+        "submittedAt": datetime.now().isoformat(),
+        "status": "pending",
+        "resolution": None,
+        "resolvedAt": None,
+        "resolvedBy": None,
+        "accounts": account_items,
+        "notFoundAccounts": [],
+        "acknowledgedAt": None,
+        "acknowledgedBy": None,
+        "ackNotifSentStatus": None,
+        "ackNotifSentAt": None,
+        "ackNotifError": None,
+        "notifiedAt": None,
+        "reminder1SentAt": None,
+        "reminder2SentAt": None,
+        "urgentSentAt": None,
+    }
+    requests.append(req)
+    save("warranty_requests", requests)
+    return req_id
+
+def update_warranty_account(req_id: str, acc_id: str, fields: dict) -> bool:
+    """Update a sub-account item within a group warranty request."""
+    requests = load("warranty_requests", [])
+    for req in requests:
+        if req.get("id") != req_id or req.get("type") != "group":
+            continue
+        accs = req.get("accounts", [])
+        for acc in accs:
+            if acc.get("id") == acc_id:
+                acc.update(fields)
+                # Recompute overall status
+                statuses = [a.get("status", "pending") for a in accs]
+                if all(s in ("resolved", "rejected") for s in statuses):
+                    req["status"] = "resolved"
+                    if not req.get("resolvedAt"):
+                        req["resolvedAt"] = datetime.now().isoformat()
+                elif any(s == "processing" for s in statuses) or req.get("acknowledgedAt"):
+                    if req.get("status") != "resolved":
+                        req["status"] = "processing"
+                save("warranty_requests", requests)
+                return True
+    return False
+
+def get_open_warranty_emails(user_id: int) -> set:
+    """Return set of lowercased emails that have an open (pending/processing) warranty for this user."""
+    open_emails: set = set()
+    uid = str(user_id)
+    for req in load("warranty_requests", []):
+        if req.get("userId") != uid:
+            continue
+        if req.get("status") not in ("pending", "processing"):
+            continue
+        if req.get("type") == "group":
+            for acc in req.get("accounts", []):
+                if acc.get("status") in ("pending", "processing"):
+                    open_emails.add(acc.get("email", "").lower())
+        else:
+            em = req.get("email", "")
+            if em:
+                open_emails.add(em.lower())
+    return open_emails
+
 # ─── Introduction ─────────────────────────────────────────────────────────
 
 INTRO_DEFAULTS = {

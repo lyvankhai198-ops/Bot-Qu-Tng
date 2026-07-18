@@ -171,13 +171,42 @@ export interface OrderInput {
   notes?: string | null;
 }
 
+export interface WarrantyAccount {
+  id: string;
+  orderId: string;
+  email: string;
+  productName?: string | null;
+  description?: string | null;
+  status: string;
+  resolution?: string | null;
+  replacementEmail?: string | null;
+  replacementPassword?: string | null;
+  replacementTwoFA?: string | null;
+  replacementNote?: string | null;
+  sentStatus?: string | null;
+  sentError?: string | null;
+  sentAt?: string | null;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+}
+
+export interface WarrantyAccountReplacementInput {
+  email: string;
+  password: string;
+  twoFA?: string;
+  note?: string;
+}
+
 export interface WarrantyRequest {
   id: string;
+  type?: string | null;
   userId: string;
   username?: string;
   firstName?: string;
-  orderId: string;
-  email?: string;
+  orderId?: string | null;
+  email?: string | null;
+  accounts?: WarrantyAccount[] | null;
+  notFoundAccounts?: string[] | null;
   description: string;
   submittedAt: string;
   status: string;
