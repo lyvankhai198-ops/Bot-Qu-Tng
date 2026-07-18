@@ -9,12 +9,12 @@ LANG = {
 
         # Welcome
         "welcome": (
-            "🎁 <b>BOT QUÀ TẶNG AI</b>\n\n"
+            "🏪 <b>TRUNG TÂM HỖ TRỢ AI CENTER</b>\n\n"
             "Chào mừng <b>{name}</b> đến với bot nhận quà miễn phí của AI Center.\n\n"
             "Vui lòng chọn chức năng bên dưới."
         ),
         "welcome_admin": (
-            "🎁 <b>BOT QUÀ TẶNG AI</b>\n\n"
+            "🏪 <b>TRUNG TÂM HỖ TRỢ AI CENTER</b>\n\n"
             "Chào mừng <b>Admin {name}</b>!\n\n"
             "Vui lòng chọn chức năng bên dưới."
         ),
@@ -345,12 +345,12 @@ LANG = {
 
         # Welcome
         "welcome": (
-            "🎁 <b>AI GIFT BOT</b>\n\n"
+            "🏪 <b>AI CENTER SUPPORT HUB</b>\n\n"
             "Welcome <b>{name}</b> to the AI Center free gift bot.\n\n"
             "Please select a feature below."
         ),
         "welcome_admin": (
-            "🎁 <b>AI GIFT BOT</b>\n\n"
+            "🏪 <b>AI CENTER SUPPORT HUB</b>\n\n"
             "Welcome <b>Admin {name}</b>!\n\n"
             "Please select a feature below."
         ),
