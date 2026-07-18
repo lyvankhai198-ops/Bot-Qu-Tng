@@ -1,5 +1,17 @@
 import { Router } from "express";
-import { openai } from "@workspace/integrations-openai-ai-server";
+
+// Lazy dynamic import — prevents crash at startup when AI env vars are absent (e.g. VPS)
+let _openai: any = null;
+async function getOpenAI(): Promise<any> {
+  if (!_openai) {
+    const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+    const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    if (!baseURL || !apiKey) throw new Error("AI env vars not configured on this server. OCR requires AI_INTEGRATIONS_OPENAI_BASE_URL and AI_INTEGRATIONS_OPENAI_API_KEY.");
+    const { default: OpenAI } = await import("openai");
+    _openai = new OpenAI({ apiKey, baseURL });
+  }
+  return _openai;
+}
 
 const router = Router();
 
@@ -97,7 +109,8 @@ router.post("/bot/orders/ocr-extract", requireAuth, async (req: any, res: any) =
       const supported = ["image/jpeg", "image/png", "image/gif", "image/webp"];
       if (!supported.includes(img.mimeType)) throw new Error(`Unsupported type: ${img.mimeType}`);
 
-      const response = await openai.chat.completions.create({
+      const oai = await getOpenAI();
+      const response = await oai.chat.completions.create({
         model: "gpt-5.6-luna",
         max_completion_tokens: 1024,
         messages: [
