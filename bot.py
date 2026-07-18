@@ -499,41 +499,51 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 _MW_MAX_DEFAULT = 20
 
-def _mw_compute_account(order: dict, settings: dict) -> dict:
-    data = db.calc_order_display(order, settings)
+def _mw_compute_account(order: dict, settings: dict, item: dict = None) -> dict:
+    """Build the minimal account record used for summary display and state storage."""
+    if item:
+        wdata = db.calc_item_warranty(item, order, settings)
+        can_report  = wdata["canReport"]
+        days_left   = wdata["remainingDays"]
+        warranty_ok = can_report  # True / False (never None from calc_item_warranty)
+    else:
+        data = db.calc_order_display(order, settings)
+        warranty_ok = data.get("_warranty_ok")
+        days_left   = data.get("_remaining_days")
+        can_report  = bool(warranty_ok)
     return {
         "orderId":     order.get("orderId", ""),
         "email":       order.get("email", ""),
         "productName": order.get("productName") or order.get("type") or "?",
-        "warrantyOk":  data.get("_warranty_ok"),
-        "daysLeft":    data.get("_remaining_days"),
+        "warrantyOk":  warranty_ok,
+        "daysLeft":    days_left,
+        "canReport":   can_report,
     }
 
-def _mw_summary_text(L: str, found: list, not_found: list, blocked: list) -> str:
+def _mw_summary_text(L: str, found: list, not_found: list, blocked: list, expired: list = None) -> str:
     vi = L == "vi"
-    total = len(found) + len(not_found) + len(blocked)
+    expired = expired or []
+    total = len(found) + len(not_found) + len(blocked) + len(expired)
     lines = [
         f"📋 <b>{'KẾT QUẢ TRA CỨU' if vi else 'LOOKUP RESULTS'}</b>",
         f"{'Đã nhập' if vi else 'Entered'}: <b>{total}</b> {'tài khoản' if vi else 'account(s)'}",
     ]
     if found:
-        lines.append(f"\n✅ <b>{'Tìm thấy' if vi else 'Found'} ({len(found)})</b>:")
+        lines.append(f"\n✅ <b>{'Còn bảo hành — có thể báo lỗi' if vi else 'In warranty — can report'} ({len(found)})</b>:")
         for i, a in enumerate(found, 1):
-            wok = a.get("warrantyOk")
             days = a.get("daysLeft")
-            if wok is True:
-                w = f"✅ {'Còn BH' if vi else 'In warranty'} ({days} {'ngày' if vi else 'days'})" if days else f"✅ {'Còn BH' if vi else 'In warranty'}"
-            elif wok is False:
-                w = f"❌ {'Hết BH' if vi else 'Expired'}"
-            else:
-                w = "N/A"
+            w = f"✅ {'Còn BH' if vi else 'In warranty'} ({days} {'ngày' if vi else 'days'})" if days else f"✅ {'Còn BH' if vi else 'In warranty'}"
             lines.append(f"  {i}. <code>{a['email']}</code> — {a.get('productName','?')} | {w}")
+    if expired:
+        lines.append(f"\n❌ <b>{'Hết bảo hành — không thể báo lỗi' if vi else 'Warranty expired — cannot report'} ({len(expired)})</b>:")
+        for a in expired:
+            lines.append(f"  • <code>{a['email']}</code> — {a.get('productName','?')}")
     if not_found:
-        lines.append(f"\n❌ <b>{'Không tìm thấy' if vi else 'Not found'} ({len(not_found)})</b>:")
+        lines.append(f"\n🔍 <b>{'Không tìm thấy' if vi else 'Not found'} ({len(not_found)})</b>:")
         for e in not_found:
             lines.append(f"  • <code>{e}</code>")
     if blocked:
-        lines.append(f"\n⚠️ <b>{'Bỏ qua — đang có yêu cầu xử lý' if vi else 'Skipped — open request exists'} ({len(blocked)})</b>:")
+        lines.append(f"\n⚠️ <b>{'Đang có yêu cầu xử lý' if vi else 'Open request exists'} ({len(blocked)})</b>:")
         for e in blocked:
             lines.append(f"  • <code>{e}</code>")
     return "\n".join(lines)
@@ -548,13 +558,16 @@ def _mw_select_text(L: str, found: list, selected: set) -> str:
     return "\n".join(lines)
 
 def _mw_initial_kb(L: str, n: int) -> InlineKeyboardMarkup:
+    """n = number of warranty-valid (reportable) accounts."""
     vi = L == "vi"
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(f"📋 {'Báo lỗi tất cả' if vi else 'Report all'} ({n})", callback_data="mw:all"),
-        InlineKeyboardButton(f"🔘 {'Chọn cụ thể' if vi else 'Pick accounts'}", callback_data="mw:pick"),
-    ], [
-        InlineKeyboardButton(f"🔙 {'Quay lại' if vi else 'Back'}", callback_data="mw:back"),
-    ]])
+    rows = []
+    if n > 0:
+        rows.append([
+            InlineKeyboardButton(f"📋 {'Báo lỗi tất cả' if vi else 'Report all'} ({n})", callback_data="mw:all"),
+            InlineKeyboardButton(f"🔘 {'Chọn cụ thể' if vi else 'Pick accounts'}", callback_data="mw:pick"),
+        ])
+    rows.append([InlineKeyboardButton(f"🔙 {'Quay lại' if vi else 'Back'}", callback_data="mw:back")])
+    return InlineKeyboardMarkup(rows)
 
 def _mw_select_kb(L: str, found: list, selected: set) -> InlineKeyboardMarkup:
     vi = L == "vi"
@@ -615,32 +628,48 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
     blocked: list = []
 
     # Keep full order+item for card rendering
-    found_full: list = []   # list of (order_dict, matched_item_or_None, canonical_email)
+    found_full:   list = []   # (order, item) — reportable (in warranty)
+    expired_full: list = []   # (order, item) — found but warranty expired
+    expired: list = []        # summary records for expired
 
     for e in emails:
-        # Use find_order_with_items so emails stored in order_items (new multi-account model)
-        # are resolved correctly, not just legacy orders.json header emails.
         result = db.find_order_with_items(e)
         order = result.get("order")
         if not order:
             not_found.append(e)
             continue
         matched_item = result.get("matchedItem")
-        # Canonical email: use matched item email (shared orders have no header email)
         canonical_email = (matched_item.get("email", "") if matched_item else "") or order.get("email", e) or e
         if canonical_email.lower() in open_emails:
             blocked.append(e)
             continue
-        # Merge item email into order dict for display helpers that use order.email
         if matched_item and not order.get("email"):
             order = {**order, "email": canonical_email}
-        found.append(_mw_compute_account(order, settings))
-        found_full.append((order, matched_item))
+        acc = _mw_compute_account(order, settings, item=matched_item)
+        if not acc["canReport"]:
+            # Warranty expired — cannot report, show card but do NOT add to reportable list
+            expired.append(acc)
+            expired_full.append((order, matched_item))
+        else:
+            found.append(acc)
+            found_full.append((order, matched_item))
 
+    # Always send full order card(s) for every account (found OR expired), up to 3 total
+    _CARD_THRESHOLD = 3
+    all_full = found_full + expired_full
+    if len(all_full) <= _CARD_THRESHOLD:
+        for (ord_, mit_) in all_full:
+            card_text = _fmt_order(L, ord_, settings, item=mit_)
+            await update.message.reply_text(card_text, parse_mode=ParseMode.HTML)
+
+    # No reportable accounts at all → show summary + back only
     if not found:
-        summary = _mw_summary_text(L, found, not_found, blocked)
-        no_valid = "Không có tài khoản hợp lệ nào để báo lỗi." if L == "vi" else "No valid accounts to report."
-        await update.message.reply_text(summary + "\n\n" + no_valid, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
+        summary = _mw_summary_text(L, found, not_found, blocked, expired=expired)
+        await update.message.reply_text(
+            summary,
+            parse_mode=ParseMode.HTML,
+            reply_markup=_mw_initial_kb(L, 0),   # only "Quay lại"
+        )
         db.clear_user_state(user.id, "conv_state")
         return
 
@@ -649,15 +678,8 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
     db.set_user_state(user.id, "_mw_sel", ",".join(str(i) for i in range(len(found))))
     db.clear_user_state(user.id, "conv_state")
 
-    # Send full order card(s) for up to 3 found accounts; beyond that keep summary only
-    _CARD_THRESHOLD = 3
-    if len(found_full) <= _CARD_THRESHOLD:
-        for (ord_, mit_) in found_full:
-            card_text = _fmt_order(L, ord_, settings, item=mit_)
-            await update.message.reply_text(card_text, parse_mode=ParseMode.HTML)
-
     await update.message.reply_text(
-        _mw_summary_text(L, found, not_found, blocked),
+        _mw_summary_text(L, found, not_found, blocked, expired=expired),
         parse_mode=ParseMode.HTML,
         reply_markup=_mw_initial_kb(L, len(found)),
     )
