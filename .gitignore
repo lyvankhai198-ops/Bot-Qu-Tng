@@ -50,3 +50,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Runtime data — never commit, VPS keeps its own copy
+data/
