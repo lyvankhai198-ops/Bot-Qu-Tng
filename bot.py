@@ -535,49 +535,65 @@ async def maintenance_reply(update: Update, L: str) -> bool:
 # ─── 🎁 Nhận Quà ─────────────────────────────────────────────────────────────
 
 _JOINED_STATUSES = {"member", "administrator", "creator"}
+MEMBERSHIP_CACHE_TTL_HOURS = db.MEMBERSHIP_CACHE_TTL_HOURS  # 6h default
+
+def _channel_cache_key(ch: dict) -> str:
+    """Stable cache key for a channel — mirrors data_manager.channel_cache_key."""
+    cid = (ch.get("chatId") or ch.get("username") or ch.get("id") or "").strip()
+    return cid.lower() if cid else ""
 
 async def _check_channels_membership(bot, user_id: int, channels: list) -> tuple[list, list, list]:
-    """Check membership for all enabled channels.
+    """Call getChatMember for every channel in the list.
 
     Returns:
-        (not_joined, unverifiable, api_errors)
-        - not_joined:    channels WITH chatId where getChatMember confirmed NOT a member
-        - unverifiable:  channels WITHOUT chatId (private invite-link only) — shown in join
-                         prompt but cannot be verified via API; accepted on trust when user
-                         taps "Tôi đã tham gia"
-        - api_errors:    channels WITH chatId where getChatMember raised an exception
-                         (bot not admin, or wrong chatId)
+        (not_joined, no_chat_id, api_errors)
+        - not_joined:  has chatId, getChatMember confirmed NOT a member → show join prompt
+        - no_chat_id:  no chatId/username configured → cannot call getChatMember → block
+        - api_errors:  has chatId but getChatMember threw (bot not admin, wrong chatId)
+
+    Channels confirmed as members are saved to the membership cache automatically.
     """
-    not_joined: list  = []
-    unverifiable: list = []
-    api_errors: list  = []
+    not_joined: list = []
+    no_chat_id: list = []
+    api_errors: list = []
 
     for ch in channels:
-        chat_id = ch.get("chatId") or ch.get("username") or ""
+        chat_id = (ch.get("chatId") or ch.get("username") or "").strip()
+        cache_key = _channel_cache_key(ch)
+
         if not chat_id:
-            # No chatId → cannot verify; still block user (trust-based)
-            logger.info(f"[gift] required_channel_id=(none) channel='{ch.get('name')}' — unverifiable, queuing join prompt")
-            unverifiable.append(ch)
+            # No identifier → cannot call getChatMember → must block
+            logger.info(f"[gift] required_channel_id=(none) channel='{ch.get('name')}' — no chatId, blocking")
+            no_chat_id.append(ch)
             continue
+
         # Normalize: ensure @ prefix for plain usernames
         if not str(chat_id).startswith(("-", "@", "+")):
             chat_id = f"@{chat_id}"
-        logger.info(f"[gift] required_channel_id={chat_id} getChatMember user_id={user_id}")
+
+        logger.info(f"[gift] required_channel_id={chat_id} getChatMember telegram_user_id={user_id}")
         try:
             member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
             status = member.status
             logger.info(f"[gift] membership_status={status} channel={chat_id}")
-            # restricted: only joined if is_member=True
+
             if status == "restricted":
-                if not getattr(member, "is_member", False):
-                    not_joined.append(ch)
-            elif status not in _JOINED_STATUSES:
+                joined = getattr(member, "is_member", False)
+            else:
+                joined = status in _JOINED_STATUSES
+
+            if joined:
+                db.set_membership_verified(user_id, cache_key, status)
+                logger.info(f"[gift] membership_verified_and_cached channel={chat_id} status={status}")
+            else:
+                db.set_membership_left(user_id, cache_key, status)
                 not_joined.append(ch)
+
         except Exception as e:
             logger.warning(f"[gift] getChatMember error channel={chat_id}: {e}")
             api_errors.append(ch)
 
-    return not_joined, unverifiable, api_errors
+    return not_joined, no_chat_id, api_errors
 
 def _build_join_markup(L: str, not_joined: list) -> InlineKeyboardMarkup:
     vi = L == "vi"
@@ -654,7 +670,7 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     vi   = L == "vi"
     settings = db.get_settings()
 
-    logger.info(f"[gift] claim gift handler started telegram_user_id={user.id}")
+    logger.info(f"[gift] claim_gift_handler_started telegram_user_id={user.id}")
 
     if not settings.get("gift_enabled", True):
         await update.message.reply_text(t(L, "gift_disabled"))
@@ -663,51 +679,77 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(t(L, "gift_banned"))
         return
 
-    # ── Channel join-gate TRƯỚC khi kiểm tra kho ──────────────────────────
+    # ── Channel join-gate — TRƯỚC khi kiểm tra kho ────────────────────────
     if settings.get("require_channel_check", False):
         channels         = db.get_required_channels()
         enabled_channels = [c for c in channels if c.get("enabled", True)]
-        logger.info(f"[gift] membership_check_started required_channels_count={len(enabled_channels)}")
+        logger.info(f"[gift] membership_check_started required_channels={len(enabled_channels)}")
 
         if enabled_channels:
-            not_joined, unverifiable, api_errors = await _check_channels_membership(
-                context.bot, user.id, enabled_channels
-            )
-            missing_channels_count = len(not_joined) + len(unverifiable)
+            # Step 1: check cache per channel
+            cached_ok  = []
+            need_check = []
+            for ch in enabled_channels:
+                key = _channel_cache_key(ch)
+                if key and db.is_membership_cache_valid(user.id, key, MEMBERSHIP_CACHE_TTL_HOURS):
+                    cached_ok.append(ch)
+                    logger.info(f"[gift] channel_cache_valid channel='{ch.get('name')}' key={key}")
+                else:
+                    need_check.append(ch)
+
             logger.info(
-                f"[gift] membership_check_result not_joined={len(not_joined)} "
-                f"unverifiable={len(unverifiable)} api_errors={len(api_errors)} "
-                f"missing_channels_count={missing_channels_count}"
+                f"[gift] cache_check telegram_user_id={user.id} "
+                f"cached_ok={len(cached_ok)} need_fresh_check={len(need_check)}"
             )
 
-            if api_errors:
-                names = ", ".join(f"<b>{c.get('name', 'kênh')}</b>" for c in api_errors)
-                await update.message.reply_text(
-                    f"⚠️ Không thể xác minh thành viên kênh {names}.\n"
-                    "Vui lòng kiểm tra bot đã được thêm làm <b>quản trị viên</b> của kênh.",
-                    parse_mode=ParseMode.HTML,
+            if need_check:
+                # Step 2: call getChatMember for channels not in valid cache
+                not_joined, no_chat_id, api_errors = await _check_channels_membership(
+                    context.bot, user.id, need_check
                 )
-                return
+                logger.info(
+                    f"[gift] fresh_check_result not_joined={len(not_joined)} "
+                    f"no_chat_id={len(no_chat_id)} api_errors={len(api_errors)}"
+                )
 
-            # Block if any channel not joined (verified) OR unverifiable (private, trust-based)
-            if not_joined or unverifiable:
-                all_missing = not_joined + unverifiable
-                msg = (
-                    "⚠️ <b>BẠN CHƯA THAM GIA KÊNH</b>\n\n"
-                    "Để nhận quà miễn phí, bạn cần tham gia kênh chính thức của AI Center.\n\n"
-                    'Sau khi tham gia, hãy bấm "<b>✅ Tôi đã tham gia</b>" để xác minh.'
-                ) if vi else (
-                    "⚠️ <b>YOU HAVEN'T JOINED THE CHANNEL</b>\n\n"
-                    "To receive a free gift, please join the official channel below.\n\n"
-                    'After joining, tap "<b>✅ I Joined</b>" to verify.'
-                )
-                await update.message.reply_text(
-                    msg, parse_mode=ParseMode.HTML,
-                    reply_markup=_build_join_markup(L, all_missing),
-                )
-                return
+                if no_chat_id:
+                    names = ", ".join(f"<b>{c.get('name', 'kênh')}</b>" for c in no_chat_id)
+                    await update.message.reply_text(
+                        f"⚠️ Kênh {names} chưa được cấu hình <b>Channel ID</b>.\n"
+                        "Vui lòng liên hệ admin để thiết lập Channel ID trong trang cài đặt.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    return
 
-    # ── Kiểm tra kho CHỈ SAU khi đã xác minh kênh ────────────────────────
+                if api_errors:
+                    names = ", ".join(f"<b>{c.get('name', 'kênh')}</b>" for c in api_errors)
+                    await update.message.reply_text(
+                        f"⚠️ Không thể xác minh thành viên kênh {names}.\n"
+                        "Vui lòng kiểm tra bot đã được thêm làm <b>quản trị viên</b> của kênh.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    return
+
+                if not_joined:
+                    # Show join prompt ONLY for channels still missing
+                    msg = (
+                        "⚠️ <b>BẠN CHƯA THAM GIA KÊNH</b>\n\n"
+                        "Để nhận quà miễn phí, bạn cần tham gia kênh chính thức của AI Center.\n\n"
+                        'Sau khi tham gia, hãy bấm "<b>✅ Tôi đã tham gia</b>" để xác minh.'
+                    ) if vi else (
+                        "⚠️ <b>YOU HAVEN'T JOINED THE CHANNEL</b>\n\n"
+                        "To receive a free gift, please join the official channel below.\n\n"
+                        'After joining, tap "<b>✅ I Joined</b>" to verify.'
+                    )
+                    await update.message.reply_text(
+                        msg, parse_mode=ParseMode.HTML,
+                        reply_markup=_build_join_markup(L, not_joined),
+                    )
+                    return
+            else:
+                logger.info(f"[gift] all_channels_cache_valid telegram_user_id={user.id} — skip_join_screen")
+
+    # ── Kiểm tra kho và phát quà ───────────────────────────────────────────
     logger.info(f"[gift] stock_check_started telegram_user_id={user.id}")
     stock = db.stock_count()
     logger.info(f"[gift] gift_stock={stock}")
@@ -718,7 +760,9 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _claim_gift(user, context, L, settings)
 
 async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Called when user taps '✅ Tôi đã tham gia' — re-verify verifiable channels, trust unverifiable."""
+    """'✅ Tôi đã tham gia' callback — LUÔN gọi getChatMember thật, không dùng kết quả cũ.
+    Nếu xác minh thành công: lưu cache → phát quà ngay (không cần bấm Nhận Quà lần nữa).
+    """
     query = update.callback_query
     await query.answer()
     user = query.from_user
@@ -735,13 +779,24 @@ async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     channels         = db.get_required_channels()
     enabled_channels = [c for c in channels if c.get("enabled", True)]
-    not_joined, unverifiable, api_errors = await _check_channels_membership(
+
+    # Luôn gọi getChatMember fresh — không dùng cache ở bước này (spec §7)
+    not_joined, no_chat_id, api_errors = await _check_channels_membership(
         context.bot, user.id, enabled_channels
     )
     logger.info(
-        f"[gift] check_join callback telegram_user_id={user.id} "
-        f"not_joined={len(not_joined)} unverifiable_trusted={len(unverifiable)} api_errors={len(api_errors)}"
+        f"[gift] check_join_callback telegram_user_id={user.id} "
+        f"not_joined={len(not_joined)} no_chat_id={len(no_chat_id)} api_errors={len(api_errors)}"
     )
+
+    if no_chat_id:
+        names = ", ".join(f"<b>{c.get('name', 'kênh')}</b>" for c in no_chat_id)
+        await query.edit_message_text(
+            f"⚠️ Kênh {names} chưa được cấu hình <b>Channel ID</b>.\n\n"
+            "Admin cần bổ sung <b>Channel ID</b> (dạng -100xxxxxxxxx) vào trang cài đặt kênh để bot có thể xác minh.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
 
     if api_errors:
         names = ", ".join(f"<b>{c.get('name', 'kênh')}</b>" for c in api_errors)
@@ -752,24 +807,27 @@ async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
-    # Still not a member in verified channels → block
     if not_joined:
         names = ", ".join(f"<b>{c.get('name') or c.get('username') or 'kênh'}</b>" for c in not_joined)
         msg = (
-            f"❌ <b>Bạn vẫn chưa tham gia đầy đủ các kênh bắt buộc.</b>\n\n"
+            f"❌ <b>Hệ thống chưa xác minh được bạn trong kênh.</b>\n\n"
             f"📢 Chưa tham gia: {names}\n\n"
-            "Vui lòng tham gia rồi nhấn <b>✅ Tôi đã tham gia</b> lại."
+            "Vui lòng tham gia kênh rồi thử lại sau vài giây."
         ) if vi else (
-            f"❌ <b>You haven't joined all required channels yet.</b>\n\n"
+            f"❌ <b>System could not verify your membership.</b>\n\n"
             f"📢 Not joined: {names}\n\n"
-            "Please join then tap <b>✅ I Joined</b> again."
+            "Please join the channel and try again in a few seconds."
         )
-        await query.edit_message_text(msg, parse_mode=ParseMode.HTML,
-                                      reply_markup=query.message.reply_markup)
+        await query.edit_message_text(
+            msg, parse_mode=ParseMode.HTML,
+            reply_markup=query.message.reply_markup,
+        )
         return
 
-    # All verifiable channels OK; unverifiable channels trusted (user tapped the join button)
-    logger.info(f"[gift] stock_check_started telegram_user_id={user.id} unverifiable_trusted={len(unverifiable)}")
+    # Tất cả kênh đã xác minh — cache đã được lưu trong _check_channels_membership
+    logger.info(f"[gift] all_channels_verified telegram_user_id={user.id}")
+
+    # Kiểm tra kho + phát quà ngay (không cần bấm Nhận Quà lần nữa — spec §7)
     stock = db.stock_count()
     logger.info(f"[gift] gift_stock={stock}")
     if stock == 0:

@@ -51269,49 +51269,75 @@ router2.get("/giveaway/membership-debug/:telegramUserId", requireAuth, async (re
   const channels = readJson("required_channels", []) ?? [];
   const enabled = channels.filter((c) => c.enabled !== false);
   const JOINED = /* @__PURE__ */ new Set(["member", "administrator", "creator"]);
+  const CACHE_TTL_HOURS = 6;
+  const allMemberships = readJson("user_channel_memberships", {}) ?? {};
+  const userCache = allMemberships[telegramUserId] ?? {};
+  function channelCacheKey(ch) {
+    const cid = (ch.chatId || ch.username || ch.id || "").trim();
+    return cid.toLowerCase();
+  }
+  function isCacheValid(entry) {
+    if (!entry?.is_verified || !entry?.verified_at) return false;
+    const vt = new Date(entry.verified_at).getTime();
+    return Date.now() < vt + CACHE_TTL_HOURS * 36e5;
+  }
   const results = await Promise.all(enabled.map(async (ch) => {
-    const chatId = (ch.chatId || ch.username || "").trim();
-    const entry = { title: ch.name, channelId: chatId || "(none \u2014 private invite link)", inviteUrl: ch.url || "", enabled: true };
-    if (!chatId) {
+    const rawChatId = (ch.chatId || ch.username || "").trim();
+    const cacheKey = channelCacheKey(ch);
+    const cached = userCache[cacheKey] ?? null;
+    const entry = {
+      title: ch.name,
+      channelId: rawChatId || "(none \u2014 no chatId configured)",
+      inviteUrl: ch.url || "",
+      enabled: true,
+      // Cache info
+      savedStatus: cached?.membership_status ?? null,
+      isVerified: cached?.is_verified ?? false,
+      verifiedAt: cached?.verified_at ?? null,
+      lastCheckedAt: cached?.last_checked_at ?? null,
+      cacheValid: cached ? isCacheValid(cached) : false
+    };
+    if (!rawChatId) {
       entry.botCanAccess = null;
-      entry.memberStatus = "unverifiable (no chatId)";
+      entry.telegramStatus = null;
+      entry.configError = "No chatId configured \u2014 getChatMember cannot be called";
       return entry;
     }
-    const normalized = chatId.startsWith("-") || chatId.startsWith("+") || chatId.startsWith("@") ? chatId : `@${chatId}`;
+    const normalized = rawChatId.startsWith("-") || rawChatId.startsWith("+") || rawChatId.startsWith("@") ? rawChatId : `@${rawChatId}`;
     try {
       const chatResp = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getChat?chat_id=${encodeURIComponent(normalized)}`);
       const chatData = await chatResp.json();
       entry.botCanAccess = chatData.ok;
       if (!chatData.ok) {
-        entry.memberStatus = "error: " + (chatData.description ?? "cannot access channel");
+        entry.telegramStatus = null;
+        entry.apiError = chatData.description ?? "cannot access channel";
         return entry;
       }
       const mResp = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getChatMember?chat_id=${encodeURIComponent(normalized)}&user_id=${telegramUserId}`);
       const mData = await mResp.json();
       if (mData.ok) {
-        entry.memberStatus = mData.result.status;
+        entry.telegramStatus = mData.result.status;
         if (mData.result.status === "restricted") entry.is_member = mData.result.is_member ?? false;
       } else {
-        entry.memberStatus = "error: " + (mData.description ?? "getChatMember failed");
+        entry.telegramStatus = null;
+        entry.apiError = mData.description ?? "getChatMember failed";
         entry.botCanAccess = false;
       }
     } catch (e) {
       entry.botCanAccess = false;
-      entry.memberStatus = "error: " + (e?.message ?? "network");
+      entry.telegramStatus = null;
+      entry.apiError = e?.message ?? "network error";
     }
     return entry;
   }));
-  const allJoined = results.every((r) => {
-    if (!r.channelId || r.channelId.includes("none")) return true;
-    if (r.memberStatus === "restricted") return r.is_member === true;
-    return JOINED.has(r.memberStatus);
-  });
-  const missingCount = results.filter((r) => {
+  const JOINED_CHECK = (r) => {
     if (!r.channelId || r.channelId.includes("none")) return false;
-    if (r.memberStatus === "restricted") return !(r.is_member === true);
-    return !JOINED.has(r.memberStatus);
-  }).length;
-  res.json({ requiredChannels: results, allJoined, missingCount });
+    if (r.telegramStatus === "restricted") return r.is_member === true;
+    return JOINED.has(r.telegramStatus);
+  };
+  const allJoined = results.every(JOINED_CHECK);
+  const missingCount = results.filter((r) => !JOINED_CHECK(r)).length;
+  res.json({ telegramUserId, channels: results, allJoined, missingCount });
 });
 router2.get("/bot/check-channel/:channelId", requireAuth, async (req, res) => {
   if (!TG_TOKEN) {

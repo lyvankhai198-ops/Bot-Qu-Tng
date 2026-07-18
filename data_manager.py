@@ -982,6 +982,87 @@ def get_required_channels() -> list:
 def save_required_channels(channels: list):
     save("required_channels", channels)
 
+# ─── Channel Membership Cache ─────────────────────────────────────────────────
+# Persisted in data/user_channel_memberships.json
+# Schema per entry:
+#   { id, telegram_user_id, channel_id, membership_status,
+#     is_verified, verified_at, last_checked_at, created_at, updated_at }
+
+MEMBERSHIP_CACHE_TTL_HOURS = 6
+
+def channel_cache_key(ch: dict) -> str:
+    """Stable cache key for a channel — uses chatId, then username, then id."""
+    cid = (ch.get("chatId") or ch.get("username") or ch.get("id") or "").strip()
+    return cid.lower() if cid else ""
+
+def get_user_memberships(user_id: int) -> dict:
+    """Returns {channel_key: record} for a user."""
+    return load("user_channel_memberships", {}).get(str(user_id), {})
+
+def get_all_memberships() -> dict:
+    """Full user_channel_memberships data."""
+    return load("user_channel_memberships", {})
+
+def set_membership_verified(user_id: int, channel_key: str, status: str) -> None:
+    """Record a successful getChatMember verification for user+channel."""
+    memberships = load("user_channel_memberships", {})
+    uid = str(user_id)
+    if uid not in memberships:
+        memberships[uid] = {}
+    now = datetime.now().isoformat()
+    existing = memberships[uid].get(channel_key, {})
+    memberships[uid][channel_key] = {
+        "id": existing.get("id") or str(uuid.uuid4())[:12],
+        "telegram_user_id": str(user_id),
+        "channel_id": channel_key,
+        "membership_status": status,
+        "is_verified": True,
+        "verified_at": now,
+        "last_checked_at": now,
+        "created_at": existing.get("created_at", now),
+        "updated_at": now,
+    }
+    save("user_channel_memberships", memberships)
+
+def set_membership_left(user_id: int, channel_key: str, status: str = "left") -> None:
+    """Record that a user is NOT a member (left/kicked confirmed by getChatMember)."""
+    memberships = load("user_channel_memberships", {})
+    uid = str(user_id)
+    if uid not in memberships:
+        memberships[uid] = {}
+    now = datetime.now().isoformat()
+    existing = memberships[uid].get(channel_key, {})
+    memberships[uid][channel_key] = {
+        "id": existing.get("id") or str(uuid.uuid4())[:12],
+        "telegram_user_id": str(user_id),
+        "channel_id": channel_key,
+        "membership_status": status,
+        "is_verified": False,
+        "verified_at": existing.get("verified_at"),   # preserve last good timestamp
+        "last_checked_at": now,
+        "created_at": existing.get("created_at", now),
+        "updated_at": now,
+    }
+    save("user_channel_memberships", memberships)
+
+def is_membership_cache_valid(user_id: int, channel_key: str,
+                               ttl_hours: int = MEMBERSHIP_CACHE_TTL_HOURS) -> bool:
+    """True if the user's cache entry for channel_key is verified and within TTL."""
+    if not channel_key:
+        return False
+    memberships = load("user_channel_memberships", {})
+    entry = memberships.get(str(user_id), {}).get(channel_key)
+    if not entry or not entry.get("is_verified"):
+        return False
+    verified_at = entry.get("verified_at")
+    if not verified_at:
+        return False
+    try:
+        vt = datetime.fromisoformat(verified_at)
+        return datetime.now() < vt + timedelta(hours=ttl_hours)
+    except Exception:
+        return False
+
 # ─── Logs ──────────────────────────────────────────────────────────────────
 
 def add_log(action: str, user: str = "", admin: str = ""):

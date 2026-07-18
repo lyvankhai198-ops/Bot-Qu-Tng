@@ -1,0 +1,331 @@
+SỬA CƠ CHẾ XÁC MINH THAM GIA KÊNH CHO CHÍNH XÁC VÀ KHÔNG HIỂN LẠI VỚI NGƯỜI ĐÃ THAM GIA
+
+Hiện tại cần bảo đảm:
+
+1. Người chưa tham gia kênh không thể giả vờ bấm “Tôi đã tham gia” để nhận quà.
+2. Người đã tham gia rồi thì những lần bấm “Nhận Quà” sau không phải thấy lại màn hình yêu cầu tham gia kênh.
+3. Nếu người dùng rời kênh sau đó thì hệ thống phải phát hiện và yêu cầu tham gia lại.
+
+LƯU Ý:
+Chỉ sửa logic xác minh thành viên.
+Không reset website, không xóa dữ liệu, không thay đổi cài đặt hiện có.
+
+--------------------------------------------------
+1. XÁC MINH BẰNG TELEGRAM API
+--------------------------------------------------
+
+Không được tin vào việc người dùng chỉ bấm nút “✅ Tôi đã tham gia”.
+
+Khi họ bấm nút này, backend phải gọi thật:
+
+getChatMember(channel_id, telegram_user_id)
+
+Chỉ xác minh thành công khi Telegram trả trạng thái:
+
+- member
+- administrator
+- creator
+
+Nếu trạng thái là:
+
+- left
+- kicked
+
+thì chưa tham gia.
+
+Nếu trạng thái là restricted thì chỉ coi là đã tham gia khi:
+
+is_member = true
+
+Không được dùng:
+- session frontend
+- callback đã bấm
+- biến tạm
+- text người dùng gửi
+- cache cũ chưa xác minh
+
+để kết luận đã tham gia.
+
+--------------------------------------------------
+2. BOT PHẢI LÀ ADMIN KÊNH
+--------------------------------------------------
+
+Bot phải được thêm làm quản trị viên của kênh bắt buộc.
+
+Trong trang admin thêm nút:
+
+“Kiểm tra quyền bot”
+
+Hiển thị:
+
+- Tên kênh
+- Channel ID
+- Bot truy cập được hay không
+- Bot có phải admin hay không
+- getChatMember có hoạt động không
+
+Nếu bot không có quyền hoặc channel_id sai, báo:
+
+“Không thể xác minh thành viên. Vui lòng thêm bot làm quản trị viên của kênh và kiểm tra lại Channel ID.”
+
+Không được tự cho người dùng vượt qua khi Telegram API lỗi.
+
+--------------------------------------------------
+3. LƯU TRẠNG THÁI ĐÃ XÁC MINH
+--------------------------------------------------
+
+Tạo bảng hoặc bổ sung bảng:
+
+user_channel_memberships
+
+Gồm:
+
+- id
+- telegram_user_id
+- channel_id
+- membership_status
+- verified_at
+- last_checked_at
+- is_verified
+- created_at
+- updated_at
+
+Sau khi getChatMember xác minh thành công:
+
+- is_verified = true
+- membership_status = member hoặc administrator/creator
+- verified_at = thời gian hiện tại
+- last_checked_at = thời gian hiện tại
+
+Người đã xác minh rồi thì lần bấm “Nhận Quà” tiếp theo không hiển thị lại màn hình yêu cầu join nếu trạng thái vẫn còn hiệu lực.
+
+--------------------------------------------------
+4. KHÔNG KIỂM TRA LẠI QUÁ NHIỀU
+--------------------------------------------------
+
+Khi người dùng đã xác minh thành công:
+
+- Có thể dùng cache/database trong thời gian ngắn, ví dụ 6 giờ hoặc 24 giờ.
+- Trong thời gian đó, bấm “Nhận Quà” sẽ đi thẳng tới bước kiểm tra kho.
+
+Luồng:
+
+Nhận Quà
+→ kiểm tra membership cache
+→ nếu verified còn hiệu lực
+→ bỏ qua màn hình join
+→ kiểm tra kho quà
+
+Không gửi lại:
+
+“Bạn chưa tham gia kênh”
+
+cho người đã được xác minh còn hiệu lực.
+
+--------------------------------------------------
+5. PHÁT HIỆN NGƯỜI DÙNG ĐÃ RỜI KÊNH
+--------------------------------------------------
+
+Không được lưu verified vĩnh viễn.
+
+Phải kiểm tra lại membership trong các trường hợp:
+
+- Cache xác minh đã hết hạn
+- Người dùng bấm nhận quà sau nhiều giờ/ngày
+- Người dùng bấm “Tôi đã tham gia”
+- Admin yêu cầu kiểm tra lại
+- Telegram gửi update liên quan thành viên nếu bot nhận được
+
+Nếu kiểm tra lại thấy:
+
+status = left hoặc kicked
+
+thì:
+
+- is_verified = false
+- membership_status = left
+- Hiển thị lại yêu cầu tham gia kênh
+- Không cho nhận quà
+
+--------------------------------------------------
+6. THỨ TỰ XỬ LÝ NÚT NHẬN QUÀ
+--------------------------------------------------
+
+Luồng bắt buộc:
+
+1. Người dùng bấm Nhận Quà.
+2. Kiểm tra có kênh bắt buộc đang bật không.
+3. Kiểm tra membership đã xác minh còn hiệu lực không.
+4. Nếu chưa xác minh hoặc cache hết hạn:
+   - Gọi getChatMember.
+5. Nếu chưa tham gia:
+   - Hiển thị màn hình join.
+   - Không kiểm tra kho.
+6. Nếu đã tham gia:
+   - Lưu kết quả xác minh.
+   - Kiểm tra kho.
+7. Nếu kho còn:
+   - Phát quà.
+8. Nếu kho hết:
+   - Báo hết quà.
+
+--------------------------------------------------
+7. NÚT “TÔI ĐÃ THAM GIA”
+--------------------------------------------------
+
+Khi bấm:
+
+- Luôn gọi getChatMember thật.
+- Không dùng kết quả cũ.
+- Không chỉ đổi is_verified = true.
+
+Nếu chưa join:
+
+❌ Hệ thống chưa xác minh được bạn trong kênh.
+
+Vui lòng tham gia kênh rồi thử lại sau vài giây.
+
+Nếu đã join:
+
+✅ Xác minh thành công!
+
+Sau đó tiếp tục ngay:
+- kiểm tra kho
+- phát quà hoặc báo hết quà
+
+Không yêu cầu bấm Nhận Quà lần nữa.
+
+--------------------------------------------------
+8. NGƯỜI ĐÃ THAM GIA KHÔNG HIỂN LẠI
+--------------------------------------------------
+
+Nếu người dùng đã xác minh thành công và membership còn hiệu lực:
+
+Bấm Nhận Quà lần sau phải đi thẳng tới:
+
+- phát quà
+hoặc
+- thông báo kho hết
+
+Không được hiển thị lại:
+
+“Bạn chưa tham gia kênh”
+
+Không được hiển thị lại nút:
+
+- Tham gia kênh
+- Tôi đã tham gia
+
+trừ khi kiểm tra lại thấy họ đã rời kênh.
+
+--------------------------------------------------
+9. HỖ TRỢ NHIỀU KÊNH
+--------------------------------------------------
+
+Nếu có nhiều kênh bắt buộc:
+
+- Lưu trạng thái riêng cho từng channel_id.
+- Người dùng phải tham gia tất cả kênh đang bật.
+- Chỉ hiển thị các kênh còn thiếu.
+- Không hiển thị lại những kênh đã xác minh.
+
+Ví dụ:
+
+Kênh A: đã tham gia
+Kênh B: chưa tham gia
+
+Chỉ hiển thị nút join Kênh B.
+
+--------------------------------------------------
+10. CHỐNG GIẢ MẠO
+--------------------------------------------------
+
+Không cho phép callback cũ hoặc API trực tiếp bỏ qua xác minh.
+
+Endpoint phát quà phải tự kiểm tra membership ở backend trước khi phát.
+
+Không chỉ dựa vào giao diện Telegram.
+
+Kể cả người dùng:
+- gọi callback giả
+- gửi text giống nút
+- gọi API trực tiếp
+
+vẫn không được nhận quà nếu chưa xác minh.
+
+--------------------------------------------------
+11. ENDPOINT ADMIN DEBUG
+--------------------------------------------------
+
+Tạo endpoint:
+
+GET /api/giveaway/membership-debug/:telegramUserId
+
+Trả:
+
+{
+  "telegramUserId": "...",
+  "channels": [
+    {
+      "channelId": "...",
+      "title": "...",
+      "savedStatus": "member",
+      "isVerified": true,
+      "verifiedAt": "...",
+      "lastCheckedAt": "...",
+      "telegramStatus": "member",
+      "cacheValid": true
+    }
+  ],
+  "allJoined": true
+}
+
+Không trả bot token.
+
+--------------------------------------------------
+12. TEST BẮT BUỘC
+--------------------------------------------------
+
+Test bằng nick phụ:
+
+Test 1:
+- Chưa join.
+- Bấm Nhận Quà.
+- Phải hiện yêu cầu join.
+
+Test 2:
+- Chưa join.
+- Bấm Tôi đã tham gia.
+- Phải bị từ chối.
+
+Test 3:
+- Join kênh thật.
+- Bấm Tôi đã tham gia.
+- Phải xác minh thành công.
+
+Test 4:
+- Bấm Nhận Quà lần nữa.
+- Không được hiện lại màn hình join.
+
+Test 5:
+- Kho hết.
+- Người đã join chỉ thấy báo hết kho.
+
+Test 6:
+- Rời kênh.
+- Sau khi cache hết hạn hoặc kiểm tra lại, bấm Nhận Quà phải yêu cầu join lại.
+
+Test 7:
+- Restart bot.
+- Trạng thái đã xác minh vẫn còn trong database.
+
+Test 8:
+- Deploy code.
+- Không reset membership đã lưu.
+
+MỤC TIÊU CUỐI:
+
+- Không ai có thể nhận quà chỉ bằng cách bấm nút giả.
+- Xác minh phải dựa trên getChatMember của Telegram.
+- Người đã tham gia và đã xác minh thì lần sau không thấy lại yêu cầu join.
+- Người rời kênh phải bị phát hiện và khóa nhận quà.
