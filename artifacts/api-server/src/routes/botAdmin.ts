@@ -340,65 +340,157 @@ router.get("/bot/orders", requireAuth, (_req: any, res: any) => {
 router.post("/bot/orders", requireAuth, (req: any, res: any) => {
   const body = req.body ?? {};
   const orders: any = readJson("orders", {}) ?? {};
-  const orderId = "ORD" + crypto.randomUUID().slice(0, 6).toUpperCase();
-  const order = { ...body, orderId, createdAt: now() };
+  // Use provided orderCode as orderId if present, else auto-generate
+  const orderId = body.orderCode
+    ? String(body.orderCode).trim().toUpperCase()
+    : "ORD" + crypto.randomUUID().slice(0, 6).toUpperCase();
+  const { orderCode: _oc, ...rest } = body;
+  const order = { ...rest, orderId, createdAt: now() };
   orders[orderId] = order;
   writeJson("orders", orders);
+
+  // Also create an order_item entry if email is present
+  if (order.email) {
+    const orderItems: any = readJson("order_items", {}) ?? {};
+    if (!orderItems[orderId]) orderItems[orderId] = [];
+    const alreadyExists = (orderItems[orderId] as any[]).some(
+      (it: any) => it.email?.toLowerCase() === order.email.toLowerCase()
+    );
+    if (!alreadyExists) {
+      orderItems[orderId].push({
+        itemId:    crypto.randomUUID().slice(0, 8).toUpperCase(),
+        email:     order.email,
+        password:  order.password  ?? null,
+        twoFA:     order.twoFA     ?? null,
+        status:    order.status    ?? "active",
+        createdAt: now(),
+      });
+      writeJson("order_items", orderItems);
+    }
+  }
+
   addLog("CREATE_ORDER", orderId, "web-admin");
   res.json(order);
 });
 
 // ── POST /bot/orders/bulk ────────────────────────────────────────────────────
+// If `orderCode` is provided: creates ONE shared order + multiple order_items (new multi-account model).
+// Without `orderCode`: creates one order per account (legacy behavior, backward compat).
 router.post("/bot/orders/bulk", requireAuth, (req: any, res: any) => {
   const body = req.body ?? {};
-  const { productName, price, purchaseDate, expiryDate, warrantyExpiry, usagePeriod, warrantyPeriod, notes, accounts } = body;
+  const { productName, price, purchaseDate, expiryDate, warrantyExpiry, usagePeriod, warrantyPeriod, notes, accounts, orderCode, status, warrantyDays, customerName, paymentMethod } = body;
   if (!productName || !purchaseDate || !Array.isArray(accounts) || accounts.length === 0) {
     res.status(400).json({ ok: false, message: "productName, purchaseDate và accounts là bắt buộc" }); return;
   }
 
-  const orders: any = readJson("orders", {}) ?? {};
+  const orders: any     = readJson("orders", {}) ?? {};
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  const errors: { email: string; reason: string }[] = [];
+  let added = 0, skipped = 0;
+
+  if (orderCode) {
+    // ── NEW BEHAVIOR: one shared order + multiple items ──────────────────────
+    const sharedId = String(orderCode).trim().toUpperCase();
+
+    // Build set of all emails already in order_items (global dup check)
+    const existingItemEmails = new Set<string>();
+    for (const itemList of Object.values(orderItems) as any[][]) {
+      for (const it of itemList) {
+        if (it.email) existingItemEmails.add(it.email.toLowerCase());
+      }
+    }
+
+    // Create or update the shared order header
+    if (!orders[sharedId]) {
+      orders[sharedId] = {
+        orderId: sharedId,
+        productName,
+        price:          price          ?? null,
+        purchaseDate:   purchaseDate   ?? null,
+        expiryDate:     expiryDate     ?? null,
+        warrantyExpiry: warrantyExpiry ?? null,
+        warrantyDays:   warrantyDays   ?? null,
+        usagePeriod:    usagePeriod    ?? null,
+        warrantyPeriod: warrantyPeriod ?? null,
+        customerName:   customerName   ?? null,
+        paymentMethod:  paymentMethod  ?? null,
+        notes:          notes          ?? null,
+        status:         status         ?? "active",
+        quantity:       0,
+        createdAt:      now(),
+      };
+    }
+    if (!orderItems[sharedId]) orderItems[sharedId] = [];
+
+    for (const acc of accounts) {
+      const email: string = (acc.email ?? "").trim();
+      if (!email) { errors.push({ email: "(trống)", reason: "Thiếu email" }); skipped++; continue; }
+      if (existingItemEmails.has(email.toLowerCase())) {
+        errors.push({ email, reason: "Email đã tồn tại trong hệ thống" }); skipped++; continue;
+      }
+      orderItems[sharedId].push({
+        itemId:    crypto.randomUUID().slice(0, 8).toUpperCase(),
+        email,
+        password:  acc.password || null,
+        twoFA:     acc.twoFA    || null,
+        status:    "active",
+        createdAt: now(),
+      });
+      existingItemEmails.add(email.toLowerCase());
+      added++;
+    }
+
+    // Sync quantity on order header
+    orders[sharedId].quantity = orderItems[sharedId].length;
+    writeJson("orders", orders);
+    writeJson("order_items", orderItems);
+    addLog("BULK_CREATE_ORDERS", `orderCode=${sharedId} added=${added} skipped=${skipped}`, "web-admin");
+    return res.json({ added, skipped, errors, orderId: sharedId });
+  }
+
+  // ── LEGACY BEHAVIOR: one order per account ─────────────────────────────────
   const existingEmails = new Set(
     Object.values(orders).map((o: any) => (o.email ?? "").toLowerCase())
   );
 
-  const errors: { email: string; reason: string }[] = [];
-  let added = 0;
-  let skipped = 0;
-
   for (const acc of accounts) {
     const email: string = (acc.email ?? "").trim();
-    if (!email) {
-      errors.push({ email: "(trống)", reason: "Thiếu email" });
-      skipped++;
-      continue;
-    }
+    if (!email) { errors.push({ email: "(trống)", reason: "Thiếu email" }); skipped++; continue; }
     if (existingEmails.has(email.toLowerCase())) {
-      errors.push({ email, reason: "Email đã tồn tại trong hệ thống" });
-      skipped++;
-      continue;
+      errors.push({ email, reason: "Email đã tồn tại trong hệ thống" }); skipped++; continue;
     }
     const orderId = "ORD" + crypto.randomUUID().slice(0, 6).toUpperCase();
     orders[orderId] = {
-      orderId,
-      email,
-      password: acc.password || null,
-      twoFA: acc.twoFA || null,
+      orderId, email,
+      password:       acc.password    || null,
+      twoFA:          acc.twoFA       || null,
       productName,
-      price: price ?? null,
-      purchaseDate: purchaseDate ?? null,
-      expiryDate: expiryDate ?? null,
+      price:          price          ?? null,
+      purchaseDate:   purchaseDate   ?? null,
+      expiryDate:     expiryDate     ?? null,
       warrantyExpiry: warrantyExpiry ?? null,
-      usagePeriod: usagePeriod ?? null,
+      usagePeriod:    usagePeriod    ?? null,
       warrantyPeriod: warrantyPeriod ?? null,
-      notes: notes ?? null,
+      notes:          notes          ?? null,
       status: "active",
       createdAt: now(),
     };
+    // Also create item
+    if (!orderItems[orderId]) orderItems[orderId] = [];
+    orderItems[orderId].push({
+      itemId:    crypto.randomUUID().slice(0, 8).toUpperCase(),
+      email,
+      password:  acc.password || null,
+      twoFA:     acc.twoFA    || null,
+      status:    "active",
+      createdAt: now(),
+    });
     existingEmails.add(email.toLowerCase());
     added++;
   }
 
   writeJson("orders", orders);
+  writeJson("order_items", orderItems);
   addLog("BULK_CREATE_ORDERS", `added=${added} skipped=${skipped}`, "web-admin");
   res.json({ added, skipped, errors });
 });
@@ -741,6 +833,80 @@ router.post("/bot/warranty/:id/reject", requireAuth, async (req: any, res: any) 
   await sendTelegramMessage(req_.userId, msg);
   addLog("WARRANTY_REJECT", `${id}: ${reason}`, "web-admin");
   res.json({ ok: true, message: "Đã từ chối" });
+});
+
+// ── GET /orders/lookup?query=... ─────────────────────────────────────────────
+router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
+  const query = String(req.query.query ?? "").trim();
+  if (!query) { res.status(400).json({ found: false, error: "query là bắt buộc" }); return; }
+
+  const orders: any     = readJson("orders", {}) ?? {};
+  const orderItems: any = readJson("order_items", {}) ?? {};
+
+  // Normalize: strip "email/tài khoản: " label prefix
+  const normalized = query.replace(/^(?:email\s*\/?\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*:\s*/i, "").trim();
+
+  // 1. Order ID match
+  if (orders[normalized]) {
+    const items = orderItems[normalized] ?? [];
+    return res.json({ found: true, lookupType: "order_id", order: orders[normalized], items });
+  }
+
+  // 2. Email match in order_items
+  const emailLower = normalized.toLowerCase();
+  for (const [orderId, itemList] of Object.entries(orderItems) as [string, any[]][]) {
+    for (const item of itemList) {
+      if (item.email?.toLowerCase() === emailLower) {
+        return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null, items: itemList });
+      }
+    }
+  }
+
+  // 3. Fallback: email match in orders.json (old single-account structure)
+  for (const order of Object.values(orders) as any[]) {
+    if (order.email?.toLowerCase() === emailLower) {
+      return res.json({ found: true, lookupType: "email", order, items: [] });
+    }
+  }
+
+  return res.json({ found: false });
+});
+
+// ── GET /bot/orders/:orderId/items ───────────────────────────────────────────
+router.get("/bot/orders/:orderId/items", requireAuth, (req: any, res: any) => {
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  res.json(orderItems[req.params.orderId] ?? []);
+});
+
+// ── POST /bot/orders/:orderId/items ──────────────────────────────────────────
+router.post("/bot/orders/:orderId/items", requireAuth, (req: any, res: any) => {
+  const { orderId } = req.params;
+  const orders: any = readJson("orders", {}) ?? {};
+  if (!orders[orderId]) { res.status(404).json({ ok: false, message: "Không tìm thấy đơn hàng" }); return; }
+  const { email, password, twoFA } = req.body ?? {};
+  if (!email) { res.status(400).json({ ok: false, message: "email là bắt buộc" }); return; }
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  if (!orderItems[orderId]) orderItems[orderId] = [];
+  const itemId = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const item = { itemId, email, password: password ?? null, twoFA: twoFA ?? null, status: "active", createdAt: now() };
+  orderItems[orderId].push(item);
+  writeJson("order_items", orderItems);
+  addLog("CREATE_ORDER_ITEM", `${orderId}/${itemId}`, "web-admin");
+  res.json({ ok: true, item });
+});
+
+// ── PUT /bot/orders/:orderId/items/:itemId ───────────────────────────────────
+router.put("/bot/orders/:orderId/items/:itemId", requireAuth, (req: any, res: any) => {
+  const { orderId, itemId } = req.params;
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  const items: any[] = orderItems[orderId] ?? [];
+  const idx = items.findIndex((it: any) => it.itemId === itemId);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy item" }); return; }
+  items[idx] = { ...items[idx], ...req.body, itemId, updatedAt: now() };
+  orderItems[orderId] = items;
+  writeJson("order_items", orderItems);
+  addLog("UPDATE_ORDER_ITEM", `${orderId}/${itemId}`, "web-admin");
+  res.json({ ok: true, item: items[idx] });
 });
 
 // ── GET /bot/intro ───────────────────────────────────────────────────────────

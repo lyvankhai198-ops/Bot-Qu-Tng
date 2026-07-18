@@ -326,6 +326,112 @@ def find_order(query: str):
     """Find by order ID or email."""
     return get_order(query) or find_order_by_email(query)
 
+# ─── Order Items ───────────────────────────────────────────────────────────
+
+def get_all_order_items() -> dict:
+    """Returns {orderId: [item, ...]}"""
+    return load("order_items", {})
+
+def get_order_items(order_id: str) -> list:
+    """Returns list of items for an order."""
+    return load("order_items", {}).get(order_id, [])
+
+def add_order_item(order_id: str, item: dict) -> str:
+    """Add an item to an order. Returns itemId."""
+    all_items = load("order_items", {})
+    if order_id not in all_items:
+        all_items[order_id] = []
+    item_id = str(uuid.uuid4())[:8].upper()
+    item = {**item, "itemId": item_id}
+    item.setdefault("createdAt", datetime.now().isoformat())
+    item.setdefault("status", "active")
+    all_items[order_id].append(item)
+    save("order_items", all_items)
+    return item_id
+
+def update_order_item(order_id: str, item_id: str, fields: dict) -> bool:
+    """Update fields on an existing item."""
+    all_items = load("order_items", {})
+    items = all_items.get(order_id, [])
+    for i, item in enumerate(items):
+        if item.get("itemId") == item_id:
+            items[i] = {**item, **fields, "updatedAt": datetime.now().isoformat()}
+            all_items[order_id] = items
+            save("order_items", all_items)
+            return True
+    return False
+
+def find_item_by_email(email: str):
+    """Find the first (order, item) pair where item.email matches. Returns (order, item)."""
+    email_lower = email.lower()
+    orders = load("orders", {})
+    all_items = load("order_items", {})
+    for order_id, item_list in all_items.items():
+        for item in item_list:
+            if item.get("email", "").lower() == email_lower:
+                return orders.get(order_id), item
+    return None, None
+
+def find_order_with_items(query: str) -> dict:
+    """
+    Unified lookup by order ID or email.
+    Returns:
+      { order: dict|None, items: list, lookupType: 'order_id'|'email'|None, matchedItem: dict|None }
+    When found by email, returns ALL items for that order (not just the matched one).
+    """
+    query = query.strip()
+    orders = load("orders", {})
+    all_items = load("order_items", {})
+
+    # 1. Order ID match
+    if query in orders:
+        items = all_items.get(query, [])
+        return {"order": orders[query], "items": items, "lookupType": "order_id", "matchedItem": None}
+
+    # 2. Email match in order_items
+    email_lower = query.lower()
+    for order_id, item_list in all_items.items():
+        for item in item_list:
+            if item.get("email", "").lower() == email_lower:
+                # Return ALL items for this order
+                return {"order": orders.get(order_id), "items": item_list, "lookupType": "email", "matchedItem": item}
+
+    # 3. Fallback: email in orders.json (old single-account structure without items)
+    for order in orders.values():
+        if order.get("email", "").lower() == email_lower:
+            return {"order": order, "items": [], "lookupType": "email", "matchedItem": None}
+
+    return {"order": None, "items": [], "lookupType": None, "matchedItem": None}
+
+def migrate_to_order_items() -> int:
+    """
+    One-time migration: for each order in orders.json without items yet,
+    create an order_item from order.email/password/twoFA.
+    Returns number of orders migrated.
+    """
+    orders = load("orders", {})
+    all_items = load("order_items", {})
+    migrated = 0
+    for order_id, order in orders.items():
+        if order_id in all_items:
+            continue  # already has items
+        email = order.get("email", "")
+        if not email:
+            continue  # skip orders without email
+        item_id = str(uuid.uuid4())[:8].upper()
+        all_items[order_id] = [{
+            "itemId": item_id,
+            "email": email,
+            "password": order.get("password"),
+            "twoFA": order.get("twoFA"),
+            "status": order.get("status", "active"),
+            "createdAt": order.get("createdAt", datetime.now().isoformat()),
+        }]
+        migrated += 1
+    if migrated:
+        save("order_items", all_items)
+    return migrated
+
 # ─── Warranty Requests ────────────────────────────────────────────────────
 
 def get_warranty_requests() -> list:

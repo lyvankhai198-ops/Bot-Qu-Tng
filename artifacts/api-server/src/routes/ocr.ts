@@ -263,6 +263,7 @@ interface ParsedOrder {
   purchaseDate:  OcrField<string | null>;
   paymentMethod: OcrField<string | null>;
   warrantyDays:  OcrField<number | null>;
+  orderCode:     OcrField<string | null>;  // mã đơn hàng (ORD…) if visible in image
 }
 
 function parseRules(text: string, existingProducts: string[] = []): ParsedOrder {
@@ -278,6 +279,7 @@ function parseRules(text: string, existingProducts: string[] = []): ParsedOrder 
     purchaseDate:  { value: null,        confidence: "low" },
     paymentMethod: { value: null,        confidence: "low" },
     warrantyDays:  { value: null,        confidence: "low" },
+    orderCode:     { value: null,        confidence: "low" },
   };
 
   // Pre-stitch email fragments before splitting into lines
@@ -388,6 +390,18 @@ function parseRules(text: string, existingProducts: string[] = []): ParsedOrder 
     if (wd !== null) result.warrantyDays = { value: wd, confidence: "high" };
   }
 
+  // ── Mã đơn hàng ───────────────────────────────────────────────────────────
+  const orderCodeRaw = getValueAfterLabel(lines, [
+    "mã đơn", "ma don", "mã order", "order code", "order id", "order_code", "order_id", "mã đơn hàng",
+  ]);
+  if (orderCodeRaw && orderCodeRaw !== "-") {
+    result.orderCode = { value: orderCodeRaw.toUpperCase().replace(/\s+/g, ""), confidence: "high" };
+  } else {
+    // Fallback: scan for ORD-prefixed codes in full text
+    const codeMatch = stitched.match(/\b(ORD[A-Z0-9]{4,})\b/i);
+    if (codeMatch) result.orderCode = { value: codeMatch[1].toUpperCase(), confidence: "medium" };
+  }
+
   return result;
 }
 
@@ -404,9 +418,11 @@ async function loadExistingProducts(): Promise<string[]> {
     const { readFile: rf } = await import("node:fs/promises");
     const { join: j }      = await import("node:path");
     const raw  = await rf(j(process.cwd(), "../../data/orders.json"), "utf8");
-    const orders: any[] = JSON.parse(raw);
+    const parsed: any = JSON.parse(raw);
+    // orders.json is a dict {orderId: order}, not an array
+    const items = Array.isArray(parsed) ? parsed : Object.values(parsed);
     const names = new Set<string>();
-    orders.forEach(o => { if (o.productName) names.add(o.productName); });
+    (items as any[]).forEach(o => { if (o.productName) names.add(o.productName); });
     return Array.from(names);
   } catch { return []; }
 }

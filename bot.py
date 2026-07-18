@@ -3,6 +3,7 @@
 # Support = order lookup + báo lỗi. No admin contact info exposed.
 
 import os
+import re
 import logging
 import time
 import json as _json
@@ -66,6 +67,24 @@ def order_inline(L: str, order_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton(t(L, "btn_report_issue"), callback_data=f"order:report:{order_id}"),
         InlineKeyboardButton(t(L, "btn_back_menu"),    callback_data="order:back"),
+    ]])
+
+def order_inline_multi(L: str, order_id: str, n: int) -> InlineKeyboardMarkup:
+    vi = L == "vi"
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            f"📋 {'Báo lỗi tất cả' if vi else 'Report all'} ({n})",
+            callback_data=f"order:report_all:{order_id}",
+        ),
+        InlineKeyboardButton(
+            f"🔘 {'Chọn tài khoản' if vi else 'Pick accounts'}",
+            callback_data=f"order:pick_items:{order_id}",
+        ),
+    ], [
+        InlineKeyboardButton(
+            f"🔙 {'Quay lại' if vi else 'Back'}",
+            callback_data="order:back",
+        ),
     ]])
 
 # ─── Order display helper ─────────────────────────────────────────────────────
@@ -133,6 +152,67 @@ def _fmt_order(L: str, order: dict, settings: dict) -> str:
         refund      = refund_str,
         status      = status_str,
     )
+
+def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
+    """Format an order with multiple accounts (no passwords shown)."""
+    data = db.calc_order_display(order, settings)
+    vi = L == "vi"
+
+    remaining = data.get("_remaining_days")
+    warranty_ok = data.get("_warranty_ok")
+    refund_amt = data.get("_refund_amount")
+
+    if remaining is None:
+        remaining_str = "N/A"
+    elif remaining == 0:
+        remaining_str = t(L, "expired")
+    else:
+        remaining_str = t(L, "days_left", n=remaining)
+
+    warranty_str = "N/A" if warranty_ok is None else (t(L, "warranty_valid") if warranty_ok else t(L, "warranty_expired"))
+
+    if refund_amt is None:
+        refund_str = "N/A"
+    elif isinstance(refund_amt, str):
+        refund_str = refund_amt
+    else:
+        refund_str = f"~{_fmt_price(refund_amt, L)}"
+
+    price = order.get("price", 0) or 0
+    price_str = _fmt_price(int(price), L) if price else "N/A"
+
+    status_map = {
+        "active":    t(L, "status_active"),
+        "warranted": t(L, "status_warranted"),
+        "refunded":  t(L, "status_refunded"),
+        "expired":   t(L, "status_expired"),
+    }
+    status_str = status_map.get(order.get("status", "active"), order.get("status", ""))
+    warranty_exp = (order.get("warrantyExpiry") or order.get("warrantyDate") or "")[:10] or "N/A"
+
+    header = "📦 THÔNG TIN ĐƠN HÀNG" if vi else "📦 ORDER INFORMATION"
+    lines = [f"<b>{header}</b>\n"]
+    lines.append(f"🏷 {'Mã đơn' if vi else 'Order'}: <code>{order.get('orderId','')}</code>")
+    lines.append(f"📦 {'Sản phẩm' if vi else 'Product'}: <b>{order.get('productName','')}</b>")
+    if order.get("customerName"):
+        lines.append(f"👤 {'Khách hàng' if vi else 'Customer'}: {order.get('customerName','')}")
+    lines.append(f"📅 {'Ngày mua' if vi else 'Purchase'}: {(order.get('purchaseDate','') or '')[:10]}")
+    lines.append(f"📅 {'Ngày hết hạn' if vi else 'Expiry'}: {(order.get('expiryDate','') or '')[:10]}")
+    lines.append(f"⌛ {'Còn lại' if vi else 'Remaining'}: {remaining_str}")
+    lines.append(f"🛡 {'Bảo hành đến' if vi else 'Warranty until'}: {warranty_exp}")
+    lines.append(f"✅ {'Trạng thái BH' if vi else 'Warranty'}: {warranty_str}")
+    lines.append(f"💰 {'Giá mua' if vi else 'Price'}: {price_str}")
+    lines.append(f"💵 {'Hoàn dự kiến' if vi else 'Est. Refund'}: {refund_str}")
+    lines.append(f"📊 {'Trạng thái' if vi else 'Status'}: {status_str}")
+    lines.append(f"📦 {'Số lượng' if vi else 'Quantity'}: <b>{len(items)}</b>")
+    lines.append(f"\n<b>{'Danh sách tài khoản:' if vi else 'Account list:'}</b>")
+    for i, item in enumerate(items, 1):
+        email = item.get("email", "")
+        item_status = item.get("status", "active")
+        icon = "✅" if item_status == "active" else ("⚠️" if item_status in ("pending", "processing") else "❌")
+        lines.append(f"  {i}. {icon} <code>{email}</code>")
+
+    return "\n".join(lines)
 
 # ─── /start ───────────────────────────────────────────────────────────────────
 
@@ -527,12 +607,16 @@ async def handle_check_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     L = lang(user.id)
-    query_text = update.message.text.strip()
+    # Normalize: strip "email/tài khoản: " prefix if user copies it from a message
+    query_text = re.sub(
+        r'^(?:email\s*/\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*:\s*',
+        '', update.message.text.strip(), flags=re.IGNORECASE,
+    ).strip()
 
-    order = db.find_order(query_text)
+    result = db.find_order_with_items(query_text)
     db.clear_user_state(user.id, "conv_state")
 
-    if not order:
+    if not result["order"]:
         await update.message.reply_text(
             t(L, "order_not_found"),
             parse_mode=ParseMode.HTML,
@@ -540,15 +624,30 @@ async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
+    order    = result["order"]
+    items    = result["items"]
     settings = db.get_settings()
-    msg = _fmt_order(L, order, settings)
-    db.set_user_state(user.id, "_report_order_id", order["orderId"])
+    order_id = order["orderId"]
+    db.set_user_state(user.id, "_report_order_id", order_id)
 
-    await update.message.reply_text(
-        msg,
-        parse_mode=ParseMode.HTML,
-        reply_markup=order_inline(L, order["orderId"]),
-    )
+    if len(items) > 1:
+        # Multi-account order: show compact header + email list
+        msg = _fmt_order_multi(L, order, items, settings)
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=order_inline_multi(L, order_id, len(items)),
+        )
+    else:
+        # Single or legacy order (0 items in order_items): standard display
+        if items and not order.get("email"):
+            order = {**order, "email": items[0].get("email", "")}
+        msg = _fmt_order(L, order, settings)
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=order_inline(L, order_id),
+        )
 
 # ─── Báo lỗi input ────────────────────────────────────────────────────────────
 
@@ -605,6 +704,71 @@ async def callback_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode=ParseMode.HTML,
             reply_markup=back_keyboard(user.id),
         )
+        return
+
+    if data.startswith("order:report_all:"):
+        order_id = data[len("order:report_all:"):]
+        items = db.get_order_items(order_id)
+        if not items:
+            order = db.get_order(order_id)
+            if order and order.get("email"):
+                items = [{"email": order["email"]}]
+        if not items:
+            await query.answer(
+                "Không tìm thấy tài khoản." if L == "vi" else "No accounts found.",
+                show_alert=True,
+            )
+            return
+        order = db.get_order(order_id)
+        product_name = order.get("productName", "") if order else ""
+        found = [
+            {"email": it.get("email", ""), "orderId": order_id, "productName": product_name}
+            for it in items
+        ]
+        db.set_user_state(user.id, "_mw_found", _json.dumps(found, ensure_ascii=False))
+        db.set_user_state(user.id, "_mw_sel", ",".join(str(i) for i in range(len(found))))
+        db.set_user_state(user.id, "conv_state", "support_multi_desc")
+        await query.message.reply_text(
+            t(L, "support_multi_desc_ask"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=back_keyboard(user.id),
+        )
+        return
+
+    if data.startswith("order:pick_items:"):
+        order_id = data[len("order:pick_items:"):]
+        items = db.get_order_items(order_id)
+        if not items:
+            order = db.get_order(order_id)
+            if order and order.get("email"):
+                items = [{"email": order["email"]}]
+        if not items:
+            await query.answer(
+                "Không tìm thấy tài khoản." if L == "vi" else "No accounts found.",
+                show_alert=True,
+            )
+            return
+        order = db.get_order(order_id)
+        product_name = order.get("productName", "") if order else ""
+        found = [
+            {"email": it.get("email", ""), "orderId": order_id, "productName": product_name}
+            for it in items
+        ]
+        db.set_user_state(user.id, "_mw_found", _json.dumps(found, ensure_ascii=False))
+        db.set_user_state(user.id, "_mw_sel", "")  # none selected initially
+        try:
+            await query.edit_message_text(
+                _mw_select_text(L, found, set()),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_mw_select_kb(L, found, set()),
+            )
+        except Exception:
+            await query.message.reply_text(
+                _mw_select_text(L, found, set()),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_mw_select_kb(L, found, set()),
+            )
+        return
 
 # ─── 🛍 Kênh Bán Hàng ────────────────────────────────────────────────────────
 
@@ -1121,10 +1285,13 @@ def main():
     # Startup: clear stale locks from crashed mid-send, migrate old ticket fields
     locked = db.reset_stale_reminder_locks()
     migrated = db.migrate_warranty_reminder_fields()
+    migrated_items = db.migrate_to_order_items()
     if locked:
         logger.info(f"Cleared {locked} stale reminderProcessing lock(s) on startup")
     if migrated:
         logger.info(f"Migrated {migrated} old warranty ticket(s) to new reminder schema (reminderEnabled=False)")
+    if migrated_items:
+        logger.info(f"Migrated {migrated_items} order(s) to order_items schema")
 
     Thread(target=warranty_reminder_worker, daemon=True).start()
     logger.info("Warranty reminder worker started.")

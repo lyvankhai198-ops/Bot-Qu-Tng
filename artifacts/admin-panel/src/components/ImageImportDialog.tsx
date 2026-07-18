@@ -47,6 +47,7 @@ interface OrderDraftFields {
   status: string
   paymentMethod: string
   notes: string
+  orderCode: string   // mã đơn hàng (optional, groups accounts under one shared order)
 }
 
 interface OrderDraft extends OrderDraftFields {
@@ -136,6 +137,7 @@ function defaultDraft(fileItem: FileItem): OrderDraft {
     email: "", password: "", twoFA: "", productName: "",
     price: "", customerName: "", purchaseDate: "",
     warrantyDays: "0", status: "active", paymentMethod: "", notes: "",
+    orderCode: "",
     confidence: {},
     dupStatus: "none",
   }
@@ -275,6 +277,8 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
         confMap.price       = ex.price?.confidence ?? "low"
         draft.warrantyDays  = ex.warrantyDays?.value != null ? String(ex.warrantyDays.value) : "0"
         confMap.warrantyDays = ex.warrantyDays?.confidence ?? "low"
+        draft.orderCode     = ex.orderCode?.value ? String(ex.orderCode.value) : ""
+        confMap.orderCode   = ex.orderCode?.confidence ?? "low"
 
         // Product matching
         const rawProd     = ex.productName?.value ?? ""
@@ -325,49 +329,112 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
     const token = localStorage.getItem("admin_token") ?? ""
     let added = 0, updated = 0, skipped = 0, errors = 0
 
+    // Collect valid drafts, handle skips & invalid upfront
+    const newByCode = new Map<string, OrderDraft[]>()
+
     for (const draft of drafts) {
-      if (draft.dupStatus === "skip")                { skipped++; continue }
-      if (!isDraftValid(draft))                      { errors++;  continue }
+      if (draft.dupStatus === "skip") { skipped++; continue }
+      if (!isDraftValid(draft))       { errors++;  continue }
 
-      const wdays  = parseInt(draft.warrantyDays) || 0
-      const expiry = calcExpiry(draft.purchaseDate, wdays)
-
-      const body: Record<string, any> = {
-        email:        draft.email,
-        productName:  draft.productName,
-        price:        parseInt(draft.price) || 0,
-        warrantyDays: wdays,
-        status:       draft.status || "active",
-      }
-      if (draft.password)      body.password      = draft.password
-      if (draft.twoFA)         body.twoFA         = draft.twoFA
-      if (draft.customerName)  body.customerName  = draft.customerName
-      if (draft.purchaseDate)  body.purchaseDate  = draft.purchaseDate
-      if (expiry)              body.expiryDate    = expiry
-      if (draft.paymentMethod) body.paymentMethod = draft.paymentMethod
-      if (draft.notes)         body.notes         = draft.notes
-
-      try {
-        if (draft.dupStatus === "update") {
+      if (draft.dupStatus === "update") {
+        // Handle update individually (PUT)
+        const wdays  = parseInt(draft.warrantyDays) || 0
+        const expiry = calcExpiry(draft.purchaseDate, wdays)
+        const body: Record<string, any> = {
+          email: draft.email, productName: draft.productName,
+          price: parseInt(draft.price) || 0, warrantyDays: wdays, status: draft.status || "active",
+        }
+        if (draft.password)      body.password      = draft.password
+        if (draft.twoFA)         body.twoFA         = draft.twoFA
+        if (draft.customerName)  body.customerName  = draft.customerName
+        if (draft.purchaseDate)  body.purchaseDate  = draft.purchaseDate
+        if (expiry)              body.expiryDate    = expiry
+        if (draft.paymentMethod) body.paymentMethod = draft.paymentMethod
+        if (draft.notes)         body.notes         = draft.notes
+        try {
           const existing = existingOrders.find(o => o.email?.toLowerCase() === draft.email.toLowerCase())
           if (!existing) { errors++; continue }
           const r = await fetch(`/api/bot/orders/${existing.orderId}`, {
-            method:  "PUT",
+            method: "PUT",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body:    JSON.stringify(body),
+            body: JSON.stringify(body),
           })
           if (!r.ok) throw new Error("Update failed")
           updated++
-        } else {
-          const r = await fetch("/api/bot/orders", {
-            method:  "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body:    JSON.stringify(body),
-          })
-          if (!r.ok) throw new Error("Create failed")
-          added++
+        } catch { errors++ }
+        continue
+      }
+
+      // New draft — group by orderCode (empty string = no code)
+      const code = draft.orderCode?.trim() ?? ""
+      if (!newByCode.has(code)) newByCode.set(code, [])
+      newByCode.get(code)!.push(draft)
+    }
+
+    // Process grouped new drafts
+    for (const [code, group] of newByCode) {
+      if (code && group.length > 1) {
+        // Grouped bulk: one shared order + one item per account
+        const rep   = group[0]
+        const wdays = parseInt(rep.warrantyDays) || 0
+        const expiry = calcExpiry(rep.purchaseDate, wdays)
+        const body: Record<string, any> = {
+          orderCode:   code,
+          productName: rep.productName,
+          price:       parseInt(rep.price) || 0,
+          warrantyDays: wdays,
+          purchaseDate: rep.purchaseDate,
+          status:      rep.status || "active",
+          accounts:    group.map(d => ({
+            email:    d.email,
+            ...(d.password ? { password: d.password } : {}),
+            ...(d.twoFA    ? { twoFA:    d.twoFA    } : {}),
+          })),
         }
-      } catch { errors++ }
+        if (expiry)              body.expiryDate    = expiry
+        if (rep.customerName)   body.customerName  = rep.customerName
+        if (rep.paymentMethod)  body.paymentMethod = rep.paymentMethod
+        if (rep.notes)          body.notes         = rep.notes
+        try {
+          const r = await fetch("/api/bot/orders/bulk", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+          })
+          const data = await r.json() as any
+          if (!r.ok) throw new Error(data.message || "Bulk create failed")
+          added  += data.added   ?? 0
+          skipped += data.skipped ?? 0
+          errors  += data.errors?.length ?? 0
+        } catch { errors += group.length }
+      } else {
+        // Individual order per draft
+        for (const draft of group) {
+          const wdays  = parseInt(draft.warrantyDays) || 0
+          const expiry = calcExpiry(draft.purchaseDate, wdays)
+          const body: Record<string, any> = {
+            email: draft.email, productName: draft.productName,
+            price: parseInt(draft.price) || 0, warrantyDays: wdays, status: draft.status || "active",
+          }
+          if (draft.password)      body.password      = draft.password
+          if (draft.twoFA)         body.twoFA         = draft.twoFA
+          if (draft.customerName)  body.customerName  = draft.customerName
+          if (draft.purchaseDate)  body.purchaseDate  = draft.purchaseDate
+          if (expiry)              body.expiryDate    = expiry
+          if (draft.paymentMethod) body.paymentMethod = draft.paymentMethod
+          if (draft.notes)         body.notes         = draft.notes
+          if (code)                body.orderCode     = code
+          try {
+            const r = await fetch("/api/bot/orders", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify(body),
+            })
+            if (!r.ok) throw new Error("Create failed")
+            added++
+          } catch { errors++ }
+        }
+      }
     }
 
     queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() })
@@ -575,6 +642,7 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
 
               {/* Right: edit form */}
               <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                <F label="Mã đơn hàng (tùy chọn)" value={cur.orderCode}    onChange={v => setField(curIdx, "orderCode", v)}    confidence={cur.confidence.orderCode} />
                 <F label="Email / Tài khoản *" value={cur.email}        onChange={v => setField(curIdx, "email", v)}        confidence={cur.confidence.email} required={!cur.email} />
                 <F label="Mật khẩu"            value={cur.password}     onChange={v => setField(curIdx, "password", v)}     type="password" confidence={cur.confidence.password} />
                 <F label="Mã 2FA"              value={cur.twoFA}        onChange={v => setField(curIdx, "twoFA", v)}        confidence={cur.confidence.twoFA} />

@@ -50132,27 +50132,103 @@ router2.get("/bot/orders", requireAuth, (_req, res) => {
 router2.post("/bot/orders", requireAuth, (req, res) => {
   const body = req.body ?? {};
   const orders = readJson("orders", {}) ?? {};
-  const orderId = "ORD" + crypto.randomUUID().slice(0, 6).toUpperCase();
-  const order = { ...body, orderId, createdAt: now() };
+  const orderId = body.orderCode ? String(body.orderCode).trim().toUpperCase() : "ORD" + crypto.randomUUID().slice(0, 6).toUpperCase();
+  const { orderCode: _oc, ...rest } = body;
+  const order = { ...rest, orderId, createdAt: now() };
   orders[orderId] = order;
   writeJson("orders", orders);
+  if (order.email) {
+    const orderItems = readJson("order_items", {}) ?? {};
+    if (!orderItems[orderId]) orderItems[orderId] = [];
+    const alreadyExists = orderItems[orderId].some(
+      (it) => it.email?.toLowerCase() === order.email.toLowerCase()
+    );
+    if (!alreadyExists) {
+      orderItems[orderId].push({
+        itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
+        email: order.email,
+        password: order.password ?? null,
+        twoFA: order.twoFA ?? null,
+        status: order.status ?? "active",
+        createdAt: now()
+      });
+      writeJson("order_items", orderItems);
+    }
+  }
   addLog("CREATE_ORDER", orderId, "web-admin");
   res.json(order);
 });
 router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
   const body = req.body ?? {};
-  const { productName, price, purchaseDate, expiryDate, warrantyExpiry, usagePeriod, warrantyPeriod, notes, accounts } = body;
+  const { productName, price, purchaseDate, expiryDate, warrantyExpiry, usagePeriod, warrantyPeriod, notes, accounts, orderCode, status, warrantyDays, customerName, paymentMethod } = body;
   if (!productName || !purchaseDate || !Array.isArray(accounts) || accounts.length === 0) {
     res.status(400).json({ ok: false, message: "productName, purchaseDate v\xE0 accounts l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
   const orders = readJson("orders", {}) ?? {};
+  const orderItems = readJson("order_items", {}) ?? {};
+  const errors = [];
+  let added = 0, skipped = 0;
+  if (orderCode) {
+    const sharedId = String(orderCode).trim().toUpperCase();
+    const existingItemEmails = /* @__PURE__ */ new Set();
+    for (const itemList of Object.values(orderItems)) {
+      for (const it of itemList) {
+        if (it.email) existingItemEmails.add(it.email.toLowerCase());
+      }
+    }
+    if (!orders[sharedId]) {
+      orders[sharedId] = {
+        orderId: sharedId,
+        productName,
+        price: price ?? null,
+        purchaseDate: purchaseDate ?? null,
+        expiryDate: expiryDate ?? null,
+        warrantyExpiry: warrantyExpiry ?? null,
+        warrantyDays: warrantyDays ?? null,
+        usagePeriod: usagePeriod ?? null,
+        warrantyPeriod: warrantyPeriod ?? null,
+        customerName: customerName ?? null,
+        paymentMethod: paymentMethod ?? null,
+        notes: notes ?? null,
+        status: status ?? "active",
+        quantity: 0,
+        createdAt: now()
+      };
+    }
+    if (!orderItems[sharedId]) orderItems[sharedId] = [];
+    for (const acc of accounts) {
+      const email = (acc.email ?? "").trim();
+      if (!email) {
+        errors.push({ email: "(tr\u1ED1ng)", reason: "Thi\u1EBFu email" });
+        skipped++;
+        continue;
+      }
+      if (existingItemEmails.has(email.toLowerCase())) {
+        errors.push({ email, reason: "Email \u0111\xE3 t\u1ED3n t\u1EA1i trong h\u1EC7 th\u1ED1ng" });
+        skipped++;
+        continue;
+      }
+      orderItems[sharedId].push({
+        itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
+        email,
+        password: acc.password || null,
+        twoFA: acc.twoFA || null,
+        status: "active",
+        createdAt: now()
+      });
+      existingItemEmails.add(email.toLowerCase());
+      added++;
+    }
+    orders[sharedId].quantity = orderItems[sharedId].length;
+    writeJson("orders", orders);
+    writeJson("order_items", orderItems);
+    addLog("BULK_CREATE_ORDERS", `orderCode=${sharedId} added=${added} skipped=${skipped}`, "web-admin");
+    return res.json({ added, skipped, errors, orderId: sharedId });
+  }
   const existingEmails = new Set(
     Object.values(orders).map((o) => (o.email ?? "").toLowerCase())
   );
-  const errors = [];
-  let added = 0;
-  let skipped = 0;
   for (const acc of accounts) {
     const email = (acc.email ?? "").trim();
     if (!email) {
@@ -50182,10 +50258,20 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
       status: "active",
       createdAt: now()
     };
+    if (!orderItems[orderId]) orderItems[orderId] = [];
+    orderItems[orderId].push({
+      itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
+      email,
+      password: acc.password || null,
+      twoFA: acc.twoFA || null,
+      status: "active",
+      createdAt: now()
+    });
     existingEmails.add(email.toLowerCase());
     added++;
   }
   writeJson("orders", orders);
+  writeJson("order_items", orderItems);
   addLog("BULK_CREATE_ORDERS", `added=${added} skipped=${skipped}`, "web-admin");
   res.json({ added, skipped, errors });
 });
@@ -50578,6 +50664,74 @@ L\xFD do: ${reason}`;
   addLog("WARRANTY_REJECT", `${id}: ${reason}`, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 t\u1EEB ch\u1ED1i" });
 });
+router2.get("/orders/lookup", requireAuth, (req, res) => {
+  const query = String(req.query.query ?? "").trim();
+  if (!query) {
+    res.status(400).json({ found: false, error: "query l\xE0 b\u1EAFt bu\u1ED9c" });
+    return;
+  }
+  const orders = readJson("orders", {}) ?? {};
+  const orderItems = readJson("order_items", {}) ?? {};
+  const normalized = query.replace(/^(?:email\s*\/?\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*:\s*/i, "").trim();
+  if (orders[normalized]) {
+    const items = orderItems[normalized] ?? [];
+    return res.json({ found: true, lookupType: "order_id", order: orders[normalized], items });
+  }
+  const emailLower = normalized.toLowerCase();
+  for (const [orderId, itemList] of Object.entries(orderItems)) {
+    for (const item of itemList) {
+      if (item.email?.toLowerCase() === emailLower) {
+        return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null, items: itemList });
+      }
+    }
+  }
+  for (const order of Object.values(orders)) {
+    if (order.email?.toLowerCase() === emailLower) {
+      return res.json({ found: true, lookupType: "email", order, items: [] });
+    }
+  }
+  return res.json({ found: false });
+});
+router2.get("/bot/orders/:orderId/items", requireAuth, (req, res) => {
+  const orderItems = readJson("order_items", {}) ?? {};
+  res.json(orderItems[req.params.orderId] ?? []);
+});
+router2.post("/bot/orders/:orderId/items", requireAuth, (req, res) => {
+  const { orderId } = req.params;
+  const orders = readJson("orders", {}) ?? {};
+  if (!orders[orderId]) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng" });
+    return;
+  }
+  const { email, password, twoFA } = req.body ?? {};
+  if (!email) {
+    res.status(400).json({ ok: false, message: "email l\xE0 b\u1EAFt bu\u1ED9c" });
+    return;
+  }
+  const orderItems = readJson("order_items", {}) ?? {};
+  if (!orderItems[orderId]) orderItems[orderId] = [];
+  const itemId = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const item = { itemId, email, password: password ?? null, twoFA: twoFA ?? null, status: "active", createdAt: now() };
+  orderItems[orderId].push(item);
+  writeJson("order_items", orderItems);
+  addLog("CREATE_ORDER_ITEM", `${orderId}/${itemId}`, "web-admin");
+  res.json({ ok: true, item });
+});
+router2.put("/bot/orders/:orderId/items/:itemId", requireAuth, (req, res) => {
+  const { orderId, itemId } = req.params;
+  const orderItems = readJson("order_items", {}) ?? {};
+  const items = orderItems[orderId] ?? [];
+  const idx = items.findIndex((it) => it.itemId === itemId);
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y item" });
+    return;
+  }
+  items[idx] = { ...items[idx], ...req.body, itemId, updatedAt: now() };
+  orderItems[orderId] = items;
+  writeJson("order_items", orderItems);
+  addLog("UPDATE_ORDER_ITEM", `${orderId}/${itemId}`, "web-admin");
+  res.json({ ok: true, item: items[idx] });
+});
 router2.get("/bot/intro", requireAuth, (_req, res) => {
   const defaults = { title: "Gi\u1EDBi thi\u1EC7u", content: "", photoUrl: "", videoUrl: "", buttons: [] };
   res.json({ ...defaults, ...readJson("intro", {}) ?? {} });
@@ -50777,7 +50931,8 @@ function parseRules(text, existingProducts = []) {
     status: { value: "active", confidence: "low" },
     purchaseDate: { value: null, confidence: "low" },
     paymentMethod: { value: null, confidence: "low" },
-    warrantyDays: { value: null, confidence: "low" }
+    warrantyDays: { value: null, confidence: "low" },
+    orderCode: { value: null, confidence: "low" }
   };
   const stitched = stitchEmails(text);
   const lines = stitched.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -50881,6 +51036,22 @@ function parseRules(text, existingProducts = []) {
     const wd = inferWarrantyDays(String(prodForWarranty));
     if (wd !== null) result.warrantyDays = { value: wd, confidence: "high" };
   }
+  const orderCodeRaw = getValueAfterLabel(lines, [
+    "m\xE3 \u0111\u01A1n",
+    "ma don",
+    "m\xE3 order",
+    "order code",
+    "order id",
+    "order_code",
+    "order_id",
+    "m\xE3 \u0111\u01A1n h\xE0ng"
+  ]);
+  if (orderCodeRaw && orderCodeRaw !== "-") {
+    result.orderCode = { value: orderCodeRaw.toUpperCase().replace(/\s+/g, ""), confidence: "high" };
+  } else {
+    const codeMatch = stitched.match(/\b(ORD[A-Z0-9]{4,})\b/i);
+    if (codeMatch) result.orderCode = { value: codeMatch[1].toUpperCase(), confidence: "medium" };
+  }
   return result;
 }
 function calcOverallConfidence(parsed) {
@@ -50895,9 +51066,10 @@ async function loadExistingProducts() {
     const { readFile: rf } = await import("node:fs/promises");
     const { join: j } = await import("node:path");
     const raw = await rf(j(process.cwd(), "../../data/orders.json"), "utf8");
-    const orders = JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed) ? parsed : Object.values(parsed);
     const names = /* @__PURE__ */ new Set();
-    orders.forEach((o) => {
+    items.forEach((o) => {
       if (o.productName) names.add(o.productName);
     });
     return Array.from(names);
