@@ -50331,6 +50331,151 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
   addLog("BULK_CREATE_ORDERS", `added=${added} skipped=${skipped}`, "web-admin");
   res.json({ added, skipped, errors });
 });
+router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
+  const { rows } = req.body ?? {};
+  if (!Array.isArray(rows) || rows.length === 0) {
+    res.status(400).json({ ok: false, message: "rows is required" });
+    return;
+  }
+  const orders = readJson("orders", {}) ?? {};
+  const orderItems = readJson("order_items", {}) ?? {};
+  const existingItemEmails = /* @__PURE__ */ new Set();
+  for (const itemList of Object.values(orderItems)) {
+    for (const it of itemList) {
+      const e = (it.email || it.original_account || "").toLowerCase().trim();
+      if (e) existingItemEmails.add(e);
+    }
+  }
+  const results = [];
+  let successCount = 0, failCount = 0, skippedCount = 0;
+  let accountsAdded = 0, dupOrders = 0, dupAccountsTotal = 0;
+  for (const row of rows) {
+    const {
+      rowIndex,
+      orderCode,
+      productNameMapped,
+      quantity,
+      totalPrice,
+      unitPrice,
+      status,
+      customerName,
+      customerEmail,
+      purchaseDate,
+      originalDeliveredAt,
+      expiryDate,
+      warrantyEndDate,
+      warrantyDays,
+      usageDays,
+      accounts,
+      conflictAction = "skip"
+    } = row;
+    try {
+      const orderId = String(orderCode || "").trim().toUpperCase();
+      if (!orderId) {
+        failCount++;
+        results.push({ rowIndex, status: "error", message: "Thi\u1EBFu m\xE3 \u0111\u01A1n" });
+        continue;
+      }
+      const existingOrder = orders[orderId];
+      if (existingOrder) {
+        dupOrders++;
+        if (conflictAction === "skip") {
+          skippedCount++;
+          results.push({ rowIndex, status: "skipped", message: "M\xE3 \u0111\u01A1n \u0111\xE3 t\u1ED3n t\u1EA1i, b\u1ECF qua" });
+          continue;
+        }
+      }
+      const wd = Number(warrantyDays || 0);
+      const ud = Number(usageDays || 0);
+      const tp = Number(totalPrice || 0);
+      const up = Number(unitPrice || 0) || (tp && quantity > 1 ? Math.round(tp / quantity) : tp);
+      const orderObj = {
+        orderId,
+        email: customerEmail || "",
+        productName: productNameMapped || "",
+        price: up || null,
+        totalPrice: tp || null,
+        quantity: Number(quantity || 0) || 1,
+        purchaseDate: purchaseDate || null,
+        expiryDate: expiryDate || null,
+        warrantyExpiry: warrantyEndDate || null,
+        warrantyDays: wd || null,
+        usageDays: ud || null,
+        customerName: customerName || null,
+        status: status || "active",
+        createdAt: existingOrder?.createdAt ?? now(),
+        updatedAt: now()
+      };
+      if (!existingOrder) {
+        orders[orderId] = orderObj;
+      } else if (conflictAction === "update") {
+        orders[orderId] = { ...existingOrder, ...orderObj };
+      }
+      if (!orderItems[orderId]) orderItems[orderId] = [];
+      let itemsAddedThisRow = 0, dupThisRow = 0;
+      if (Array.isArray(accounts)) {
+        const orderEmailSet = new Set(
+          orderItems[orderId].map(
+            (it) => (it.email || it.original_account || "").toLowerCase().trim()
+          )
+        );
+        for (const acc of accounts) {
+          const email = (acc.email || "").trim();
+          if (!email) continue;
+          const emailLower = email.toLowerCase();
+          if (existingOrder && conflictAction === "add_missing" && orderEmailSet.has(emailLower)) {
+            dupThisRow++;
+            continue;
+          }
+          if (existingItemEmails.has(emailLower)) {
+            dupThisRow++;
+            dupAccountsTotal++;
+            continue;
+          }
+          const delAt = (originalDeliveredAt || purchaseDate || "").slice(0, 10) || now().slice(0, 10);
+          let warrantyEnd = (warrantyEndDate || "").slice(0, 10) || null;
+          if (!warrantyEnd && delAt && wd) {
+            try {
+              const d = new Date(delAt);
+              d.setDate(d.getDate() + wd);
+              warrantyEnd = d.toISOString().slice(0, 10);
+            } catch {
+            }
+          }
+          orderItems[orderId].push({
+            itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
+            email,
+            original_account: email,
+            current_account: email,
+            current_replacement_number: 0,
+            original_delivered_at: delAt,
+            warranty_days: wd || null,
+            warranty_end_date: warrantyEnd,
+            item_status: "active",
+            password: acc.password || null,
+            twoFA: acc.twoFA || null,
+            status: "active",
+            createdAt: now()
+          });
+          existingItemEmails.add(emailLower);
+          orderEmailSet.add(emailLower);
+          itemsAddedThisRow++;
+        }
+      }
+      orders[orderId].quantity = orderItems[orderId].length;
+      writeJson("orders", orders);
+      writeJson("order_items", orderItems);
+      addLog("XLSX_IMPORT_ORDER", orderId, "web-admin");
+      successCount++;
+      accountsAdded += itemsAddedThisRow;
+      results.push({ rowIndex, status: "ok", orderId, itemsAdded: itemsAddedThisRow, dupAccounts: dupThisRow });
+    } catch (err) {
+      failCount++;
+      results.push({ rowIndex, status: "error", message: String(err?.message ?? "L\u1ED7i kh\xF4ng x\xE1c \u0111\u1ECBnh") });
+    }
+  }
+  res.json({ ok: true, success: successCount, failed: failCount, skipped: skippedCount, accountsAdded, dupOrders, dupAccounts: dupAccountsTotal, results });
+});
 router2.get("/bot/orders/:orderId", requireAuth, (req, res) => {
   const orders = readJson("orders", {}) ?? {};
   const order = orders[req.params.orderId];

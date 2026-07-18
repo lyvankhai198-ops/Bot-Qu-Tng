@@ -1,0 +1,543 @@
+VIẾT LẠI CHÍNH XÁC CHỨC NĂNG IMPORT XLSX THEO CẤU TRÚC FILE ORDERS HIỆN TẠI
+
+LƯU Ý BẮT BUỘC:
+
+- Không reset website.
+- Không reset database.
+- Không chạy lại setup.
+- Không seed lại dữ liệu.
+- Không thay đổi cài đặt hiện có.
+- Không viết lại toàn bộ trang Đơn hàng.
+- Chỉ bổ sung chức năng nhập đơn hàng từ file XLSX và xử lý đúng dữ liệu theo file Orders hiện tại.
+
+--------------------------------------------------
+1. CẤU TRÚC FILE XLSX THỰC TẾ
+--------------------------------------------------
+
+File Orders hiện tại có các cột:
+
+1. STT
+2. Mã đơn
+3. Sản phẩm
+4. Số lượng
+5. Số tiền
+6. Trạng thái
+7. Khách hàng
+8. Email slot
+9. Tạo lúc
+10. Thanh toán
+11. Đã giao
+12. Tài khoản đã giao
+
+Phải nhận diện đúng các cột này, không yêu cầu người dùng đổi tên cột.
+
+Có thể chấp nhận thêm các tên tương đương như:
+
+- Mã đơn / Ma don / order_code
+- Sản phẩm / San pham / product
+- Số lượng / SL / quantity
+- Số tiền / amount / total_price
+- Khách hàng / customer
+- Email slot / customer_email
+- Tạo lúc / created_at
+- Thanh toán / payment_at
+- Đã giao / delivered_at
+- Tài khoản đã giao / delivered_accounts
+
+--------------------------------------------------
+2. ÁNH XẠ DỮ LIỆU
+--------------------------------------------------
+
+Map như sau:
+
+Mã đơn
+→ order_code
+
+Sản phẩm
+→ product_name
+
+Số lượng
+→ quantity
+
+Số tiền
+→ total_price
+
+Trạng thái
+→ order_status
+
+Khách hàng
+→ customer_name
+
+Email slot
+→ customer_email hoặc customer_identifier
+
+Tạo lúc
+→ created_at
+
+Thanh toán
+→ payment_at
+
+Đã giao
+→ original_delivered_at
+
+Tài khoản đã giao
+→ danh sách order_items
+
+STT chỉ dùng để hiển thị dòng, không lưu vào database.
+
+--------------------------------------------------
+3. XỬ LÝ CỘT “TÀI KHOẢN ĐÃ GIAO”
+--------------------------------------------------
+
+Cột này có thể chứa nhiều kiểu dữ liệu khác nhau.
+
+Phải hỗ trợ:
+
+email@example.com
+
+email@example.com|password
+
+email@example.com|password|2fa
+
+email@example.com:password
+
+email@example.com:password:2fa
+
+email@example.com / password
+
+email@example.com / password / 2fa
+
+Nhiều tài khoản trong cùng một ô có thể được ngăn cách bằng:
+
+- Xuống dòng
+- Dấu chấm phẩy
+- Dấu phẩy
+- Chuỗi lặp nhiều email trong cùng ô
+
+Ưu tiên tách theo xuống dòng trước.
+
+Không được tách dấu “/” nếu dấu đó thuộc URL.
+
+Mỗi tài khoản sau khi tách phải tạo một order_item riêng.
+
+Tất cả order_items trong cùng một dòng Excel phải thuộc cùng order_code.
+
+--------------------------------------------------
+4. KHÔNG XỬ LÝ CHỮ “XEM CHI TIẾT” NHƯ DỮ LIỆU
+--------------------------------------------------
+
+Trong giao diện web hiện tại, dưới cột “Tài khoản đã giao” có nút “Xem chi tiết”.
+
+Đây chỉ là nút của giao diện web, không phải dữ liệu tài khoản trong file XLSX.
+
+Khi import XLSX:
+
+- Chỉ đọc dữ liệu thật trong ô Excel.
+- Không phụ thuộc vào nút “Xem chi tiết” trên giao diện web.
+- Không cố lấy dữ liệu từ ảnh chụp màn hình.
+- Không dùng OCR cho chức năng import XLSX.
+
+Nếu ô “Tài khoản đã giao” chỉ có tên người, chuỗi không hợp lệ hoặc không có email/tài khoản rõ ràng:
+
+- Vẫn tạo bản nháp đơn hàng.
+- Đánh dấu “Không đọc được tài khoản đã giao”.
+- Không tự coi tên người là tài khoản.
+- Không tự tạo order_item sai.
+- Yêu cầu admin sửa trước khi xác nhận lưu.
+
+--------------------------------------------------
+5. NHẬN DIỆN TÀI KHOẢN
+--------------------------------------------------
+
+Ưu tiên tìm email bằng regex:
+
+[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}
+
+Nếu không phải email nhưng là username/tài khoản hợp lệ thì cho phép admin xác nhận thủ công.
+
+Không được coi các chuỗi sau là tài khoản:
+
+- Liên
+- Hôm nay
+- Xem chi tiết
+- Đã giao
+- Tên khách hàng
+- Nội dung trạng thái
+
+--------------------------------------------------
+6. ĐƠN MỘT TÀI KHOẢN
+--------------------------------------------------
+
+Nếu một dòng có:
+
+Số lượng = 1
+
+và đọc được một tài khoản:
+
+- Tạo 1 order.
+- Tạo 1 order_item.
+- Gắn đúng order_code.
+- Lưu original_account và current_account bằng tài khoản vừa đọc.
+
+--------------------------------------------------
+7. ĐƠN NHIỀU TÀI KHOẢN
+--------------------------------------------------
+
+Nếu một dòng có:
+
+Số lượng > 1
+
+thì hệ thống phải tách toàn bộ tài khoản trong ô “Tài khoản đã giao”.
+
+Ví dụ:
+
+Mã đơn: ORDERABC123
+Số lượng: 3
+
+Ô tài khoản:
+
+email1@example.com|pass1
+email2@example.com|pass2
+email3@example.com|pass3
+
+Phải tạo:
+
+- 1 order
+- 3 order_items
+- tất cả cùng order_code ORDERABC123
+
+Nếu số lượng khai báo khác số tài khoản đọc được:
+
+Hiển thị cảnh báo:
+
+“Số lượng khai báo là 3 nhưng chỉ đọc được 2 tài khoản.”
+
+Không được tự lưu dòng này trước khi admin xác nhận hoặc sửa.
+
+--------------------------------------------------
+8. NGÀY MUA
+--------------------------------------------------
+
+Ngày mua phải lấy theo thứ tự:
+
+1. Thanh toán
+2. Đã giao
+3. Tạo lúc
+
+Ví dụ:
+
+Thanh toán:
+15:05:58 18/7/2026
+
+thì purchase_date phải là:
+
+2026-07-18
+
+Không dùng ngày import.
+
+Không dùng ngày hiện tại.
+
+--------------------------------------------------
+9. NGÀY GIAO TÀI KHOẢN GỐC
+--------------------------------------------------
+
+original_delivered_at lấy từ cột:
+
+Đã giao
+
+Nếu “Đã giao” trống thì dùng:
+
+1. Thanh toán
+2. Tạo lúc
+
+Mốc này phải được giữ cố định để tính bảo hành.
+
+Tài khoản thay thế sau này không được làm thay đổi original_delivered_at.
+
+--------------------------------------------------
+10. TỰ XÁC ĐỊNH SẢN PHẨM
+--------------------------------------------------
+
+Dùng product_name trong file để đối chiếu với cấu hình sản phẩm hiện có trên web.
+
+Ví dụ:
+
+- Supper Grok 3-5 Ngày BHF
+- Grok Super 3 Tháng KBH
+- GROK SUPER 30D BH 12D
+
+Phải fuzzy match với sản phẩm trong database.
+
+Không phân biệt:
+
+- Chữ hoa/chữ thường
+- Khoảng trắng dư
+- Dấu gạch ngang
+- Một vài lỗi chính tả nhẹ như “Supper” và “Super”
+
+Nếu không match được:
+
+- Không tự tạo sản phẩm mới.
+- Đánh dấu vàng.
+- Cho admin chọn sản phẩm đúng.
+
+--------------------------------------------------
+11. TÍNH THỜI HẠN VÀ BẢO HÀNH
+--------------------------------------------------
+
+Sau khi map được sản phẩm, lấy từ cấu hình sản phẩm:
+
+- subscription_days
+- warranty_days
+
+Sau đó tính:
+
+expiry_date =
+original_delivered_at + subscription_days
+
+warranty_end_date =
+original_delivered_at + warranty_days
+
+Nếu sản phẩm KBH hoặc No Warranty:
+
+warranty_days = 0
+
+Không tự đoán bảo hành chỉ dựa vào tên nếu database đã có cấu hình sản phẩm.
+
+--------------------------------------------------
+12. XỬ LÝ GIÁ
+--------------------------------------------------
+
+Cột Số tiền có thể là:
+
+20000
+20.000
+20,000
+20.000đ
+115.000đ
+40.000đ
+90k
+
+Phải chuẩn hóa về số nguyên VND.
+
+Ví dụ:
+
+20.000đ
+→ 20000
+
+115.000đ
+→ 115000
+
+Nếu đơn có nhiều tài khoản:
+
+total_price = tổng tiền đơn
+
+unit_price =
+total_price / quantity
+
+Không được gán toàn bộ total_price cho từng order_item.
+
+--------------------------------------------------
+13. TRẠNG THÁI
+--------------------------------------------------
+
+Map các trạng thái:
+
+completed
+delivered
+success
+đã giao
+hoàn thành
+
+→ active hoặc completed theo cấu trúc hiện tại
+
+pending
+chờ xử lý
+
+→ pending
+
+cancelled
+canceled
+đã hủy
+
+→ cancelled
+
+Không tự thay đổi trạng thái dữ liệu cũ.
+
+--------------------------------------------------
+14. MÀN HÌNH XEM TRƯỚC
+--------------------------------------------------
+
+Sau khi chọn file XLSX, không lưu ngay.
+
+Hiển thị bảng xem trước gồm:
+
+- Dòng Excel
+- Mã đơn
+- Sản phẩm trong file
+- Sản phẩm đã map
+- Số lượng khai báo
+- Số tài khoản đọc được
+- Tổng tiền
+- Giá mỗi tài khoản
+- Khách hàng
+- Email slot
+- Ngày mua
+- Ngày giao gốc
+- Ngày hết hạn
+- Ngày hết bảo hành
+- Trạng thái
+- Kết quả kiểm tra
+
+Trạng thái từng dòng:
+
+- Hợp lệ
+- Thiếu tài khoản
+- Sai số lượng
+- Không tìm thấy sản phẩm
+- Sai ngày
+- Trùng mã đơn
+- Trùng tài khoản
+- Thiếu dữ liệu
+
+Admin phải được sửa từng dòng trước khi lưu.
+
+--------------------------------------------------
+15. ĐIỀU KIỆN ĐƠN HỢP LỆ
+--------------------------------------------------
+
+Một đơn chỉ được coi là hợp lệ khi có:
+
+- Mã đơn
+- Sản phẩm đã map
+- Số lượng hợp lệ
+- Tổng tiền hợp lệ
+- Ngày mua
+- Ngày giao gốc
+- Ít nhất một tài khoản đã giao
+- Số tài khoản khớp số lượng hoặc được admin xác nhận
+
+Không được chỉ kiểm tra mã đơn rồi coi là hợp lệ.
+
+--------------------------------------------------
+16. CHỐNG TRÙNG
+--------------------------------------------------
+
+Kiểm tra:
+
+A. Mã đơn đã tồn tại
+
+Cho admin chọn:
+
+- Bỏ qua
+- Cập nhật đơn hiện tại
+- Chỉ thêm tài khoản còn thiếu
+
+Không tự ghi đè.
+
+B. Tài khoản đã tồn tại
+
+Kiểm tra trong:
+
+- original_account
+- current_account
+- account_replacements
+
+Nếu tài khoản đã tồn tại, hiển thị mã đơn chứa tài khoản đó.
+
+Không tạo trùng âm thầm.
+
+--------------------------------------------------
+17. LƯU BẰNG TRANSACTION
+--------------------------------------------------
+
+Mỗi dòng Excel phải được lưu bằng transaction.
+
+Nếu tạo order thành công nhưng tạo order_items thất bại:
+
+- Rollback toàn bộ dòng đó.
+- Không để lại đơn rỗng.
+
+Một dòng lỗi không được làm hỏng các dòng hợp lệ khác.
+
+--------------------------------------------------
+18. KẾT QUẢ SAU IMPORT
+--------------------------------------------------
+
+Hiển thị:
+
+- Tổng số dòng
+- Số đơn thành công
+- Tổng số tài khoản đã thêm
+- Số đơn bị trùng
+- Số tài khoản bị trùng
+- Số dòng cần sửa
+- Số dòng lỗi
+- Số dòng bị bỏ qua
+
+Cho phép tải file lỗi XLSX có:
+
+- Số dòng
+- Mã đơn
+- Nội dung lỗi
+- Dữ liệu cần sửa
+
+--------------------------------------------------
+19. TRA CỨU SAU KHI IMPORT
+--------------------------------------------------
+
+Sau khi import:
+
+- Đơn một tài khoản có thể tra bằng mã đơn hoặc email.
+- Đơn nhiều tài khoản muốn xem toàn bộ phải tra bằng mã đơn.
+- Tra email chỉ trả đúng tài khoản đó.
+- Tất cả dữ liệu ngày mua, ngày hết hạn và bảo hành phải lấy từ database vừa import.
+- Không hiển thị mật khẩu hoặc 2FA khi tra cứu công khai.
+
+--------------------------------------------------
+20. BẢO MẬT
+--------------------------------------------------
+
+File XLSX có thể chứa mật khẩu và 2FA.
+
+Yêu cầu:
+
+- Không log password hoặc 2FA.
+- Không lưu file upload vĩnh viễn.
+- Xóa file tạm sau khi xử lý.
+- Mã hóa password và 2FA theo cơ chế hiện tại.
+- Chỉ admin được import.
+- Không trả dữ liệu nhạy cảm qua API công khai.
+
+--------------------------------------------------
+21. TEST BẮT BUỘC
+--------------------------------------------------
+
+Phải test đúng các trường hợp:
+
+1. Đơn một tài khoản.
+2. Đơn nhiều tài khoản.
+3. Ô tài khoản chứa email.
+4. Ô tài khoản chứa email|password.
+5. Ô tài khoản chứa email|password|2fa.
+6. Ô chứa nhiều dòng tài khoản.
+7. Ô chỉ có tên người.
+8. Ô trống.
+9. Số lượng không khớp số tài khoản.
+10. Trùng mã đơn.
+11. Trùng tài khoản.
+12. Giá dạng 20.000đ.
+13. Ngày dạng 15:05:58 18/7/2026.
+14. Không map được sản phẩm.
+15. Import 1.000 dòng.
+16. Restart server không mất dữ liệu.
+17. Deploy code mới không reset web.
+18. Không gửi lại reminder bảo hành cũ sau import.
+
+MỤC TIÊU CUỐI CÙNG:
+
+Chức năng import phải đọc trực tiếp file XLSX Orders hiện tại, xử lý đúng từng cột, tạo đúng order và order_items, hỗ trợ đơn nhiều tài khoản chung mã đơn, đồng thời không phụ thuộc vào giao diện “Xem chi tiết” trên web.
+
+LƯU Ý CUỐI:
+
+Chỉ bổ sung và sửa chức năng import XLSX. Không viết lại trang Đơn hàng, không reset database, không thay đổi giao diện hiện có và không ghi đè cài đặt đã lưu.
