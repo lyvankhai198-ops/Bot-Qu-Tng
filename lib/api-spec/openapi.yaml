@@ -1407,6 +1407,10 @@ components:
           type: string
         content:
           type: string
+        titleEn:
+          type: string
+        contentEn:
+          type: string
         photoUrl:
           type: string
         videoUrl:

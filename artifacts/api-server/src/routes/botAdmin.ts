@@ -1398,7 +1398,7 @@ router.put("/bot/orders/:orderId/items/:itemId", requireAuth, (req: any, res: an
 
 // ── GET /bot/intro ───────────────────────────────────────────────────────────
 router.get("/bot/intro", requireAuth, (_req: any, res: any) => {
-  const defaults = { title: "Giới thiệu", content: "", photoUrl: "", videoUrl: "", buttons: [] };
+  const defaults = { title: "Giới thiệu", content: "", titleEn: "Introduction", contentEn: "", photoUrl: "", videoUrl: "", buttons: [] };
   res.json({ ...defaults, ...(readJson("intro", {}) ?? {}) });
 });
 

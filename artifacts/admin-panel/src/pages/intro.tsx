@@ -36,7 +36,7 @@ export default function IntroConfigPage() {
   })
 
   const [form, setForm] = useState<IntroConfig>({
-    title: "", content: "", photoUrl: "", videoUrl: "", buttons: []
+    title: "", content: "", titleEn: "", contentEn: "", photoUrl: "", videoUrl: "", buttons: []
   })
   const initialized = useRef(false)
 
@@ -79,8 +79,8 @@ export default function IntroConfigPage() {
         <div className="flex-1 space-y-4 md:space-y-6 w-full min-w-0">
           <Card>
             <CardHeader>
-              <CardTitle>Nội dung chính</CardTitle>
-              <CardDescription>Tiêu đề và văn bản hiển thị khi người dùng /start</CardDescription>
+              <CardTitle>Nội dung chính — 🇻🇳 Tiếng Việt</CardTitle>
+              <CardDescription>Tiêu đề và văn bản hiển thị khi người dùng /start (ngôn ngữ Việt)</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -99,6 +99,33 @@ export default function IntroConfigPage() {
                   onChange={e => setForm({...form, content: e.target.value})}
                   className="min-h-[150px]"
                   placeholder="Nhập thông tin giới thiệu bot..."
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Nội dung chính — 🇬🇧 English</CardTitle>
+              <CardDescription>Title and body shown when user selects English language</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Bold Title (EN)</Label>
+                <Input
+                  value={form.titleEn || ""}
+                  onChange={e => setForm({...form, titleEn: e.target.value})}
+                  placeholder="🎉 WELCOME..."
+                  className="min-h-[44px]"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Content (EN)</Label>
+                <Textarea
+                  value={form.contentEn || ""}
+                  onChange={e => setForm({...form, contentEn: e.target.value})}
+                  className="min-h-[150px]"
+                  placeholder="Enter English intro text..."
                 />
               </div>
             </CardContent>

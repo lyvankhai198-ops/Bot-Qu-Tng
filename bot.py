@@ -1152,8 +1152,12 @@ async def handle_intro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     intro = db.get_intro()
-    title   = intro.get("title", "")
-    content = intro.get("content", "")
+    if L == "en":
+        title   = intro.get("titleEn") or intro.get("title", "")
+        content = intro.get("contentEn") or intro.get("content", "")
+    else:
+        title   = intro.get("title", "")
+        content = intro.get("content", "")
     photo   = intro.get("photoUrl", "")
     video   = intro.get("videoUrl", "")
     buttons = intro.get("buttons", [])
