@@ -1,45 +1,52 @@
-# [Project name]
+# Bot Quà Tặng AI
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Bot Telegram tặng quà tự động với admin panel web và API server, hỗ trợ song ngữ Việt/Anh.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `python bot.py` — chạy Telegram bot (polling mode + Flask keep-alive :5000)
+- `pnpm --filter @workspace/api-server run dev` — API server (port 8080)
+- `pnpm --filter @workspace/admin-panel run dev` — Admin panel tại `/admin-panel/`
+- `pnpm --filter @workspace/api-spec run codegen` — tái tạo API hooks từ OpenAPI spec
+- `bash scripts/deploy.sh` — push GitHub + deploy VPS (dùng bởi agent)
+
+> Sau codegen luôn chạy: `sed -i 's/zod\.looseObject/zod.object/g' lib/api-zod/src/generated/api.ts`
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Python 3 + python-telegram-bot 22 + Flask (bot)
+- pnpm workspaces, Node.js, TypeScript
+- API: Express (artifacts/api-server)
+- Frontend: React + Vite + Tailwind (artifacts/admin-panel)
+- Dữ liệu: flat JSON files trong `data/`
+- API codegen: Orval (từ lib/api-spec/openapi.yaml)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `bot.py` — entry point bot Telegram
+- `data_manager.py` — đọc/ghi tất cả JSON files
+- `translations.py` — chuỗi VI/EN
+- `data/` — accounts, users, orders, warranty_requests, settings, logs, pending_broadcasts
+- `lib/api-spec/openapi.yaml` — nguồn gốc sự thật API
+- `artifacts/api-server/src/routes/botAdmin.ts` — tất cả REST routes
+- `artifacts/admin-panel/src/pages/` — các trang admin
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
-
-## Product
-
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Không dùng database — flat JSON files, cả bot và api-server đọc/ghi trực tiếp
+- Broadcast targeting qua field `target` trong pending_broadcasts.json: `"all"|"has_received"|"no_received"|"user:<id>"`
+- Bot không expose thông tin admin — user tự tra đơn hàng qua ID/email
+- Zod codegen ra `zod.looseObject` (v4 API) nhưng workspace dùng Zod v3 — phải patch sau mỗi codegen
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- **Auto-deploy sau mỗi lần cập nhật**: Sau khi hoàn thành thay đổi, agent tự động push GitHub rồi deploy VPS qua `scripts/deploy.sh`
+- VPS: `root@103.180.138.203`, thư mục `/root/Bot-Qu-Tng`, service `gift-bot`
+- Credentials lưu trong Replit Secrets: `VPS_PASSWORD`, `VPS_HOST`, `VPS_USER`, `VPS_DEPLOY_PATH`, `VPS_SERVICE`
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Sau `pnpm run codegen` phải chạy ngay lệnh sed patch Zod (xem trên)
+- Bot dùng polling mode — nếu restart bị lỗi 409 Conflict thì tự resolve sau vài giây
+- VPS dùng Python virtualenv tại `/root/Bot-Qu-Tng/venv/` (tránh conflict system packages)
+- Force push GitHub nếu nhánh diverge: `git push origin main --force`
