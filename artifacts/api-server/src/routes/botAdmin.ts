@@ -1128,8 +1128,34 @@ router.post("/bot/orders/:orderId/items", requireAuth, (req: any, res: any) => {
   if (!email) { res.status(400).json({ ok: false, message: "email là bắt buộc" }); return; }
   const orderItems: any = readJson("order_items", {}) ?? {};
   if (!orderItems[orderId]) orderItems[orderId] = [];
+  const order = orders[orderId];
+  const iWd = Number(order.warrantyDays || 0);
+  let iWarrantyEnd: string | null = null;
+  if (order.purchaseDate && iWd) {
+    try {
+      const d = new Date(order.purchaseDate.slice(0, 10));
+      d.setDate(d.getDate() + iWd);
+      iWarrantyEnd = d.toISOString().slice(0, 10);
+    } catch {}
+  }
+  if (!iWarrantyEnd && (order.warrantyExpiry || order.warrantyDate)) {
+    iWarrantyEnd = (order.warrantyExpiry || order.warrantyDate || "").slice(0, 10) || null;
+  }
   const itemId = crypto.randomUUID().slice(0, 8).toUpperCase();
-  const item = { itemId, email, password: password ?? null, twoFA: twoFA ?? null, status: "active", createdAt: now() };
+  const item = {
+    itemId, email,
+    original_account:           email,
+    current_account:            email,
+    current_replacement_number: 0,
+    original_delivered_at:      order.purchaseDate || now(),
+    warranty_days:              iWd || null,
+    warranty_end_date:          iWarrantyEnd,
+    item_status:                "active",
+    password:                   password ?? null,
+    twoFA:                      twoFA ?? null,
+    status:                     "active",
+    createdAt:                  now(),
+  };
   orderItems[orderId].push(item);
   writeJson("order_items", orderItems);
   addLog("CREATE_ORDER_ITEM", `${orderId}/${itemId}`, "web-admin");

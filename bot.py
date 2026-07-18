@@ -633,6 +633,50 @@ async def handle_multi_warranty_desc(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text(t(L, "support_multi_empty"), parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
         return
 
+    # ── Server-side warranty expiry gate (covers ALL entry paths) ─────────────
+    # Filter selected_accounts to only those whose item is still under warranty.
+    # This is the final check before any group request is persisted, ensuring
+    # no expired account can slip through regardless of how it entered the flow.
+    settings = db.get_settings()
+    eligible_accounts = []
+    for acc in selected_accounts:
+        acc_order_id = acc.get("orderId", "")
+        acc_email    = (acc.get("email") or "").lower()
+        if acc_order_id and acc_email:
+            acc_order = db.get_order(acc_order_id)
+            if acc_order:
+                item_found = None
+                for it in db.get_order_items(acc_order_id):
+                    it_orig = (it.get("original_account") or it.get("email") or "").lower()
+                    it_curr = (it.get("current_account")  or it.get("email") or "").lower()
+                    if acc_email in (it_orig, it_curr):
+                        item_found = it
+                        break
+                if item_found:
+                    wdata = db.calc_item_warranty(item_found, acc_order, settings)
+                    if wdata["canReport"]:
+                        eligible_accounts.append(acc)
+                    # Skip expired items silently (UI already filtered, but be safe)
+                    continue
+                # No item record → legacy order, allow through
+            eligible_accounts.append(acc)
+        else:
+            # No orderId (e.g. typed-in email without order context) → allow through
+            eligible_accounts.append(acc)
+
+    if not eligible_accounts:
+        vi = L == "vi"
+        msg = (
+            "❌ Không có tài khoản nào trong danh sách còn trong thời hạn bảo hành.\n"
+            "Vui lòng kiểm tra lại hoặc liên hệ shop."
+        ) if vi else (
+            "❌ None of the selected accounts are within their warranty period.\n"
+            "Please verify or contact support."
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
+        return
+    selected_accounts = eligible_accounts
+
     req_id = db.add_group_warranty_request(user.id, user.username, user.first_name, selected_accounts, description, L)
     db.add_log("GROUP_WARRANTY", f"@{user.username} ({user.id}) | {len(selected_accounts)} accounts", "")
 
