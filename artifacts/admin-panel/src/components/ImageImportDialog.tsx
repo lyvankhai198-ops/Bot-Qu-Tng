@@ -207,21 +207,32 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
 
   // ── File ingestion ──────────────────────────────────────────────────────────
   const ingestFiles = useCallback((files: File[]) => {
-    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"]
-    const valid = files.filter(f => allowed.includes(f.type))
-    if (valid.length === 0) { toast({ title: "Định dạng không hỗ trợ", description: "Chỉ chấp nhận JPG, PNG, GIF, WEBP", variant: "destructive" }); return }
+    // Accept any image file — iOS HEIC/HEIF, empty type from some browsers, etc.
+    // Unsupported types (e.g. HEIC) will fail at OCR stage with a clear error.
+    const imageExtRe = /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/i
+    const valid = files.filter(f =>
+      f.type.startsWith("image/") || imageExtRe.test(f.name) || f.type === ""
+    )
+    if (valid.length === 0) {
+      toast({ title: "Không tìm thấy ảnh", description: "Vui lòng chọn file ảnh", variant: "destructive" })
+      return
+    }
 
     const readers = valid.map(file => new Promise<ImageItem>((resolve) => {
       const reader = new FileReader()
       reader.onload = e => {
         const dataUrl = e.target?.result as string
-        const base64 = dataUrl.split(",")[1]
+        if (!dataUrl) { resolve({ id: crypto.randomUUID(), filename: file.name, previewUrl: "", base64: "", mimeType: "image/jpeg", extracted: null, error: "Không đọc được file", processed: false, form: emptyForm(), dupStatus: "none" }); return }
+        const base64 = dataUrl.split(",")[1] ?? ""
+        // Normalise MIME: iOS HEIC often comes as image/heic or empty — send as jpeg to OpenAI
+        const rawMime = file.type || "image/jpeg"
+        const mimeType = rawMime.includes("heic") || rawMime.includes("heif") ? "image/jpeg" : rawMime
         resolve({
           id: crypto.randomUUID(),
           filename: file.name,
           previewUrl: dataUrl,
           base64,
-          mimeType: file.type,
+          mimeType,
           extracted: null,
           error: null,
           processed: false,
@@ -229,6 +240,7 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
           dupStatus: "none",
         })
       }
+      reader.onerror = () => resolve({ id: crypto.randomUUID(), filename: file.name, previewUrl: "", base64: "", mimeType: "image/jpeg", extracted: null, error: "Không đọc được file", processed: false, form: emptyForm(), dupStatus: "none" })
       reader.readAsDataURL(file)
     }))
 
@@ -377,10 +389,10 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
               </Button>
             </div>
 
-            {/* Hidden inputs */}
-            <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
+            {/* sr-only instead of hidden — iOS Safari blocks .click() on display:none inputs */}
+            <input ref={fileRef} type="file" accept="image/*" multiple className="sr-only"
               onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only"
               onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
 
             {/* Thumbnail grid */}
