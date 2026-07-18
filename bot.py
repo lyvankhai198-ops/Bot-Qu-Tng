@@ -1724,26 +1724,27 @@ def main():
     Thread(target=warranty_reminder_worker, daemon=True).start()
     logger.info("Warranty reminder worker started.")
 
-    app = Application.builder().token(TOKEN).build()
+    # ── Set bot command menu via post_init (runs inside the async event loop) ──
+    async def _set_commands(application) -> None:
+        vi_cmds = [
+            BotCommand("start",   "🚀 Bắt đầu / chọn ngôn ngữ"),
+            BotCommand("support", "💬 Hỗ trợ & kiểm tra đơn hàng"),
+            BotCommand("gift",    "🎁 Nhận quà miễn phí"),
+            BotCommand("orders",  "📦 Kiểm tra đơn hàng"),
+            BotCommand("myid",    "🆔 ID Telegram của bạn"),
+        ]
+        en_cmds = [
+            BotCommand("start",   "🚀 Start / choose language"),
+            BotCommand("support", "💬 Support & order lookup"),
+            BotCommand("gift",    "🎁 Claim free gift"),
+            BotCommand("orders",  "📦 Check your order"),
+            BotCommand("myid",    "🆔 Your Telegram ID"),
+        ]
+        scope = BotCommandScopeAllPrivateChats()
+        await application.bot.set_my_commands(vi_cmds, scope=scope)
+        await application.bot.set_my_commands(en_cmds, scope=scope, language_code="en")
 
-    # ── Set bot command menu (left "/" button) for each language ──────────────
-    vi_commands = [
-        BotCommand("start",   "🚀 Bắt đầu / chọn ngôn ngữ"),
-        BotCommand("support", "💬 Hỗ trợ & kiểm tra đơn hàng"),
-        BotCommand("gift",    "🎁 Nhận quà miễn phí"),
-        BotCommand("orders",  "📦 Kiểm tra đơn hàng"),
-        BotCommand("myid",    "🆔 ID Telegram của bạn"),
-    ]
-    en_commands = [
-        BotCommand("start",   "🚀 Start / choose language"),
-        BotCommand("support", "💬 Support & order lookup"),
-        BotCommand("gift",    "🎁 Claim free gift"),
-        BotCommand("orders",  "📦 Check your order"),
-        BotCommand("myid",    "🆔 Your Telegram ID"),
-    ]
-    scope = BotCommandScopeAllPrivateChats()
-    await app.bot.set_my_commands(vi_commands, scope=scope)                        # default (vi)
-    await app.bot.set_my_commands(en_commands, scope=scope, language_code="en")    # EN clients
+    app = Application.builder().token(TOKEN).post_init(_set_commands).build()
 
     # ── Register handlers ─────────────────────────────────────────────────────
     app.add_handler(CommandHandler("start",   cmd_start))
