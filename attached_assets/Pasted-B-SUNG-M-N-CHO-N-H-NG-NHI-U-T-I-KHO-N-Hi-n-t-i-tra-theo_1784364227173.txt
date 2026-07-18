@@ -1,0 +1,271 @@
+BỔ SUNG MÃ ĐƠN CHO ĐƠN HÀNG NHIỀU TÀI KHOẢN
+
+Hiện tại tra theo email đã hoạt động. Bây giờ cần bổ sung lại mã đơn để phục vụ các đơn có số lượng nhiều.
+
+Mục tiêu:
+
+- Một mã đơn có thể chứa nhiều tài khoản.
+- Tra bằng mã đơn phải trả ra toàn bộ tài khoản thuộc đơn đó.
+- Tra bằng email vẫn trả đúng tài khoản tương ứng.
+- Khi khách bấm “Kiểm tra đơn hàng”, phải hiển thị đầy đủ thông tin như giao diện hiện tại.
+
+1. Cấu trúc dữ liệu
+
+Tách rõ:
+
+orders
+- id
+- order_code
+- product
+- customer_name
+- purchase_date
+- expiry_date
+- warranty_end_date
+- warranty_days
+- price
+- quantity
+- payment_method
+- status
+- created_at
+
+order_items
+- id
+- order_id
+- email_or_account
+- password
+- two_fa
+- item_status
+- replacement_history
+- created_at
+
+Một order có nhiều order_items.
+
+order_code phải unique.
+
+2. Tạo mã đơn
+
+Khi thêm đơn mới:
+
+- Nếu ảnh có mã đơn thì lấy mã trong ảnh.
+- Nếu không có thì hệ thống tự tạo.
+- Các tài khoản thêm cùng một lần phải dùng chung một mã đơn.
+- Không tạo mỗi tài khoản một mã khác nhau.
+
+Ví dụ:
+
+Mã đơn: ORD1AC006
+Số lượng: 5
+
+thì 5 tài khoản đều thuộc ORD1AC006.
+
+3. Import từ ảnh
+
+Nếu ảnh có:
+
+Mã đơn
+ORD1AC006
+
+thì tự đọc và điền order_code.
+
+Nếu một đơn có nhiều tài khoản:
+
+- Cho phép tải nhiều ảnh hoặc nhập nhiều dòng tài khoản.
+- Tất cả tài khoản phải được gắn vào cùng order_code.
+- Hiển thị số lượng tài khoản trước khi lưu.
+
+4. Tra cứu hỗ trợ
+
+Khách có thể nhập:
+
+- Mã đơn
+- Email/tài khoản
+- Nhiều email, mỗi dòng một mục
+
+Quy tắc:
+
+- Nếu nhập mã đơn thì trả toàn bộ tài khoản trong đơn.
+- Nếu nhập email thì chỉ trả tài khoản đó.
+- Không yêu cầu khách nhập tiền tố “email/tài khoản:”.
+- Phải tự loại bỏ phần nhãn nếu khách nhập dư.
+
+Ví dụ khách nhập:
+
+email/tài khoản: robertyteog@outlook.com
+
+thì phải tự chuẩn hóa thành:
+
+robertyteog@outlook.com
+
+5. Kết quả khi tra bằng mã đơn
+
+Hiển thị:
+
+📦 THÔNG TIN ĐƠN HÀNG
+
+🏷 Mã đơn: ORD1AC006
+📦 Sản phẩm: Grok
+👤 Khách hàng: ...
+📅 Ngày mua: 2026-07-18
+📅 Ngày hết hạn: 2026-07-31
+⌛ Còn lại: 14 ngày
+🛡 Bảo hành đến: 2026-07-30
+✅ Trạng thái BH: Còn bảo hành
+💰 Giá mua: 10.000đ
+💵 Hoàn dự kiến: ~10.769đ
+📊 Trạng thái: Đang hoạt động
+📦 Số lượng: 5
+
+Sau đó hiển thị danh sách tài khoản:
+
+1. email1@example.com
+2. email2@example.com
+3. email3@example.com
+4. email4@example.com
+5. email5@example.com
+
+Không hiển thị mật khẩu hoặc 2FA ở màn hình tra cứu công khai.
+
+6. Nút thao tác khi tra bằng mã đơn
+
+Nếu đơn có nhiều tài khoản, hiển thị:
+
+- “Báo lỗi tất cả”
+- “Chọn tài khoản cụ thể”
+- “Quay lại”
+
+Khi bấm “Chọn tài khoản cụ thể”:
+
+- Hiển thị danh sách từng email/tài khoản.
+- Mỗi tài khoản có nút chọn.
+- Cho phép chọn một hoặc nhiều tài khoản để báo lỗi.
+- Tối đa bằng số lượng tài khoản trong đơn.
+
+7. Hiển thị đầy đủ như ảnh hiện tại
+
+Khi khách bấm “Kiểm tra đơn hàng”, phải hiển thị đầy đủ:
+
+- Mã đơn
+- Email/tài khoản
+- Sản phẩm
+- Ngày mua
+- Ngày hết hạn
+- Số ngày còn lại
+- Ngày bảo hành đến
+- Trạng thái bảo hành
+- Giá mua
+- Tiền hoàn dự kiến
+- Trạng thái đơn
+
+Nếu tra bằng mã đơn nhiều tài khoản thì hiển thị thêm:
+
+- Số lượng
+- Danh sách tài khoản
+
+Không được chỉ trả kết quả ngắn kiểu:
+
+email — Grok | N/A
+
+8. Tính bảo hành
+
+Tất cả tài khoản trong cùng một đơn dùng chung:
+
+- Ngày mua
+- Giá gốc
+- Số ngày bảo hành
+- Ngày hết bảo hành
+
+Nhưng mỗi tài khoản phải có trạng thái riêng:
+
+- Đang hoạt động
+- Đã báo lỗi
+- Đã thay thế
+- Đã hoàn tiền
+- Bị từ chối
+- Đã đóng
+
+Tài khoản thay thế không được reset thời gian bảo hành.
+
+9. Báo lỗi tất cả
+
+Khi bấm “Báo lỗi tất cả”:
+
+- Tạo một ticket hỗ trợ chung cho mã đơn.
+- Ticket chứa toàn bộ order_item_id.
+- Admin xử lý từng tài khoản độc lập.
+- Có thể thay thế, hoàn tiền hoặc từ chối từng tài khoản.
+
+10. Chọn tài khoản cụ thể
+
+Cho phép khách chọn nhiều tài khoản.
+
+Sau khi chọn:
+
+- Yêu cầu mô tả lỗi một lần.
+- Tạo ticket chứa đúng các tài khoản đã chọn.
+- Không đưa các tài khoản không chọn vào ticket.
+
+11. Chống trùng
+
+- order_code phải unique.
+- email_or_account không được trùng trong cùng một đơn.
+- Một email có thể xuất hiện ở đơn khác chỉ khi hệ thống được phép bán lại; nếu không thì cảnh báo.
+- Không tự ghi đè dữ liệu cũ.
+
+12. API cần sửa
+
+GET /api/orders/lookup?query=...
+
+Phải tự nhận biết query là mã đơn hay email.
+
+Kết quả dạng:
+
+{
+  "found": true,
+  "lookupType": "order_code",
+  "order": {
+    "orderCode": "ORD1AC006",
+    "product": "Grok",
+    "purchaseDate": "2026-07-18",
+    "warrantyEndDate": "2026-07-30",
+    "price": 10000,
+    "quantity": 5,
+    "status": "active"
+  },
+  "items": [
+    {
+      "id": "...",
+      "account": "email1@example.com",
+      "status": "active"
+    }
+  ]
+}
+
+13. Migration dữ liệu cũ
+
+Không xóa các đơn đang có.
+
+Với dữ liệu cũ:
+
+- Mỗi đơn cũ tạo một order_code nếu đang thiếu.
+- Chuyển email/tài khoản sang order_items.
+- Giữ nguyên ngày mua, giá, bảo hành và lịch sử.
+- Không gửi lại thông báo bảo hành khi migration.
+
+14. Test bắt buộc
+
+Test các trường hợp:
+
+- Tra đúng một email.
+- Tra mã đơn có một tài khoản.
+- Tra mã đơn có nhiều tài khoản.
+- Báo lỗi tất cả.
+- Chọn một tài khoản.
+- Chọn nhiều tài khoản.
+- Email không tồn tại.
+- Mã đơn không tồn tại.
+- Nhập “email/tài khoản: email@example.com”.
+- Restart và deploy lại vẫn giữ dữ liệu.
+
+Mục tiêu cuối cùng:
+
+Một đơn hàng có thể chứa nhiều tài khoản. Khách tra bằng mã đơn sẽ thấy đầy đủ toàn bộ thông tin đơn hàng và tất cả tài khoản thuộc đơn đó. Tra bằng email vẫn hoạt động như hiện tại.
