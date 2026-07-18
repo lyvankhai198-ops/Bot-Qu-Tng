@@ -630,8 +630,9 @@ async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE
     order_id = order["orderId"]
     db.set_user_state(user.id, "_report_order_id", order_id)
 
-    if len(items) > 1:
-        # Multi-account order: show compact header + email list
+    # Multi-account display ONLY for order-ID lookups with >1 item.
+    # Email-based lookups always show single-item view (matched account only).
+    if result["lookupType"] == "order_id" and len(items) > 1:
         msg = _fmt_order_multi(L, order, items, settings)
         await update.message.reply_text(
             msg,
@@ -639,7 +640,7 @@ async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=order_inline_multi(L, order_id, len(items)),
         )
     else:
-        # Single or legacy order (0 items in order_items): standard display
+        # Single account: merge item email into order if needed (new-style order without email field)
         if items and not order.get("email"):
             order = {**order, "email": items[0].get("email", "")}
         msg = _fmt_order(L, order, settings)

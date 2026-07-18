@@ -393,8 +393,8 @@ def find_order_with_items(query: str) -> dict:
     for order_id, item_list in all_items.items():
         for item in item_list:
             if item.get("email", "").lower() == email_lower:
-                # Return ALL items for this order
-                return {"order": orders.get(order_id), "items": item_list, "lookupType": "email", "matchedItem": item}
+                # Return ONLY the matched item — never expose sibling accounts to a different user
+                return {"order": orders.get(order_id), "items": [item], "lookupType": "email", "matchedItem": item}
 
     # 3. Fallback: email in orders.json (old single-account structure without items)
     for order in orders.values():

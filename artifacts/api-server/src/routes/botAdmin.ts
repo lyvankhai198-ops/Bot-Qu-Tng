@@ -852,12 +852,12 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
     return res.json({ found: true, lookupType: "order_id", order: orders[normalized], items });
   }
 
-  // 2. Email match in order_items
+  // 2. Email match in order_items — return only the matched item, never sibling accounts
   const emailLower = normalized.toLowerCase();
   for (const [orderId, itemList] of Object.entries(orderItems) as [string, any[]][]) {
     for (const item of itemList) {
       if (item.email?.toLowerCase() === emailLower) {
-        return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null, items: itemList });
+        return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null, items: [item] });
       }
     }
   }

@@ -50681,7 +50681,7 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
   for (const [orderId, itemList] of Object.entries(orderItems)) {
     for (const item of itemList) {
       if (item.email?.toLowerCase() === emailLower) {
-        return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null, items: itemList });
+        return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null, items: [item] });
       }
     }
   }
