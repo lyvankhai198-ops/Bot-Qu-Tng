@@ -30,7 +30,21 @@ echo "▶ VPS: git pull + restart..."
 sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" "
   cd ${DEPLOY_PATH}
   git fetch origin main
+
+  # Backup data/ trước khi reset (data/ vừa được bỏ khỏi git tracking)
+  if [ -d data ]; then
+    cp -r data /tmp/bot_data_backup
+  fi
+
   git reset --hard origin/main
+
+  # Khôi phục data/ sau reset (git reset --hard sẽ xóa file đã untrack)
+  if [ -d /tmp/bot_data_backup ]; then
+    mkdir -p data
+    cp -rn /tmp/bot_data_backup/. data/
+    rm -rf /tmp/bot_data_backup
+  fi
+
   # Đảm bảo DATA_DIR có trong service
   if ! grep -q 'DATA_DIR' /etc/systemd/system/bot-api.service; then
     sed -i '/Environment=NODE_ENV=production/a Environment=DATA_DIR=${DEPLOY_PATH}/data' /etc/systemd/system/bot-api.service
