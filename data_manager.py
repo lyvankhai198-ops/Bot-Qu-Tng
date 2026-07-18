@@ -388,6 +388,8 @@ def find_item_by_any_account(email: str):
 
     # Pass 1: original_account / current_account / email fields
     for order_id, item_list in all_items.items():
+        if order_id not in orders:
+            continue  # skip orphan items whose order record is missing
         for item in item_list:
             orig = (item.get("original_account") or item.get("email") or "").lower()
             curr = (item.get("current_account") or item.get("email") or "").lower()
@@ -396,6 +398,8 @@ def find_item_by_any_account(email: str):
 
     # Pass 2: search historical replacement records
     for order_id, item_list in all_items.items():
+        if order_id not in orders:
+            continue  # skip orphan items
         for item in item_list:
             item_id = item.get("itemId", "")
             for rep in reps.get(item_id, []):
