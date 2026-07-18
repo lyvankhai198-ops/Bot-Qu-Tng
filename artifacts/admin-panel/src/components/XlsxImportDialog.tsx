@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import type { Order } from "@workspace/api-client-react"
 import {
-  detectColumns, buildRow, parseAccounts,
+  detectColumns, buildRow, parseAccounts, missingRequiredCols,
   type ParsedRow, type Account,
 } from "@/lib/xlsxUtils"
 
@@ -191,26 +191,47 @@ export default function XlsxImportDialog({ open, onClose, existingOrders, onImpo
     setFileName(file.name)
     try {
       const buf = await file.arrayBuffer()
-      const wb = XLSX.read(buf, { type: "array", raw: false, dateNF: "yyyy-mm-dd" })
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false })
+      // raw:true → numbers stay numbers, text stays text; we handle dates ourselves
+      const wb = XLSX.read(buf, { type: "array", raw: true })
+
+      // Prefer a sheet named "Orders" (case-insensitive), fall back to first sheet
+      const targetSheet = wb.SheetNames.find(n => n.toLowerCase() === "orders") ?? wb.SheetNames[0]
+      const ws = wb.Sheets[targetSheet]
+      const rawData: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true })
 
       if (rawData.length < 2) {
-        toast({ title: "File trống", description: "Không có dữ liệu trong sheet đầu tiên.", variant: "destructive" })
+        toast({ title: "File trống", description: `Sheet "${targetSheet}" không có dữ liệu.`, variant: "destructive" })
         return
       }
 
-      // Find header row (first row with at least one recognized column)
+      // Find header row: scan first 6 rows, pick the one with the most recognised columns
       let headerRowIdx = 0
       let colMap: Record<number, string> = {}
-      for (let i = 0; i < Math.min(5, rawData.length); i++) {
-        const candidate = detectColumns(rawData[i] as string[])
-        if (Object.keys(candidate).length >= 2) { headerRowIdx = i; colMap = candidate; break }
+      for (let i = 0; i < Math.min(6, rawData.length); i++) {
+        const candidate = detectColumns((rawData[i] ?? []) as string[])
+        if (Object.keys(candidate).length > Object.keys(colMap).length) {
+          colMap = candidate
+          headerRowIdx = i
+        }
       }
 
       if (Object.keys(colMap).length === 0) {
-        toast({ title: "Không nhận ra cột", description: "Vui lòng kiểm tra tên cột trong file XLSX.", variant: "destructive" })
+        toast({
+          title: "Không nhận ra cột nào",
+          description: `Hàng tiêu đề không khớp. Sheet dùng: "${targetSheet}". Kiểm tra tên cột: Mã đơn, Sản phẩm, Tài khoản đã giao…`,
+          variant: "destructive",
+        })
         return
+      }
+
+      // Warn about missing required columns but don't block
+      const missing = missingRequiredCols(colMap)
+      if (missing.length > 0) {
+        toast({
+          title: `Thiếu cột bắt buộc: ${missing.join(", ")}`,
+          description: "Dữ liệu sẽ thiếu thông tin. Tiếp tục xem trước để kiểm tra.",
+          variant: "destructive",
+        })
       }
 
       const parsed: ParsedRow[] = []
