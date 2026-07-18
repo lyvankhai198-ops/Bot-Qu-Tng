@@ -72,11 +72,11 @@ LANG = {
         # Multi-account support
         "support_multi_ask": (
             "💬 <b>HỖ TRỢ KHÁCH HÀNG</b>\n\n"
-            "Vui lòng nhập <b>email/tài khoản</b> cần hỗ trợ.\n"
-            "Bạn có thể nhập một hoặc <b>nhiều tài khoản</b>, mỗi tài khoản một dòng.\n\n"
+            "Vui lòng nhập <b>mã đơn</b> hoặc <b>email/tài khoản</b> cần hỗ trợ.\n"
+            "Bạn có thể nhập một hoặc <b>nhiều mục</b>, mỗi mục một dòng.\n\n"
             "<i>(Tối đa {max} tài khoản mỗi yêu cầu)</i>"
         ),
-        "support_multi_empty": "❌ Vui lòng nhập ít nhất một email/tài khoản.",
+        "support_multi_empty": "❌ Vui lòng nhập ít nhất một mã đơn hoặc email/tài khoản.",
         "support_multi_too_many": "❌ Tối đa <b>{max}</b> tài khoản mỗi yêu cầu. Vui lòng gửi ít hơn.",
         "support_multi_desc_ask": (
             "✏️ <b>MÔ TẢ LỖI</b>\n\n"
@@ -408,11 +408,11 @@ LANG = {
         # Multi-account support
         "support_multi_ask": (
             "💬 <b>CUSTOMER SUPPORT</b>\n\n"
-            "Please enter the <b>email/account(s)</b> you need help with.\n"
-            "You can enter one or <b>multiple accounts</b>, one per line.\n\n"
+            "Please enter your <b>order ID</b> or <b>email/account</b>.\n"
+            "You can enter one or <b>multiple items</b>, one per line.\n\n"
             "<i>(Maximum {max} accounts per request)</i>"
         ),
-        "support_multi_empty": "❌ Please enter at least one email/account.",
+        "support_multi_empty": "❌ Please enter at least one order ID or email/account.",
         "support_multi_too_many": "❌ Maximum <b>{max}</b> accounts per request. Please submit fewer.",
         "support_multi_desc_ask": (
             "✏️ <b>DESCRIBE THE ISSUE</b>\n\n"
