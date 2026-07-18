@@ -50815,11 +50815,11 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
   const orderItems = readJson("order_items", {}) ?? {};
   const allReps = readJson("account_replacements", {}) ?? {};
   const settings = readJson("settings", {}) ?? {};
-  const normalized = query.replace(/^(?:email\s*\/?\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*:\s*/i, "").trim();
+  const normalized = query.replace(/^(?:m[aã]\s*[đd][oơ]n|order\s*(?:code|id)?|email\s*\/?\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*[:：]\s*/i, "").trim();
   function calcWarranty(item, order) {
     const today = /* @__PURE__ */ new Date();
     today.setHours(0, 0, 0, 0);
-    const startStr = item.original_delivered_at || item.deliveredAt || order?.purchaseDate || "";
+    const startStr = item.original_delivered_at || item.deliveredAt || order?.paymentAt || order?.purchaseDate || "";
     const warrantyDays = Number(item.warranty_days || order?.warrantyDays || 0);
     let warrantyEnd = null;
     if (item.warranty_end_date) {
@@ -50844,23 +50844,29 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
         }
       }
     }
+    if (!startStr && !warrantyEnd) {
+      return {
+        warrantyStatus: "no_data",
+        remainingDays: null,
+        canReport: false,
+        refundAmount: 0,
+        warrantyEndDate: null,
+        originalDeliveredAt: null,
+        warrantyDays
+      };
+    }
     let remainingDays = null;
     let warrantyStatus = "unknown";
     let canReport = false;
     if (warrantyEnd) {
-      const diffMs = warrantyEnd.getTime() - today.getTime();
-      remainingDays = Math.max(0, Math.floor(diffMs / 864e5));
+      remainingDays = Math.max(0, Math.floor((warrantyEnd.getTime() - today.getTime()) / 864e5));
       warrantyStatus = remainingDays > 0 ? "active" : "expired";
       canReport = warrantyStatus === "active";
     }
     const price = Number(order?.price || 0);
     let refundAmount = 0;
     if (remainingDays && remainingDays > 0 && price && warrantyDays) {
-      if (settings.refund_formula === "custom" && settings.refund_custom_text) {
-        refundAmount = settings.refund_custom_text;
-      } else {
-        refundAmount = Math.round(price * remainingDays / warrantyDays);
-      }
+      refundAmount = settings.refund_formula === "custom" && settings.refund_custom_text ? settings.refund_custom_text : Math.round(price * remainingDays / warrantyDays);
     }
     return {
       warrantyStatus,
@@ -50872,16 +50878,37 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
       warrantyDays
     };
   }
-  function enrichItem(item, orderId, order) {
+  function buildOrderObj(orderId, order, allItemList) {
+    const w = calcWarranty({ warranty_days: order.warrantyDays, warranty_end_date: order.warrantyExpiry || order.warrantyDate }, order);
+    return {
+      orderCode: orderId,
+      product: order.productName || "",
+      customer: order.customerName || "",
+      purchaseDate: (order.purchaseDate || order.paymentAt || "").slice(0, 10) || null,
+      expiryDate: (order.expiryDate || "").slice(0, 10) || null,
+      warrantyEndDate: w.warrantyEndDate || (order.warrantyExpiry || order.warrantyDate || "").slice(0, 10) || null,
+      originalPrice: Number(order.price || 0),
+      quantity: allItemList.length || (order.quantity ?? 0),
+      status: order.status || "active"
+    };
+  }
+  function buildItemObj(item, order) {
     const reps = (allReps[item.itemId] ?? []).sort((a, b) => a.replacementNumber - b.replacementNumber);
     const wdata = calcWarranty(item, order);
+    const repCount = item.current_replacement_number ?? reps.length;
     return {
-      ...wdata,
-      orderCode: orderId,
       orderItemId: item.itemId,
       originalAccount: item.original_account || item.email || "",
       currentAccount: item.current_account || item.email || "",
-      replacementCount: item.current_replacement_number ?? reps.length,
+      replacementCount: repCount,
+      itemStatus: item.item_status || item.status || "active",
+      warrantyStatus: wdata.warrantyStatus,
+      remainingDays: wdata.remainingDays,
+      canReport: wdata.canReport,
+      refundAmount: wdata.refundAmount,
+      warrantyEndDate: wdata.warrantyEndDate,
+      originalDeliveredAt: wdata.originalDeliveredAt,
+      warrantyDays: wdata.warrantyDays,
       replacementHistory: reps.map((r) => ({
         replacementNumber: r.replacementNumber,
         previousAccount: r.previousAccount,
@@ -50891,13 +50918,34 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
       }))
     };
   }
-  if (orders[normalized]) {
-    const items = orderItems[normalized] ?? [];
+  const normUpper = normalized.toUpperCase();
+  const orderKey = normUpper in orders ? normUpper : normalized in orders ? normalized : null;
+  if (orderKey) {
+    const itemList = orderItems[orderKey] ?? [];
+    const orderObj = buildOrderObj(orderKey, orders[orderKey], itemList);
+    const isMulti = itemList.length > 1;
+    if (isMulti) {
+      return res.json({
+        found: true,
+        lookupType: "order_code",
+        isMultiAccountOrder: true,
+        order: orderObj,
+        items: itemList.map((it) => buildItemObj(it, orders[orderKey]))
+      });
+    }
+    const singleItem = itemList[0] ?? null;
+    const itemObj = singleItem ? buildItemObj(singleItem, orders[orderKey]) : null;
+    const wdata = singleItem ? calcWarranty(singleItem, orders[orderKey]) : null;
     return res.json({
       found: true,
-      lookupType: "order_id",
-      order: orders[normalized],
-      items: items.map((it) => enrichItem(it, normalized, orders[normalized]))
+      lookupType: "order_code",
+      isMultiAccountOrder: false,
+      order: orderObj,
+      ...itemObj ? { item: itemObj } : {},
+      remainingDays: wdata?.remainingDays ?? null,
+      warrantyStatus: wdata?.warrantyStatus ?? "unknown",
+      refundAmount: wdata?.refundAmount ?? 0,
+      canReport: wdata?.canReport ?? false
     });
   }
   const emailLower = normalized.toLowerCase();
@@ -50905,29 +50953,34 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
     for (const item of itemList) {
       const orig = (item.original_account || item.email || "").toLowerCase();
       const curr = (item.current_account || item.email || "").toLowerCase();
-      if (emailLower === orig || emailLower === curr) {
-        return res.json({
-          found: true,
-          lookupType: "email",
-          order: orders[orderId] ?? null,
-          items: [enrichItem(item, orderId, orders[orderId])]
-        });
-      }
-      for (const rep of allReps[item.itemId] ?? []) {
-        if ((rep.previousAccount || "").toLowerCase() === emailLower || (rep.newAccount || "").toLowerCase() === emailLower) {
-          return res.json({
-            found: true,
-            lookupType: "email",
-            order: orders[orderId] ?? null,
-            items: [enrichItem(item, orderId, orders[orderId])]
-          });
-        }
-      }
+      const matchesDirect = emailLower === orig || emailLower === curr;
+      const matchesHistory = !matchesDirect && (allReps[item.itemId] ?? []).some(
+        (r) => (r.previousAccount || "").toLowerCase() === emailLower || (r.newAccount || "").toLowerCase() === emailLower
+      );
+      if (!matchesDirect && !matchesHistory) continue;
+      const order = orders[orderId] ?? {};
+      const allItemsForOrder = orderItems[orderId] ?? [];
+      const isMulti = allItemsForOrder.length > 1;
+      const itemObj = buildItemObj(item, order);
+      const orderObj = buildOrderObj(orderId, order, allItemsForOrder);
+      return res.json({
+        found: true,
+        lookupType: "email",
+        isMultiAccountOrder: isMulti,
+        order: orderObj,
+        item: itemObj,
+        remainingDays: itemObj.remainingDays,
+        warrantyStatus: itemObj.warrantyStatus,
+        refundAmount: itemObj.refundAmount,
+        canReport: itemObj.canReport
+      });
     }
   }
-  for (const order of Object.values(orders)) {
+  for (const [orderId, order] of Object.entries(orders)) {
     if ((order.email || "").toLowerCase() === emailLower) {
-      return res.json({ found: true, lookupType: "email", order, items: [] });
+      const allItemsForOrder = orderItems[orderId] ?? [];
+      const orderObj = buildOrderObj(orderId, order, allItemsForOrder);
+      return res.json({ found: true, lookupType: "email", isMultiAccountOrder: false, order: orderObj, item: null, remainingDays: null, warrantyStatus: "unknown", refundAmount: 0, canReport: false });
     }
   }
   return res.json({ found: false });

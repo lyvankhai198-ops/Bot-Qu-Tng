@@ -408,38 +408,58 @@ def find_item_by_any_account(email: str):
 
 def find_order_with_items(query: str) -> dict:
     """
-    Unified lookup by order ID, original email, current email,
+    Unified lookup by order ID (or "mã đơn: XYZ"), original email, current email,
     or any historical account in the replacement chain.
     Returns:
-      { order: dict|None, items: list, lookupType: 'order_id'|'email'|None, matchedItem: dict|None }
+      { order, items, lookupType: 'order_id'|'email'|None, matchedItem,
+        isMultiAccountOrder: bool }
     Email-based lookups return only the single matched item (never siblings).
+    isMultiAccountOrder is True when the order has >1 item and lookup was by email.
     """
-    query = query.strip()
+    # Normalize: strip common label prefixes
+    query = re.sub(
+        r'^(?:m[aã]\s*[đd][oơ]n|order\s*(?:code|id)?|email|t[àa]i\s*kho[ảa]n)\s*[:：]\s*',
+        '', query.strip(), flags=re.IGNORECASE,
+    ).strip()
+
     orders    = load("orders", {})
     all_items = load("order_items", {})
 
     # 1. Order ID match — return all items for the order
-    if query in orders:
-        items = all_items.get(query, [])
-        return {"order": orders[query], "items": items, "lookupType": "order_id", "matchedItem": None}
+    query_upper = query.upper()
+    match_key = query_upper if query_upper in orders else (query if query in orders else None)
+    if match_key:
+        items = all_items.get(match_key, [])
+        return {
+            "order": orders[match_key],
+            "items": items,
+            "lookupType": "order_id",
+            "matchedItem": None,
+            "isMultiAccountOrder": len(items) > 1,
+        }
 
     # 2. Full chain search (original, current, replacement history)
     order_id, matched_item = find_item_by_any_account(query)
     if order_id and matched_item:
+        order_item_count = len(all_items.get(order_id, []))
         return {
             "order": orders.get(order_id),
             "items": [matched_item],
             "lookupType": "email",
             "matchedItem": matched_item,
+            "isMultiAccountOrder": order_item_count > 1,
         }
 
     # 3. Fallback: email in orders.json (old single-account structure without items)
     email_lower = query.lower()
     for order in orders.values():
         if order.get("email", "").lower() == email_lower:
-            return {"order": order, "items": [], "lookupType": "email", "matchedItem": None}
+            return {
+                "order": order, "items": [], "lookupType": "email",
+                "matchedItem": None, "isMultiAccountOrder": False,
+            }
 
-    return {"order": None, "items": [], "lookupType": None, "matchedItem": None}
+    return {"order": None, "items": [], "lookupType": None, "matchedItem": None, "isMultiAccountOrder": False}
 
 def migrate_to_order_items() -> int:
     """
@@ -580,7 +600,10 @@ def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
     remaining_days = None
     warranty_status = "unknown"
     can_report = False
-    if warranty_end:
+    # If we have no date data at all, signal "no_data" so UI can show a helpful error
+    if not start_str and not warranty_end:
+        warranty_status = "no_data"
+    elif warranty_end:
         remaining_days = max(0, (warranty_end - today).days)
         warranty_status = "active" if remaining_days > 0 else "expired"
         can_report = warranty_status == "active"
