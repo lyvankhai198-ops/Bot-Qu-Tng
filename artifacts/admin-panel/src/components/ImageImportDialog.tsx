@@ -373,13 +373,13 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
       <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: -1 }} />
 
       {/* Panel */}
-      <div style={{ background: "var(--background)", border: "1px solid var(--border)", borderRadius: "12px", width: "min(calc(100vw - 1rem), 860px)", maxHeight: "94dvh", overflowY: "auto", padding: "1rem", position: "relative" }}>
+      <div style={{ background: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "12px", width: "min(calc(100vw - 1rem), 860px)", maxHeight: "94dvh", overflowY: "auto", padding: "1rem", position: "relative" }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 600, fontSize: "1rem" }}>
             <Camera className="w-5 h-5" /> Thêm đơn hàng từ ảnh
           </div>
-          <button onClick={() => { handleReset(); onClose() }} style={{ padding: "4px", borderRadius: "4px", cursor: "pointer", background: "none", border: "none", color: "var(--foreground)" }}>
+          <button onClick={() => { handleReset(); onClose() }} style={{ padding: "4px", borderRadius: "4px", cursor: "pointer", background: "none", border: "none", color: "var(--color-foreground)" }}>
             <X className="w-5 h-5" />
           </button>
         </div>
