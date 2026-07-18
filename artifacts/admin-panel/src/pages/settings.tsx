@@ -20,7 +20,8 @@ import type { BotSettings, NotificationSettings } from "@workspace/api-client-re
 interface RequiredChannel {
   id: string
   name: string
-  username: string   // e.g. @kenhchính — used as chatId for getChatMember
+  username: string   // e.g. @kenhchính — used for getChatMember for public channels
+  chatId: string     // numeric Telegram channel ID e.g. -1001234567890 — required for private channels
   url: string        // full t.me link — used as button URL
   enabled: boolean
 }
@@ -92,18 +93,19 @@ export default function Settings() {
   // ── Required channels state ──────────────────────────────────────────────
   const [channels, setChannels] = useState<RequiredChannel[]>([])
   const [channelsSaving, setChannelsSaving] = useState(false)
-  const [newCh, setNewCh] = useState({ name: "", username: "", url: "" })
+  const [newCh, setNewCh] = useState({ name: "", username: "", chatId: "", url: "" })
   const [channelTests, setChannelTests] = useState<Record<string, { loading?: boolean; ok?: boolean; title?: string; botStatus?: string; isAdmin?: boolean; error?: string }>>({})
 
   const handleTestChannel = async (ch: RequiredChannel) => {
-    const chatId = ch.username?.replace(/^@/, "") || ""
-    if (!chatId) {
-      toast({ title: "Không thể kiểm tra", description: "Kênh private (không có username) — bot không thể xác minh qua getChatMember", variant: "destructive" })
+    // Prefer numeric chatId (works for private channels); fallback to username
+    const rawId = ch.chatId?.trim() || ch.username?.replace(/^@/, "").trim() || ""
+    if (!rawId) {
+      toast({ title: "Không thể kiểm tra", description: "Kênh chưa có Username hoặc Channel ID — hãy bổ sung để bot có thể xác minh thành viên", variant: "destructive" })
       return
     }
     setChannelTests(prev => ({ ...prev, [ch.id]: { loading: true } }))
     try {
-      const res = await fetch(`/api/bot/check-channel/${encodeURIComponent(chatId)}`, { headers: authHeader() })
+      const res = await fetch(`/api/bot/check-channel/${encodeURIComponent(rawId)}`, { headers: authHeader() })
       const data = await res.json()
       setChannelTests(prev => ({ ...prev, [ch.id]: data }))
       if (!data.canAccess) toast({ title: "Lỗi kết nối kênh", description: data.error ?? "Bot không thể truy cập kênh", variant: "destructive" })
@@ -184,13 +186,21 @@ export default function Settings() {
     if (!name) {
       toast({ title: "Lỗi", description: "Tên kênh là bắt buộc", variant: "destructive" }); return
     }
-    if (!rawUser && !url) {
-      toast({ title: "Lỗi", description: "Cần nhập Username hoặc Link tham gia (ít nhất một trong hai)", variant: "destructive" }); return
+    const rawChatId = newCh.chatId.trim()
+    if (!rawChatId && !rawUser && !url) {
+      toast({ title: "Lỗi", description: "Cần nhập Channel ID (khuyến nghị) hoặc Username để bot xác minh thành viên", variant: "destructive" }); return
+    }
+    if (!rawChatId) {
+      toast({
+        title: "⚠️ Không có Channel ID",
+        description: "Kênh không có Channel ID — bot sẽ không thể xác minh thành viên qua getChatMember. Người dùng sẽ bị block khi chưa tham gia.",
+      })
     }
     const ch: RequiredChannel = {
       id: Date.now().toString(),
       name,
       username: rawUser ? `@${rawUser}` : "",
+      chatId: newCh.chatId.trim(),
       url: url || (rawUser ? `https://t.me/${rawUser}` : ""),
       enabled: true,
     }
@@ -199,7 +209,7 @@ export default function Settings() {
     try {
       const saved = await saveChannels(updated)
       setChannels(saved)
-      setNewCh({ name: "", username: "", url: "" })
+      setNewCh({ name: "", username: "", chatId: "", url: "" })
       toast({ title: "Đã thêm kênh", description: ch.name })
     } catch (e: any) {
       toast({ title: "Lỗi", description: e.message, variant: "destructive" })
@@ -444,7 +454,7 @@ export default function Settings() {
           {/* Add new channel */}
           <div className="border border-dashed border-border/70 rounded-lg p-4 space-y-3 bg-muted/20">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Thêm kênh mới</p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="space-y-1">
                 <Label className="text-xs">Tên hiển thị *</Label>
                 <Input
@@ -455,7 +465,16 @@ export default function Settings() {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Username kênh (không @) <span className="text-muted-foreground/70">tuỳ chọn</span></Label>
+                <Label className="text-xs">Channel ID <span className="text-red-500 font-semibold">*</span> <span className="text-muted-foreground/70">(ưu tiên)</span></Label>
+                <Input
+                  value={newCh.chatId}
+                  onChange={e => setNewCh(n => ({ ...n, chatId: e.target.value }))}
+                  placeholder="-1001234567890"
+                  className="min-h-[44px] font-mono text-sm"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Username kênh <span className="text-muted-foreground/70">tuỳ chọn (kênh public)</span></Label>
                 <Input
                   value={newCh.username}
                   onChange={e => setNewCh(n => ({ ...n, username: e.target.value }))}
@@ -473,9 +492,11 @@ export default function Settings() {
                 />
               </div>
             </div>
-            <div className="text-xs text-muted-foreground space-y-0.5">
-              <p>• <b>Có Username</b>: bot xác minh thành viên qua getChatMember (cần bot là admin kênh)</p>
-              <p>• <b>Không có Username</b> (kênh private): chỉ hiện nút tham gia, không xác minh được</p>
+            <div className="text-xs text-muted-foreground space-y-0.5 bg-blue-50 dark:bg-blue-950/30 rounded p-2">
+              <p className="font-semibold text-blue-700 dark:text-blue-300">📋 Hướng dẫn lấy Channel ID:</p>
+              <p>1. Forward 1 tin nhắn từ kênh vào <b>@userinfobot</b></p>
+              <p>2. ID kênh có dạng <code className="bg-muted px-1 rounded">-100xxxxxxxxxx</code> (số âm)</p>
+              <p>3. <b>Channel ID</b> dùng được cho cả kênh public và private — bot không cần là admin để lấy ID, nhưng cần là admin để xác minh thành viên</p>
             </div>
             <Button onClick={handleAddChannel} disabled={channelsSaving} variant="outline" className="min-h-[44px]">
               <Plus className="w-4 h-4 mr-1" /> Thêm kênh
@@ -495,10 +516,15 @@ export default function Settings() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm">{ch.name}</span>
-                      {ch.username
-                        ? <Badge variant="secondary" className="font-mono text-xs">{ch.username}</Badge>
-                        : <Badge variant="outline" className="text-xs text-muted-foreground">private</Badge>
+                      {ch.chatId
+                        ? <Badge variant="default" className="font-mono text-xs bg-green-600 hover:bg-green-600">{ch.chatId}</Badge>
+                        : ch.username
+                          ? <Badge variant="secondary" className="font-mono text-xs">{ch.username}</Badge>
+                          : <Badge variant="destructive" className="text-xs">⚠️ Chưa có ID</Badge>
                       }
+                      {ch.username && ch.chatId && (
+                        <Badge variant="outline" className="font-mono text-xs text-muted-foreground">{ch.username}</Badge>
+                      )}
                       {ch.url && (
                         <a href={ch.url} target="_blank" rel="noopener noreferrer"
                            className="text-blue-500 hover:text-blue-600 inline-flex items-center gap-0.5 text-xs">

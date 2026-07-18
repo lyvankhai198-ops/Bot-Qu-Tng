@@ -1471,41 +1471,90 @@ router.put("/bot/intro", requireAuth, (req: any, res: any) => {
 router.get("/giveaway/membership-debug/:telegramUserId", requireAuth, async (req: any, res: any) => {
   const { telegramUserId } = req.params;
   if (!TG_TOKEN) { res.status(503).json({ error: "TELEGRAM_BOT_TOKEN not configured" }); return; }
+
   const channels: any[] = readJson("required_channels", []) ?? [];
   const enabled = channels.filter((c: any) => c.enabled !== false);
   const JOINED = new Set(["member", "administrator", "creator"]);
+  const CACHE_TTL_HOURS = 6;
+
+  // Load membership cache for this user
+  const allMemberships: any = readJson("user_channel_memberships", {}) ?? {};
+  const userCache: any = allMemberships[telegramUserId] ?? {};
+
+  function channelCacheKey(ch: any): string {
+    const cid = (ch.chatId || ch.username || ch.id || "").trim();
+    return cid.toLowerCase();
+  }
+  function isCacheValid(entry: any): boolean {
+    if (!entry?.is_verified || !entry?.verified_at) return false;
+    const vt = new Date(entry.verified_at).getTime();
+    return Date.now() < vt + CACHE_TTL_HOURS * 3600_000;
+  }
 
   const results = await Promise.all(enabled.map(async (ch: any) => {
-    const chatId = (ch.chatId || ch.username || "").trim();
-    const entry: any = { title: ch.name, channelId: chatId || "(none — private invite link)", inviteUrl: ch.url || "", enabled: true };
-    if (!chatId) { entry.botCanAccess = null; entry.memberStatus = "unverifiable (no chatId)"; return entry; }
-    const normalized = chatId.startsWith("-") || chatId.startsWith("+") || chatId.startsWith("@") ? chatId : `@${chatId}`;
+    const rawChatId = (ch.chatId || ch.username || "").trim();
+    const cacheKey = channelCacheKey(ch);
+    const cached = userCache[cacheKey] ?? null;
+
+    const entry: any = {
+      title: ch.name,
+      channelId: rawChatId || "(none — no chatId configured)",
+      inviteUrl: ch.url || "",
+      enabled: true,
+      // Cache info
+      savedStatus: cached?.membership_status ?? null,
+      isVerified: cached?.is_verified ?? false,
+      verifiedAt: cached?.verified_at ?? null,
+      lastCheckedAt: cached?.last_checked_at ?? null,
+      cacheValid: cached ? isCacheValid(cached) : false,
+    };
+
+    if (!rawChatId) {
+      entry.botCanAccess = null;
+      entry.telegramStatus = null;
+      entry.configError = "No chatId configured — getChatMember cannot be called";
+      return entry;
+    }
+
+    const normalized = rawChatId.startsWith("-") || rawChatId.startsWith("+") || rawChatId.startsWith("@")
+      ? rawChatId : `@${rawChatId}`;
+
     try {
       const chatResp = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getChat?chat_id=${encodeURIComponent(normalized)}`);
       const chatData: any = await chatResp.json();
       entry.botCanAccess = chatData.ok;
-      if (!chatData.ok) { entry.memberStatus = "error: " + (chatData.description ?? "cannot access channel"); return entry; }
+      if (!chatData.ok) {
+        entry.telegramStatus = null;
+        entry.apiError = chatData.description ?? "cannot access channel";
+        return entry;
+      }
       const mResp = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getChatMember?chat_id=${encodeURIComponent(normalized)}&user_id=${telegramUserId}`);
       const mData: any = await mResp.json();
       if (mData.ok) {
-        entry.memberStatus = mData.result.status;
+        entry.telegramStatus = mData.result.status;
         if (mData.result.status === "restricted") entry.is_member = mData.result.is_member ?? false;
-      } else { entry.memberStatus = "error: " + (mData.description ?? "getChatMember failed"); entry.botCanAccess = false; }
-    } catch (e: any) { entry.botCanAccess = false; entry.memberStatus = "error: " + (e?.message ?? "network"); }
+      } else {
+        entry.telegramStatus = null;
+        entry.apiError = mData.description ?? "getChatMember failed";
+        entry.botCanAccess = false;
+      }
+    } catch (e: any) {
+      entry.botCanAccess = false;
+      entry.telegramStatus = null;
+      entry.apiError = e?.message ?? "network error";
+    }
     return entry;
   }));
 
-  const allJoined = results.every((r: any) => {
-    if (!r.channelId || r.channelId.includes("none")) return true;
-    if (r.memberStatus === "restricted") return r.is_member === true;
-    return JOINED.has(r.memberStatus);
-  });
-  const missingCount = results.filter((r: any) => {
-    if (!r.channelId || r.channelId.includes("none")) return false;
-    if (r.memberStatus === "restricted") return !(r.is_member === true);
-    return !JOINED.has(r.memberStatus);
-  }).length;
-  res.json({ requiredChannels: results, allJoined, missingCount });
+  const JOINED_CHECK = (r: any) => {
+    if (!r.channelId || r.channelId.includes("none")) return false; // missing config = not OK
+    if (r.telegramStatus === "restricted") return r.is_member === true;
+    return JOINED.has(r.telegramStatus);
+  };
+  const allJoined = results.every(JOINED_CHECK);
+  const missingCount = results.filter(r => !JOINED_CHECK(r)).length;
+
+  res.json({ telegramUserId, channels: results, allJoined, missingCount });
 });
 
 // ── GET /bot/check-channel/:channelId ────────────────────────────────────────
