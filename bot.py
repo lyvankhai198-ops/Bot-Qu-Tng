@@ -446,14 +446,22 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
     blocked: list = []
 
     for e in emails:
-        order = db.find_order(e)
+        # Use find_order_with_items so emails stored in order_items (new multi-account model)
+        # are resolved correctly, not just legacy orders.json header emails.
+        result = db.find_order_with_items(e)
+        order = result.get("order")
         if not order:
             not_found.append(e)
             continue
-        em = order.get("email", e).lower()
-        if em in open_emails:
+        matched_item = result.get("matchedItem")
+        # Canonical email: use matched item email (shared orders have no header email)
+        canonical_email = (matched_item.get("email", "") if matched_item else "") or order.get("email", e) or e
+        if canonical_email.lower() in open_emails:
             blocked.append(e)
             continue
+        # Merge item email into order dict for display helpers that use order.email
+        if matched_item and not order.get("email"):
+            order = {**order, "email": canonical_email}
         found.append(_mw_compute_account(order, settings))
 
     if not found:
@@ -630,6 +638,13 @@ async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE
     order_id = order["orderId"]
     db.set_user_state(user.id, "_report_order_id", order_id)
 
+    # Store canonical email for warranty reporting (shared orders have no header email)
+    matched_item = result.get("matchedItem")
+    report_email = (matched_item.get("email", "") if matched_item else "") or order.get("email", "")
+    if items and not report_email:
+        report_email = items[0].get("email", "")
+    db.set_user_state(user.id, "_report_email", report_email)
+
     # Multi-account display ONLY for order-ID lookups with >1 item.
     # Email-based lookups always show single-item view (matched account only).
     if result["lookupType"] == "order_id" and len(items) > 1:
@@ -656,15 +671,26 @@ async def handle_report_issue_input(update: Update, context: ContextTypes.DEFAUL
     user = update.effective_user
     L = lang(user.id)
     description = update.message.text.strip()
-    order_id = db.get_user_state(user.id).get("_report_order_id", "")
+    state = db.get_user_state(user.id)
+    order_id = state.get("_report_order_id", "")
 
+    # Use stored email first (_report_email is set during lookup so shared orders work correctly)
+    email = state.get("_report_email", "")
+    if not email and order_id:
+        order = db.get_order(order_id)
+        email = order.get("email", "") if order else ""
+        # Fallback: check order_items for this order
+        if not email:
+            items = db.get_order_items(order_id)
+            if items:
+                email = items[0].get("email", "")
     order = db.get_order(order_id) if order_id else None
-    email = order.get("email", "") if order else ""
 
     req_id = db.add_warranty_request(user.id, user.username, user.first_name, order_id, email, description, L)
     db.add_log("WARRANTY_REQUEST", f"@{user.username} ({user.id}) | Order: {order_id}", "")
     db.clear_user_state(user.id, "conv_state")
     db.clear_user_state(user.id, "_report_order_id")
+    db.clear_user_state(user.id, "_report_email")
 
     await update.message.reply_text(
         t(L, "report_sent"),
@@ -689,6 +715,7 @@ async def callback_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if data == "order:back":
         db.clear_user_state(user.id, "conv_state")
         db.clear_user_state(user.id, "_report_order_id")
+        db.clear_user_state(user.id, "_report_email")
         await query.message.reply_text(
             t(L, "welcome", name=user.first_name or "User"),
             parse_mode=ParseMode.HTML,

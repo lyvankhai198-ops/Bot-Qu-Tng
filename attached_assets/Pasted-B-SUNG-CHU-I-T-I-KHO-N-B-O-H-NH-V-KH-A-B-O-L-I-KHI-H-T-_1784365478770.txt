@@ -1,0 +1,486 @@
+BỔ SUNG CHUỖI TÀI KHOẢN BẢO HÀNH VÀ KHÓA BÁO LỖI KHI HẾT HẠN
+
+Yêu cầu mới:
+
+Mỗi tài khoản gốc có thể được thay thế nhiều lần trong suốt thời hạn bảo hành.
+
+Ví dụ:
+
+Tài khoản gốc
+→ Tài khoản bảo hành lần 1
+→ Tài khoản bảo hành lần 2
+→ Tài khoản bảo hành lần 3
+
+Toàn bộ chuỗi này phải được lưu lại đầy đủ để sau này tiếp tục tra cứu, báo lỗi và xử lý bảo hành.
+
+Quan trọng:
+
+Thời hạn bảo hành luôn tính từ ngày giao tài khoản gốc.
+
+Tài khoản thay thế không được làm mới hoặc cộng thêm thời gian bảo hành.
+
+--------------------------------------------------
+1. CẤU TRÚC DỮ LIỆU
+--------------------------------------------------
+
+Mỗi tài khoản trong đơn hàng cần có một bản ghi gốc trong order_items.
+
+Tạo thêm bảng lịch sử thay thế, ví dụ:
+
+account_replacements
+- id
+- order_item_id
+- previous_account
+- new_account
+- new_password_encrypted
+- new_two_fa_encrypted
+- replacement_number
+- delivered_at
+- reason
+- support_ticket_id
+- created_by
+- created_at
+- status
+
+Trong đó:
+
+- order_item_id luôn trỏ về tài khoản gốc trong đơn hàng
+- previous_account là tài khoản bị lỗi gần nhất
+- new_account là tài khoản thay thế mới
+- replacement_number lần lượt là 1, 2, 3...
+- delivered_at là thời gian giao tài khoản thay thế cho khách
+
+Không tạo một order mới cho tài khoản thay thế.
+
+Không thay đổi purchase_date hoặc original_delivered_at của tài khoản gốc.
+
+--------------------------------------------------
+2. LƯU TÀI KHOẢN HIỆN TẠI
+--------------------------------------------------
+
+Trong order_items cần có:
+
+- original_account
+- original_delivered_at
+- current_account
+- current_replacement_number
+- warranty_days
+- warranty_end_date
+- item_status
+
+Ví dụ:
+
+original_account:
+account-goc@example.com
+
+current_account:
+account-bh-2@example.com
+
+current_replacement_number:
+2
+
+Khi thay tài khoản:
+
+- Giữ nguyên original_account
+- Cập nhật current_account thành tài khoản mới
+- Tăng current_replacement_number
+- Ghi thêm một bản ghi vào account_replacements
+
+Không được xóa lịch sử cũ.
+
+--------------------------------------------------
+3. CHUỖI LỊCH SỬ THAY THẾ
+--------------------------------------------------
+
+Khi admin xem chi tiết tài khoản, hiển thị:
+
+Tài khoản gốc:
+account-goc@example.com
+Giao lúc: 18/07/2026 10:37
+
+Bảo hành lần 1:
+account-bh-1@example.com
+Giao lúc: 20/07/2026 15:20
+
+Bảo hành lần 2:
+account-bh-2@example.com
+Giao lúc: 23/07/2026 09:10
+
+Tài khoản đang sử dụng:
+account-bh-2@example.com
+
+Hiển thị theo dạng chuỗi:
+
+Tài khoản gốc
+→ Bảo hành lần 1
+→ Bảo hành lần 2
+
+Không hiển thị mật khẩu hoặc 2FA công khai.
+
+--------------------------------------------------
+4. TRA CỨU BẰNG BẤT KỲ TÀI KHOẢN NÀO
+--------------------------------------------------
+
+Khách có thể nhập:
+
+- Tài khoản gốc
+- Tài khoản bảo hành lần 1
+- Tài khoản bảo hành lần 2
+- Mã đơn
+
+Hệ thống đều phải tìm đúng order_item gốc.
+
+Ví dụ khách nhập:
+
+account-bh-1@example.com
+
+thì hệ thống phải nhận ra tài khoản này thuộc chuỗi của:
+
+account-goc@example.com
+
+và hiện tài khoản đang sử dụng hiện tại là:
+
+account-bh-2@example.com
+
+Không chỉ tìm trong order_items.current_account.
+
+Phải tìm cả:
+
+- original_account
+- current_account
+- account_replacements.previous_account
+- account_replacements.new_account
+
+--------------------------------------------------
+5. CÁCH TÍNH BẢO HÀNH
+--------------------------------------------------
+
+Mốc bắt đầu bảo hành:
+
+original_delivered_at
+
+Nếu dữ liệu cũ chưa có original_delivered_at thì dùng theo thứ tự ưu tiên:
+
+1. delivered_at của tài khoản gốc
+2. payment_at
+3. purchase_date
+
+Công thức:
+
+warranty_end_date =
+original_delivered_at + warranty_days
+
+Tuyệt đối không dùng delivered_at của tài khoản thay thế để tính lại.
+
+Ví dụ:
+
+Tài khoản gốc giao ngày:
+18/07/2026
+
+Bảo hành:
+30 ngày
+
+Tài khoản bảo hành lần 1 giao:
+25/07/2026
+
+Tài khoản bảo hành lần 2 giao:
+10/08/2026
+
+Ngày hết bảo hành vẫn giữ nguyên theo tài khoản gốc.
+
+Không cộng thêm 30 ngày từ ngày 25/07 hoặc 10/08.
+
+--------------------------------------------------
+6. KIỂM TRA HẾT HẠN
+--------------------------------------------------
+
+Mỗi lần khách tra cứu hoặc bấm báo lỗi, backend phải kiểm tra lại thời hạn bảo hành bằng thời gian server.
+
+Nếu:
+
+current_time > warranty_end_date
+
+thì trả:
+
+warrantyStatus = "expired"
+
+Giao diện hiển thị:
+
+❌ Trạng thái BH: Hết bảo hành
+
+📅 Bảo hành đến: DD/MM/YYYY
+
+Không hiển thị:
+
+- Số tiền hoàn dự kiến
+- Nút “Báo lỗi”
+- Nút “Báo lỗi tất cả”
+- Nút “Chọn tài khoản cụ thể”
+
+Thay bằng:
+
+“Đơn hàng đã hết thời hạn bảo hành.”
+
+Chỉ giữ nút:
+
+“Quay lại”
+
+--------------------------------------------------
+7. KHÔNG ĐƯỢC GỬI BÁO LỖI KHI HẾT HẠN
+--------------------------------------------------
+
+Không chỉ ẩn nút ở Telegram.
+
+Backend bắt buộc phải chặn.
+
+Khi tạo support ticket:
+
+POST /api/support/tickets
+
+phải kiểm tra:
+
+- order item có tồn tại
+- warranty_end_date còn hiệu lực
+- trạng thái có được phép báo lỗi hay không
+
+Nếu đã hết hạn, trả lỗi:
+
+{
+  "success": false,
+  "code": "WARRANTY_EXPIRED",
+  "message": "Tài khoản đã hết thời hạn bảo hành."
+}
+
+Không được:
+
+- Tạo ticket
+- Gửi thông báo Telegram cho admin
+- Tạo reminder
+- Ghi nhận yêu cầu bảo hành mới
+
+Kể cả khách dùng callback cũ hoặc gọi API trực tiếp cũng phải bị chặn.
+
+--------------------------------------------------
+8. CHẶN BÁO LỖI TẤT CẢ
+--------------------------------------------------
+
+Nếu khách tra mã đơn có nhiều tài khoản:
+
+- Tài khoản còn bảo hành mới được chọn báo lỗi
+- Tài khoản hết bảo hành phải hiển thị “Hết bảo hành” và bị vô hiệu hóa
+
+Nếu tất cả tài khoản đều hết bảo hành:
+
+- Không hiển thị nút “Báo lỗi tất cả”
+- Không hiển thị nút “Chọn tài khoản cụ thể”
+- Hiển thị:
+
+“Không còn tài khoản nào trong đơn đủ điều kiện bảo hành.”
+
+Nếu chỉ một số tài khoản còn bảo hành:
+
+- “Báo lỗi tất cả” chỉ áp dụng cho các tài khoản còn bảo hành
+- Không đưa tài khoản hết hạn vào ticket
+
+--------------------------------------------------
+9. KHI THAY TÀI KHOẢN
+--------------------------------------------------
+
+Trước khi admin gửi tài khoản thay thế, backend phải kiểm tra thời hạn bảo hành lần cuối.
+
+Nếu trong lúc admin xử lý mà bảo hành đã hết:
+
+- Không cho gửi tài khoản thay thế
+- Không cho hoàn tiền bảo hành
+- Hiển thị cảnh báo:
+
+“Đơn hàng đã hết hạn bảo hành trong thời gian xử lý.”
+
+Trường hợp admin cần xử lý ngoại lệ thì phải có quyền riêng:
+
+“Xử lý thủ công ngoài bảo hành”
+
+và phải ghi log lý do.
+
+Không cho mặc định vượt qua kiểm tra.
+
+--------------------------------------------------
+10. TIỀN HOÀN DỰ KIẾN
+--------------------------------------------------
+
+Tiền hoàn luôn tính từ giá gốc và thời hạn bảo hành gốc:
+
+remaining_days =
+warranty_end_date - ngày hiện tại
+
+refund_amount =
+original_price / warranty_days × remaining_days
+
+Nếu remaining_days <= 0:
+
+refund_amount = 0
+
+Tài khoản thay thế lần 1, lần 2 hoặc lần 3 không được thay đổi:
+
+- original_price
+- original_delivered_at
+- warranty_days
+- warranty_end_date
+
+--------------------------------------------------
+11. HIỂN THỊ TRÊN TELEGRAM
+--------------------------------------------------
+
+Khi còn bảo hành:
+
+📦 THÔNG TIN ĐƠN HÀNG
+
+🏷 Mã đơn: ...
+📧 Tài khoản gốc: ...
+🔄 Tài khoản hiện tại: ...
+🔢 Số lần đã bảo hành: 2
+📅 Ngày giao gốc: ...
+🛡 Bảo hành đến: ...
+⌛ Còn lại: ... ngày
+✅ Trạng thái BH: Còn bảo hành
+💰 Giá mua: ...
+💵 Hoàn dự kiến: ...
+📊 Trạng thái: Đang hoạt động
+
+Khi hết bảo hành:
+
+📦 THÔNG TIN ĐƠN HÀNG
+
+🏷 Mã đơn: ...
+📧 Tài khoản gốc: ...
+🔄 Tài khoản hiện tại: ...
+🔢 Số lần đã bảo hành: 2
+📅 Ngày giao gốc: ...
+🛡 Bảo hành đến: ...
+❌ Trạng thái BH: Hết bảo hành
+📊 Trạng thái: Hết bảo hành
+
+Không hiển thị nút báo lỗi.
+
+--------------------------------------------------
+12. TRẠNG THÁI TÀI KHOẢN
+--------------------------------------------------
+
+Mỗi order_item cần hỗ trợ:
+
+- active
+- reported
+- under_review
+- replaced
+- refunded
+- rejected
+- expired
+- closed
+
+Khi thay tài khoản:
+
+- Tài khoản cũ trong chuỗi được đánh dấu replaced
+- current_account mới được coi là active
+- order_item gốc vẫn là bản ghi chính
+
+Khi hết bảo hành:
+
+- Không nhất thiết ghi đè toàn bộ item_status
+- Có thể tính warrantyStatus động
+- Nhưng mọi thao tác bảo hành phải bị khóa
+
+--------------------------------------------------
+13. MIGRATION DỮ LIỆU CŨ
+--------------------------------------------------
+
+Không xóa dữ liệu hiện tại.
+
+Với đơn cũ:
+
+- Tài khoản đang có được coi là original_account nếu chưa có lịch sử
+- purchase_date hoặc delivered_at hiện tại được dùng làm original_delivered_at
+- Giữ nguyên warranty_days
+- Tính và lưu warranty_end_date
+- Nếu đã có ghi chú thay thế cũ thì cố gắng chuyển vào account_replacements
+- Không gửi lại thông báo Telegram khi migration
+
+--------------------------------------------------
+14. API TRA CỨU
+--------------------------------------------------
+
+Kết quả API cần có:
+
+{
+  "found": true,
+  "orderCode": "ORD...",
+  "orderItemId": "...",
+  "originalAccount": "account-goc@example.com",
+  "currentAccount": "account-bh-2@example.com",
+  "replacementCount": 2,
+  "originalDeliveredAt": "2026-07-18T10:37:14",
+  "warrantyDays": 30,
+  "warrantyEndDate": "2026-08-17",
+  "remainingDays": 10,
+  "warrantyStatus": "active",
+  "canReport": true,
+  "replacementHistory": [
+    {
+      "replacementNumber": 1,
+      "previousAccount": "account-goc@example.com",
+      "newAccount": "account-bh-1@example.com",
+      "deliveredAt": "2026-07-25T15:20:00"
+    },
+    {
+      "replacementNumber": 2,
+      "previousAccount": "account-bh-1@example.com",
+      "newAccount": "account-bh-2@example.com",
+      "deliveredAt": "2026-08-10T09:10:00"
+    }
+  ]
+}
+
+Nếu hết hạn:
+
+{
+  "warrantyStatus": "expired",
+  "remainingDays": 0,
+  "canReport": false,
+  "refundAmount": 0
+}
+
+--------------------------------------------------
+15. TEST BẮT BUỘC
+--------------------------------------------------
+
+Test chuỗi:
+
+Tài khoản gốc
+→ Tài khoản bảo hành 1
+→ Tài khoản bảo hành 2
+
+Phải kiểm tra:
+
+1. Tra tài khoản gốc ra đúng đơn.
+2. Tra tài khoản bảo hành 1 ra đúng đơn.
+3. Tra tài khoản bảo hành 2 ra đúng đơn.
+4. Hiển thị đúng tài khoản hiện tại.
+5. Hiển thị đủ lịch sử thay thế.
+6. Thời hạn vẫn tính từ ngày giao tài khoản gốc.
+7. Restart server không mất lịch sử.
+8. Deploy code không reset lịch sử.
+9. Khi còn hạn thì tạo báo lỗi được.
+10. Khi hết hạn thì không thấy nút báo lỗi.
+11. Gọi API trực tiếp khi hết hạn cũng bị chặn.
+12. Không gửi thông báo cho admin khi ticket bị chặn do hết hạn.
+13. Không tạo reminder khi hết hạn.
+14. Tài khoản thay thế không làm mới bảo hành.
+
+Mục tiêu cuối cùng:
+
+Hệ thống phải giữ đầy đủ chuỗi tài khoản:
+
+Tài khoản gốc → bảo hành lần 1 → bảo hành lần 2 → ...
+
+Bất kỳ tài khoản nào trong chuỗi cũng tra được về đúng đơn gốc.
+
+Toàn bộ bảo hành chỉ tính từ ngày giao tài khoản gốc. Khi hết hạn phải hiển thị “Hết bảo hành” và tuyệt đối không cho gửi báo lỗi.
