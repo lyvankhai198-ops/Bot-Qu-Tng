@@ -1,5 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react"
-import { createPortal } from "react-dom"
+import { useState, useCallback, useRef } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -195,8 +194,6 @@ interface DoneResult { added: number; skipped: number; errors: number }
 export default function ImageImportDialog({ open, onClose, existingOrders }: Props) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
-  const fileRef = useRef<HTMLInputElement>(null)
-  const cameraRef = useRef<HTMLInputElement>(null)
   const dropRef = useRef<HTMLDivElement>(null)
 
   const [stage, setStage] = useState<Stage>("upload")
@@ -377,45 +374,36 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
         {/* ── STAGE: UPLOAD ─────────────────────────────────────────────────── */}
         {stage === "upload" && (
           <div className="space-y-4 py-2">
-            {/* Drop zone — label wraps the multi-file input so tap works natively on iOS */}
+            {/* Drop zone — input nested INSIDE label: most iOS-reliable approach, no JS .click() */}
             <label
-              htmlFor="ocr-file-multi"
-              ref={dropRef as any}
               onDrop={handleDrop}
               onDragOver={e => e.preventDefault()}
-              className="block border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary hover:bg-muted/30 transition-colors"
+              className="relative block border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary hover:bg-muted/30 transition-colors"
             >
               <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
               <p className="font-medium text-sm">Kéo thả ảnh vào đây hoặc bấm để chọn</p>
               <p className="text-xs text-muted-foreground mt-1">Hỗ trợ JPG, PNG, WEBP · Tối đa 20 ảnh</p>
+              {/* Input covers entire drop zone — direct tap on iOS, no JS needed */}
+              <input type="file" accept="image/*" multiple
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
             </label>
 
-            {/* Label-based triggers — most reliable on iOS; no JS .click() needed */}
+            {/* Buttons with input nested inside label — works on iOS Safari inside Radix Dialog */}
             <div className="flex gap-2">
-              <label htmlFor="ocr-file-multi" className="flex-1">
-                <div className="flex items-center justify-center gap-2 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground h-11 px-4 py-2 text-sm font-medium cursor-pointer transition-colors w-full">
-                  <Upload className="w-4 h-4" /> Chọn từ máy tính
-                </div>
+              <label className="relative flex-1 flex items-center justify-center gap-2 rounded-md border border-input bg-background h-11 px-4 text-sm font-medium cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
+                <Upload className="w-4 h-4" /> Chọn từ máy tính
+                <input type="file" accept="image/*" multiple
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
               </label>
-              <label htmlFor="ocr-file-camera" className="flex-1">
-                <div className="flex items-center justify-center gap-2 rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground h-11 px-4 py-2 text-sm font-medium cursor-pointer transition-colors w-full">
-                  <Camera className="w-4 h-4" /> Dùng camera
-                </div>
+              <label className="relative flex-1 flex items-center justify-center gap-2 rounded-md border border-input bg-background h-11 px-4 text-sm font-medium cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
+                <Camera className="w-4 h-4" /> Dùng camera
+                <input type="file" accept="image/*" capture="environment"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
               </label>
             </div>
-
-            {/* Inputs portalled to document.body — Radix Dialog blocks onChange on iOS when inputs are inside the modal */}
-            {createPortal(
-              <>
-                <input id="ocr-file-multi" ref={fileRef} type="file" accept="image/*" multiple
-                  style={{ position: "fixed", left: "-9999px", top: "-9999px", width: "1px", height: "1px", opacity: 0 }}
-                  onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
-                <input id="ocr-file-camera" ref={cameraRef} type="file" accept="image/*" capture="environment"
-                  style={{ position: "fixed", left: "-9999px", top: "-9999px", width: "1px", height: "1px", opacity: 0 }}
-                  onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
-              </>,
-              document.body
-            )}
 
             {/* Thumbnail grid */}
             {images.length > 0 && (
