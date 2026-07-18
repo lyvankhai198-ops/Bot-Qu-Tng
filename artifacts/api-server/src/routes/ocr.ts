@@ -14,11 +14,15 @@ async function getOpenAI(): Promise<any> {
   return _openai;
 }
 
+const GEMINI_MODEL = "gemini-2.0-flash";
+
 /** Call Gemini REST API directly */
 async function callGemini(base64: string, mimeType: string): Promise<string> {
   const apiKey = process.env.GOOGLE_AI_API_KEY!;
-  const url    = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-  const body   = {
+  const url    = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+  console.info(`Gemini call: model=${GEMINI_MODEL} mimeType=${mimeType}`);
+
+  const body = {
     system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
     contents: [{ parts: [
       { text: "Trích xuất thông tin đơn hàng từ ảnh này." },
@@ -26,8 +30,28 @@ async function callGemini(base64: string, mimeType: string): Promise<string> {
     ]}],
     generationConfig: { maxOutputTokens: 1024 }
   };
-  const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!resp.ok) { const t = await resp.text().catch(() => ""); throw new Error(`Gemini ${resp.status}: ${t.slice(0, 300)}`); }
+
+  const resp = await fetch(url, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const raw: any = await resp.json().catch(() => ({}));
+    const msg: string = raw?.error?.message ?? "";
+    const violations  = raw?.error?.details?.find((d: any) => d.violations)?.violations ?? [];
+    const isZeroLimit = violations.some((v: any) => String(v.quotaId ?? "").includes("FreeTier"));
+
+    if (resp.status === 429 && isZeroLimit) {
+      throw new Error(
+        "Gemini API quota exceeded: Project chưa bật billing trên Google Cloud Console. " +
+        "Free tier limit = 0. Vào https://console.cloud.google.com → Billing → Link billing account."
+      );
+    }
+    throw new Error(`Gemini ${resp.status}: ${msg || JSON.stringify(raw).slice(0, 200)}`);
+  }
+
   const data: any = await resp.json();
   return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }

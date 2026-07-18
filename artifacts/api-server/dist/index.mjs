@@ -61968,6 +61968,85 @@ router.get("/healthz", (_req, res) => {
   const data = HealthCheckResponse.parse({ status: "ok" });
   res.json(data);
 });
+router.get("/health/gemini", async (_req, res) => {
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
+  const model = "gemini-2.0-flash";
+  if (!apiKey) {
+    return res.status(503).json({
+      ok: false,
+      step: "config",
+      error: "GOOGLE_AI_API_KEY ch\u01B0a \u0111\u01B0\u1EE3c c\u1EA5u h\xECnh"
+    });
+  }
+  const keyPrefix = `${apiKey.slice(0, 12)}...`;
+  let modelAccessible = false;
+  let projectError = null;
+  try {
+    const listResp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}?key=${apiKey}`
+    );
+    if (listResp.ok) {
+      modelAccessible = true;
+    } else {
+      const d = await listResp.json();
+      projectError = d?.error?.message ?? `HTTP ${listResp.status}`;
+    }
+  } catch (e) {
+    projectError = e.message;
+  }
+  const testUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const testBody = {
+    contents: [{ parts: [{ text: "Hello" }] }],
+    generationConfig: { maxOutputTokens: 5 }
+  };
+  let quotaOk = false;
+  let quotaError = null;
+  let rawResponse = null;
+  let responseText = "";
+  try {
+    const resp = await fetch(testUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(testBody)
+    });
+    rawResponse = await resp.json();
+    if (resp.ok) {
+      quotaOk = true;
+      responseText = rawResponse?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    } else {
+      quotaError = rawResponse?.error ?? rawResponse;
+      const msg = quotaError?.message ?? "";
+      const violations = rawResponse?.error?.details?.find((d) => d.violations)?.violations ?? [];
+      const hasZeroLimit = violations.some(
+        (v) => typeof v.quotaId === "string" && v.quotaId.includes("FreeTier")
+      );
+      if (resp.status === 429 && hasZeroLimit) {
+        quotaError._diagnosis = "Project ch\u01B0a b\u1EADt billing tr\xEAn Google Cloud Console. Free tier limit = 0 (kh\xF4ng ph\u1EA3i quota h\u1EBFt). Fix: https://console.cloud.google.com \u2192 Billing \u2192 Link billing account.";
+      } else if (resp.status === 429) {
+        quotaError._diagnosis = "Quota th\u1EF1c s\u1EF1 b\u1ECB v\u01B0\u1EE3t \u2014 th\u1EED l\u1EA1i sau.";
+      } else if (resp.status === 403) {
+        quotaError._diagnosis = "API key kh\xF4ng c\xF3 quy\u1EC1n truy c\u1EADp model n\xE0y.";
+      } else if (resp.status === 400) {
+        quotaError._diagnosis = "Request kh\xF4ng h\u1EE3p l\u1EC7 \u2014 ki\u1EC3m tra c\u1EA5u h\xECnh.";
+      }
+    }
+  } catch (e) {
+    quotaError = { message: e.message, _diagnosis: "Network error khi g\u1ECDi Gemini API." };
+  }
+  const ok = quotaOk && modelAccessible;
+  return res.status(ok ? 200 : 503).json({
+    ok,
+    model,
+    keyPrefix,
+    modelAccessible: projectError ? false : modelAccessible,
+    modelError: projectError,
+    quota: quotaOk ? "OK" : "FAILED",
+    quotaTextTestResponse: quotaOk ? responseText : void 0,
+    quotaError: quotaOk ? void 0 : quotaError,
+    rawGeminiResponse: quotaOk ? void 0 : rawResponse,
+    conclusion: ok ? `\u2705 Gemini API ho\u1EA1t \u0111\u1ED9ng b\xECnh th\u01B0\u1EDDng (model: ${model})` : quotaError?._diagnosis ?? "\u274C Gemini API kh\xF4ng kh\u1EA3 d\u1EE5ng"
+  });
+});
 var health_default = router;
 
 // src/routes/botAdmin.ts
@@ -62775,9 +62854,11 @@ async function getOpenAI() {
   }
   return _openai;
 }
+var GEMINI_MODEL = "gemini-2.0-flash";
 async function callGemini(base64, mimeType) {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+  console.info(`Gemini call: model=${GEMINI_MODEL} mimeType=${mimeType}`);
   const body = {
     system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
     contents: [{ parts: [
@@ -62786,10 +62867,22 @@ async function callGemini(base64, mimeType) {
     ] }],
     generationConfig: { maxOutputTokens: 1024 }
   };
-  const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
   if (!resp.ok) {
-    const t = await resp.text().catch(() => "");
-    throw new Error(`Gemini ${resp.status}: ${t.slice(0, 300)}`);
+    const raw = await resp.json().catch(() => ({}));
+    const msg = raw?.error?.message ?? "";
+    const violations = raw?.error?.details?.find((d) => d.violations)?.violations ?? [];
+    const isZeroLimit = violations.some((v) => String(v.quotaId ?? "").includes("FreeTier"));
+    if (resp.status === 429 && isZeroLimit) {
+      throw new Error(
+        "Gemini API quota exceeded: Project ch\u01B0a b\u1EADt billing tr\xEAn Google Cloud Console. Free tier limit = 0. V\xE0o https://console.cloud.google.com \u2192 Billing \u2192 Link billing account."
+      );
+    }
+    throw new Error(`Gemini ${resp.status}: ${msg || JSON.stringify(raw).slice(0, 200)}`);
   }
   const data = await resp.json();
   return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
