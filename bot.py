@@ -537,11 +537,17 @@ async def maintenance_reply(update: Update, L: str) -> bool:
 _JOINED_STATUSES = {"member", "administrator", "creator"}
 
 async def _check_channels_membership(bot, user_id: int, channels: list) -> list:
-    """Return list of enabled channels the user has NOT joined."""
+    """Return list of enabled channels the user has NOT joined.
+
+    Channels without a username/chatId (private invite-link-only channels) cannot
+    be verified via getChatMember, so they are skipped in the check — the join
+    button still appears but membership is not enforced.
+    """
     not_joined = []
     for ch in channels:
         chat_id = ch.get("chatId") or ch.get("username") or ""
         if not chat_id:
+            # Private channel — cannot verify; skip verification for this channel
             continue
         # Normalize: if no @ and no +, treat as numeric or add @
         if not str(chat_id).startswith(("-", "@", "+")):

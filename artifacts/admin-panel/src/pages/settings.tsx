@@ -148,14 +148,17 @@ export default function Settings() {
     const name = newCh.name.trim()
     const username = newCh.username.trim().replace(/^@/, "")
     const url = newCh.url.trim()
-    if (!name || !username) {
-      toast({ title: "Lỗi", description: "Tên kênh và Username là bắt buộc", variant: "destructive" }); return
+    if (!name) {
+      toast({ title: "Lỗi", description: "Tên kênh là bắt buộc", variant: "destructive" }); return
+    }
+    if (!username && !url) {
+      toast({ title: "Lỗi", description: "Cần nhập Username hoặc Link tham gia (ít nhất một trong hai)", variant: "destructive" }); return
     }
     const ch: RequiredChannel = {
       id: Date.now().toString(),
       name,
-      username: `@${username}`,
-      url: url || `https://t.me/${username}`,
+      username: username ? `@${username}` : "",
+      url: url || (username ? `https://t.me/${username}` : ""),
       enabled: true,
     }
     const updated = [...channels, ch]
@@ -419,7 +422,7 @@ export default function Settings() {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Username kênh * (không @)</Label>
+                <Label className="text-xs">Username kênh (không @) <span className="text-muted-foreground/70">tuỳ chọn</span></Label>
                 <Input
                   value={newCh.username}
                   onChange={e => setNewCh(n => ({ ...n, username: e.target.value }))}
@@ -428,18 +431,19 @@ export default function Settings() {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Link tham gia (tuỳ chọn)</Label>
+                <Label className="text-xs">Link tham gia <span className="text-muted-foreground/70">tuỳ chọn</span></Label>
                 <Input
                   value={newCh.url}
                   onChange={e => setNewCh(n => ({ ...n, url: e.target.value }))}
-                  placeholder="https://t.me/..."
+                  placeholder="https://t.me/+abcxyz hoặc https://t.me/kenh"
                   className="min-h-[44px]"
                 />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Bot phải là <b>admin</b> trong kênh để có thể kiểm tra thành viên.
-            </p>
+            <div className="text-xs text-muted-foreground space-y-0.5">
+              <p>• <b>Có Username</b>: bot xác minh thành viên qua getChatMember (cần bot là admin kênh)</p>
+              <p>• <b>Không có Username</b> (kênh private): chỉ hiện nút tham gia, không xác minh được</p>
+            </div>
             <Button onClick={handleAddChannel} disabled={channelsSaving} variant="outline" className="min-h-[44px]">
               <Plus className="w-4 h-4 mr-1" /> Thêm kênh
             </Button>
