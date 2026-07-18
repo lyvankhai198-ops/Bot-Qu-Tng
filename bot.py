@@ -121,6 +121,7 @@ def _fmt_order(L: str, order: dict, settings: dict) -> str:
     status_str = status_map.get(order.get("status", "active"), order.get("status", ""))
 
     return t(L, "order_display",
+        order_id    = order.get("orderId", ""),
         email       = order.get("email", ""),
         product     = order.get("productName", ""),
         purchase    = (order.get("purchaseDate", "") or "")[:10],
@@ -816,6 +817,7 @@ def _build_warranty_notif_msg(req: dict, order: dict | None, tag: str = "🔔", 
         purchase_date = pd[:10] if pd else ""
 
     lines = [f"{tag} <b>YÊU CẦU BẢO HÀNH MỚI{urgency}</b>\n"]
+    lines.append(f"📦 Mã đơn: <code>{order_id}</code>")
     lines.append(f"📧 Email: <code>{email}</code>")
     if product_name:
         lines.append(f"🛍 Sản phẩm: <b>{product_name}</b>")
@@ -944,8 +946,10 @@ async def callback_warranty_ack(update: Update, context: ContextTypes.DEFAULT_TY
             f"Vui lòng chờ và không gửi lại yêu cầu trùng lặp."
         )
     else:
+        order_id = req.get("orderId", "N/A")
         cust_msg = (
             f"✅ <b>YÊU CẦU ĐÃ ĐƯỢC TIẾP NHẬN</b>\n\n"
+            f"Mã đơn: <code>{order_id}</code>\n\n"
             f"Shop đã nhận được yêu cầu bảo hành của bạn và đang tiến hành kiểm tra. "
             f"Kết quả xử lý sẽ được bot thông báo ngay khi hoàn tất. "
             f"Vui lòng chờ và không gửi lại yêu cầu trùng lặp."

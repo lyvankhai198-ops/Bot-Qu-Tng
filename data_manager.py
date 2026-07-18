@@ -323,8 +323,8 @@ def find_order_by_email(email: str):
     return None
 
 def find_order(query: str):
-    """Find by email only."""
-    return find_order_by_email(query)
+    """Find by order ID or email."""
+    return get_order(query) or find_order_by_email(query)
 
 # ─── Warranty Requests ────────────────────────────────────────────────────
 

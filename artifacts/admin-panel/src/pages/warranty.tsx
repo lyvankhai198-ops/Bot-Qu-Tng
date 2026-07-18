@@ -386,6 +386,7 @@ export default function Warranty() {
                       </div>
                       <div>
                         <h4 className="font-medium">{req.email || (req as any).username || "Ẩn danh"}</h4>
+                        <code className="text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded">{req.orderId}</code>
                         <div className="mt-2 bg-muted/50 p-3 rounded-lg text-sm border border-border/50">{req.description}</div>
                       </div>
                     </div>
@@ -439,6 +440,7 @@ export default function Warranty() {
                           <span className="text-sm font-medium">{req.email || (req as any).username || "Ẩn danh"}</span>
                         </div>
                       </div>
+                      <code className="text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded">{req.orderId}</code>
                       <div className="bg-muted/50 p-3 rounded-lg text-sm border border-border/50">{req.description}</div>
                       <div className="text-xs text-muted-foreground space-y-1">
                         {r.acknowledgedAt && (
@@ -509,6 +511,7 @@ export default function Warranty() {
                         </span>
                       </div>
                       <div className="text-xs text-muted-foreground space-y-1">
+                        <div>📦 Mã đơn: <code className="bg-muted px-1 rounded">{req.orderId}</code></div>
                         {r.replacementEmail && (
                           <>
                             <div>📧 TK thay thế: <code className="bg-muted px-1 rounded">{r.replacementEmail}</code></div>
