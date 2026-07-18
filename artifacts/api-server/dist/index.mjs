@@ -62766,14 +62766,25 @@ var botAdmin_default = router2;
 var import_express3 = __toESM(require_express2(), 1);
 var import_multer = __toESM(require_multer(), 1);
 var _openai = null;
+var _model = "gpt-5.6-luna";
 async function getOpenAI() {
   if (!_openai) {
+    const groqKey = process.env.GROQ_API_KEY;
+    if (groqKey) {
+      const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
+      _openai = new OpenAI2({ apiKey: groqKey, baseURL: "https://api.groq.com/openai/v1" });
+      _model = "meta-llama/llama-4-scout-17b-16e-instruct";
+      return _openai;
+    }
     const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
     const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-    if (!baseURL || !apiKey)
-      throw new Error("AI env vars not configured. Set AI_INTEGRATIONS_OPENAI_BASE_URL and AI_INTEGRATIONS_OPENAI_API_KEY.");
-    const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
-    _openai = new OpenAI2({ apiKey, baseURL });
+    if (baseURL && apiKey) {
+      const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
+      _openai = new OpenAI2({ apiKey, baseURL });
+      _model = "gpt-5.6-luna";
+      return _openai;
+    }
+    throw new Error("Ch\u01B0a c\u1EA5u h\xECnh AI: c\u1EA7n GROQ_API_KEY ho\u1EB7c AI_INTEGRATIONS_OPENAI_BASE_URL");
   }
   return _openai;
 }
@@ -62861,7 +62872,7 @@ router3.post(
         const mimeType = file.mimetype.startsWith("image/") ? file.mimetype : "image/jpeg";
         const oai = await getOpenAI();
         const response = await oai.chat.completions.create({
-          model: "gpt-5.6-luna",
+          model: _model,
           max_completion_tokens: 1024,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },

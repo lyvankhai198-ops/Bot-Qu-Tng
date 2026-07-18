@@ -1,16 +1,30 @@
 import { Router } from "express";
 import multer from "multer";
 
-// ── OpenAI lazy init ─────────────────────────────────────────────────────────
+// ── OpenAI-compatible client (Groq preferred, fallback to Replit AI Integration) ─
 let _openai: any = null;
+let _model: string = "gpt-5.6-luna";
+
 async function getOpenAI(): Promise<any> {
   if (!_openai) {
+    // 1. Groq (free, works on VPS)
+    const groqKey = process.env.GROQ_API_KEY;
+    if (groqKey) {
+      const { default: OpenAI } = await import("openai");
+      _openai = new OpenAI({ apiKey: groqKey, baseURL: "https://api.groq.com/openai/v1" });
+      _model  = "meta-llama/llama-4-scout-17b-16e-instruct";
+      return _openai;
+    }
+    // 2. Replit AI Integration (only works inside Replit environment)
     const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
     const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-    if (!baseURL || !apiKey)
-      throw new Error("AI env vars not configured. Set AI_INTEGRATIONS_OPENAI_BASE_URL and AI_INTEGRATIONS_OPENAI_API_KEY.");
-    const { default: OpenAI } = await import("openai");
-    _openai = new OpenAI({ apiKey, baseURL });
+    if (baseURL && apiKey) {
+      const { default: OpenAI } = await import("openai");
+      _openai = new OpenAI({ apiKey, baseURL });
+      _model  = "gpt-5.6-luna";
+      return _openai;
+    }
+    throw new Error("Chưa cấu hình AI: cần GROQ_API_KEY hoặc AI_INTEGRATIONS_OPENAI_BASE_URL");
   }
   return _openai;
 }
@@ -105,7 +119,7 @@ router.post(
 
         const oai      = await getOpenAI();
         const response = await oai.chat.completions.create({
-          model: "gpt-5.6-luna",
+          model: _model,
           max_completion_tokens: 1024,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
