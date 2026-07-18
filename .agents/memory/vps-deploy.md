@@ -9,16 +9,23 @@ Sau khi hoàn thành bất kỳ thay đổi nào, agent PHẢI tự động:
 1. Git commit + push lên GitHub (`main`)
 2. SSH vào VPS, git reset --hard origin/main, restart service
 
-Dùng script `scripts/deploy.sh` (đã có sẵn trong repo).
-
 **Why:** User đã yêu cầu rõ ràng — không cần hỏi lại mỗi lần.
 
-## Thực thi
+## Thực thi — 2 bước bắt buộc
 
-Chạy qua ShellExec với env vars từ Replit Secrets:
+### Bước 1: Push GitHub (dùng CodeExecution — KHÔNG dùng git CLI)
+```javascript
+// Commit trước bằng ShellExec
+// git add -A && git commit -m "..."
+const result = await gitPush({});
+```
+Lý do: GitHub không cho phép password auth qua CLI; gitPush() dùng OAuth của Replit.
 
+### Bước 2: Deploy VPS (dùng ShellExec)
 ```bash
-DEPLOY_MSG="<mô tả thay đổi>" bash scripts/deploy.sh
+export VPS_HOST=103.180.138.203 VPS_USER=root VPS_DEPLOY_PATH=/root/Bot-Qu-Tng VPS_SERVICE=gift-bot
+export VPS_PASSWORD="$(printenv VPS_PASSWORD)"
+bash scripts/deploy.sh
 ```
 
 Các secrets/env vars cần có:
