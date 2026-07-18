@@ -17,6 +17,7 @@ import Settings from "@/pages/settings";
 import Receivers from "@/pages/receivers";
 import Intro from "@/pages/intro";
 import Logs from "@/pages/logs";
+import RefundHistory from "@/pages/refund-history";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -71,6 +72,7 @@ function Router() {
       <Route path="/intro"><ProtectedRoute component={Intro} /></Route>
       <Route path="/receivers"><ProtectedRoute component={Receivers} /></Route>
       <Route path="/logs"><ProtectedRoute component={Logs} /></Route>
+      <Route path="/refund-history"><ProtectedRoute component={RefundHistory} /></Route>
       <Route component={NotFound} />
     </Switch>
   );

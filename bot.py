@@ -212,11 +212,29 @@ def _fmt_order(L: str, order: dict, settings: dict,
             lines.append(f"💰 {'Giá mua' if vi else 'Price'}: {price_str}")
             if can_report and refund_str:
                 lines.append(f"💵 {'Hoàn dự kiến' if vi else 'Est. Refund'}: {refund_str}")
-            status_label = (
-                ("Đang hoạt động" if vi else "Active") if can_report
-                else ("Hết bảo hành" if vi else "Warranty expired")
-            )
+            is_refunded = order.get("status") == "refunded"
+            if is_refunded:
+                status_label = "Đã hoàn tiền" if vi else "Refunded"
+            else:
+                status_label = (
+                    ("Đang hoạt động" if vi else "Active") if can_report
+                    else ("Hết bảo hành" if vi else "Warranty expired")
+                )
             lines.append(f"📊 {'Trạng thái' if vi else 'Status'}: {status_label}")
+
+            # Refund detail block
+            if is_refunded:
+                ref = db.get_refund_record(order.get("orderId", ""))
+                lines.append("")
+                lines.append("━" * 28)
+                lines.append(f"💰 <b>{'ĐÃ HOÀN TIỀN' if vi else 'REFUNDED'}</b>")
+                if ref:
+                    amt = ref.get("amount", 0)
+                    lines.append(f"💵 {'Số tiền đã hoàn' if vi else 'Refund amount'}: <b>{_fmt_price(int(amt), L)}</b>")
+                    lines.append(f"🕒 {'Thời gian hoàn' if vi else 'Refunded on'}: {(ref.get('refundedAt') or '')[:10]}")
+                    if ref.get("note"):
+                        lines.append(f"📝 {'Ghi chú' if vi else 'Note'}: {ref['note']}")
+                lines.append(f"⚠️ <i>{'Đơn này đã được hoàn tiền và không thể gửi thêm yêu cầu bảo hành.' if vi else 'This order has been refunded. No further warranty requests allowed.'}</i>")
 
         # Replacement chain section (spec §5 / §12)
         if replacement_count > 0:
@@ -306,6 +324,21 @@ def _fmt_order(L: str, order: dict, settings: dict,
     lines_leg.append(f"💰 {'Giá mua' if vi else 'Price'}: {price_str}")
     lines_leg.append(f"💵 {'Hoàn dự kiến' if vi else 'Est. Refund'}: {refund_str}")
     lines_leg.append(f"📊 {'Trạng thái' if vi else 'Status'}: <b>{status_str}</b>")
+
+    # Refund detail block (legacy path)
+    if order.get("status") == "refunded":
+        ref = db.get_refund_record(order.get("orderId", ""))
+        lines_leg.append("")
+        lines_leg.append("━" * 28)
+        lines_leg.append(f"💰 <b>{'ĐÃ HOÀN TIỀN' if vi else 'REFUNDED'}</b>")
+        if ref:
+            amt = ref.get("amount", 0)
+            lines_leg.append(f"💵 {'Số tiền đã hoàn' if vi else 'Refund amount'}: <b>{_fmt_price(int(amt), L)}</b>")
+            lines_leg.append(f"🕒 {'Thời gian hoàn' if vi else 'Refunded on'}: {(ref.get('refundedAt') or '')[:10]}")
+            if ref.get("note"):
+                lines_leg.append(f"📝 {'Ghi chú' if vi else 'Note'}: {ref['note']}")
+        lines_leg.append(f"⚠️ <i>{'Đơn này đã được hoàn tiền. Không thể gửi thêm yêu cầu.' if vi else 'This order has been refunded. No further requests allowed.'}</i>")
+
     return "\n".join(lines_leg)
 
 def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
@@ -367,6 +400,21 @@ def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
     lines.append(f"{warranty_icon} {'Trạng thái bảo hành' if vi else 'Warranty status'}: {warranty_label}")
     lines.append(f"💰 {'Tổng giá trị đơn' if vi else 'Total order value'}: {price_str}")
     lines.append(f"📊 {'Trạng thái' if vi else 'Status'}: {status_str}")
+
+    # Refund detail block (multi-order)
+    if order.get("status") == "refunded":
+        ref = db.get_refund_record(order.get("orderId", ""))
+        lines.append("")
+        lines.append("━" * 28)
+        lines.append(f"💰 <b>{'ĐÃ HOÀN TIỀN' if vi else 'REFUNDED'}</b>")
+        if ref:
+            amt = ref.get("amount", 0)
+            lines.append(f"💵 {'Số tiền đã hoàn' if vi else 'Refund amount'}: <b>{_fmt_price(int(amt), L)}</b>")
+            lines.append(f"🕒 {'Thời gian hoàn' if vi else 'Refunded on'}: {(ref.get('refundedAt') or '')[:10]}")
+            if ref.get("note"):
+                lines.append(f"📝 {'Ghi chú' if vi else 'Note'}: {ref['note']}")
+        lines.append(f"⚠️ <i>{'Đơn này đã được hoàn tiền. Không thể gửi thêm yêu cầu.' if vi else 'This order has been refunded. No further requests allowed.'}</i>")
+
     lines.append(f"📦 {'Số lượng' if vi else 'Quantity'}: <b>{len(items)}</b>")
     lines.append(f"\n<b>{'DANH SÁCH TÀI KHOẢN' if vi else 'ACCOUNT LIST'}</b>")
 
