@@ -35,7 +35,13 @@ echo "✓ dist uploaded"
 
 # ── 4. Restart services on VPS ────────────────────────────────────────────────
 echo "▶ Restarting services on VPS..."
-sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" \
-  "systemctl restart ${VPS_SERVICE} bot-api && systemctl is-active ${VPS_SERVICE} bot-api"
+sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" "
+  # Ensure DATA_DIR is set correctly in bot-api service
+  if ! grep -q 'DATA_DIR' /etc/systemd/system/bot-api.service; then
+    sed -i '/Environment=NODE_ENV=production/a Environment=DATA_DIR=${VPS_DEPLOY_PATH}/data' /etc/systemd/system/bot-api.service
+    systemctl daemon-reload
+  fi
+  systemctl restart ${VPS_SERVICE} bot-api && systemctl is-active ${VPS_SERVICE} bot-api
+"
 
 echo "✅ Deploy complete → http://${VPS_HOST}/admin-panel/"
