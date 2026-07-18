@@ -95,6 +95,53 @@ export default function Settings() {
   const [channelsSaving, setChannelsSaving] = useState(false)
   const [newCh, setNewCh] = useState({ name: "", username: "", chatId: "", url: "" })
   const [channelTests, setChannelTests] = useState<Record<string, { loading?: boolean; ok?: boolean; title?: string; botStatus?: string; isAdmin?: boolean; error?: string }>>({})
+  const [fetchingInfo, setFetchingInfo] = useState(false)
+  const [fetchResult, setFetchResult] = useState<{ ok: boolean; chatId?: string; title?: string; username?: string; isAdmin?: boolean; botStatus?: string; error?: string } | null>(null)
+
+  const handleFetchChannelInfo = async () => {
+    // Accept username (@handle), link (t.me/...), or numeric chatId
+    const raw = (newCh.username || newCh.chatId || newCh.url || "").trim()
+    if (!raw) {
+      toast({ title: "Cần nhập thông tin kênh", description: "Nhập Username (không @), link t.me hoặc Channel ID để tra cứu", variant: "destructive" })
+      return
+    }
+    // Resolve to an identifier getChat can handle
+    let identifier = raw
+    // Link → extract username or use as-is
+    const linkMatch = raw.match(/t\.me\/([^/?]+)/)
+    if (linkMatch) identifier = linkMatch[1].startsWith("+") ? raw : linkMatch[1]
+    // Strip leading @ if any
+    if (identifier.startsWith("@")) identifier = identifier.slice(1)
+
+    setFetchingInfo(true)
+    setFetchResult(null)
+    try {
+      const res = await fetch(`/api/bot/check-channel/${encodeURIComponent(identifier)}`, { headers: authHeader() })
+      const data = await res.json()
+      setFetchResult(data)
+      if (data.ok && data.canAccess) {
+        // Auto-fill form fields
+        setNewCh(n => ({
+          ...n,
+          name: n.name || data.title || "",
+          chatId: data.chatId || n.chatId,
+          username: data.username || n.username,
+        }))
+        if (data.isAdmin) {
+          toast({ title: "✅ Lấy thông tin thành công", description: `${data.title} · ID: ${data.chatId} · Bot là ${data.botStatus}` })
+        } else {
+          toast({ title: "⚠️ Lấy được thông tin nhưng bot chưa là admin", description: `ID: ${data.chatId} · Bot status: ${data.botStatus}. Cần thêm bot làm admin kênh để xác minh thành viên.`, variant: "destructive" })
+        }
+      } else {
+        toast({ title: "Không thể truy cập kênh", description: data.error ?? "Bot không nhận ra kênh này. Kiểm tra username/link và đảm bảo bot đã được thêm vào kênh.", variant: "destructive" })
+      }
+    } catch (e: any) {
+      setFetchResult({ ok: false, error: e.message })
+      toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    } finally {
+      setFetchingInfo(false)
+    }
+  }
 
   const handleTestChannel = async (ch: RequiredChannel) => {
     // Prefer numeric chatId (works for private channels); fallback to username
@@ -169,39 +216,32 @@ export default function Settings() {
   // ── Channel helpers ──────────────────────────────────────────────────────
   const handleAddChannel = async () => {
     const name = newCh.name.trim()
-    let rawUser = newCh.username.trim().replace(/^@/, "")
-    let url = newCh.url.trim()
-
-    // Auto-detect: if username field contains a URL, move it to URL field
-    if (/^https?:\/\/|^t\.me\//i.test(rawUser)) {
-      if (!url) url = rawUser.startsWith("http") ? rawUser : `https://${rawUser}`
-      rawUser = ""
-      setNewCh(n => ({ ...n, username: "", url }))
-      toast({
-        title: "Đã tự động chuyển",
-        description: "Link tham gia đã được chuyển sang trường 'Link tham gia'. Username để trống cho kênh private.",
-      })
-    }
-
     if (!name) {
       toast({ title: "Lỗi", description: "Tên kênh là bắt buộc", variant: "destructive" }); return
     }
-    const rawChatId = newCh.chatId.trim()
-    if (!rawChatId && !rawUser && !url) {
-      toast({ title: "Lỗi", description: "Cần nhập Channel ID (khuyến nghị) hoặc Username để bot xác minh thành viên", variant: "destructive" }); return
+
+    const chatId  = newCh.chatId.trim()
+    // username: if we have a fetchResult, it's already `@handle`; otherwise treat as raw input
+    const rawUsr  = newCh.username.trim()
+    const handle  = rawUsr.startsWith("@") ? rawUsr : rawUsr ? `@${rawUsr}` : ""
+    const url     = newCh.url.trim()
+
+    if (!chatId && !handle && !url) {
+      toast({ title: "Lỗi", description: "Bấm 'Lấy thông tin kênh' trước để điền Channel ID tự động", variant: "destructive" }); return
     }
-    if (!rawChatId) {
+    if (!chatId) {
       toast({
         title: "⚠️ Không có Channel ID",
-        description: "Kênh không có Channel ID — bot sẽ không thể xác minh thành viên qua getChatMember. Người dùng sẽ bị block khi chưa tham gia.",
+        description: "Bot sẽ không thể xác minh thành viên qua getChatMember. Khuyến nghị dùng 'Lấy thông tin kênh' trước.",
       })
     }
+
     const ch: RequiredChannel = {
       id: Date.now().toString(),
       name,
-      username: rawUser ? `@${rawUser}` : "",
-      chatId: newCh.chatId.trim(),
-      url: url || (rawUser ? `https://t.me/${rawUser}` : ""),
+      username: handle,
+      chatId,
+      url: url || (handle ? `https://t.me/${handle.replace(/^@/, "")}` : ""),
       enabled: true,
     }
     const updated = [...channels, ch]
@@ -210,6 +250,7 @@ export default function Settings() {
       const saved = await saveChannels(updated)
       setChannels(saved)
       setNewCh({ name: "", username: "", chatId: "", url: "" })
+      setFetchResult(null)
       toast({ title: "Đã thêm kênh", description: ch.name })
     } catch (e: any) {
       toast({ title: "Lỗi", description: e.message, variant: "destructive" })
@@ -454,51 +495,88 @@ export default function Settings() {
           {/* Add new channel */}
           <div className="border border-dashed border-border/70 rounded-lg p-4 space-y-3 bg-muted/20">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Thêm kênh mới</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <Label className="text-xs">Tên hiển thị *</Label>
-                <Input
-                  value={newCh.name}
-                  onChange={e => setNewCh(n => ({ ...n, name: e.target.value }))}
-                  placeholder="AI Center Official"
-                  className="min-h-[44px]"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Channel ID <span className="text-red-500 font-semibold">*</span> <span className="text-muted-foreground/70">(ưu tiên)</span></Label>
-                <Input
-                  value={newCh.chatId}
-                  onChange={e => setNewCh(n => ({ ...n, chatId: e.target.value }))}
-                  placeholder="-1001234567890"
-                  className="min-h-[44px] font-mono text-sm"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Username kênh <span className="text-muted-foreground/70">tuỳ chọn (kênh public)</span></Label>
+            {/* Step 1: Lookup */}
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold">Bước 1 — Tra cứu kênh</Label>
+              <div className="flex gap-2">
                 <Input
                   value={newCh.username}
-                  onChange={e => setNewCh(n => ({ ...n, username: e.target.value }))}
-                  placeholder="kenhchinhthuc"
-                  className="min-h-[44px]"
+                  onChange={e => { setNewCh(n => ({ ...n, username: e.target.value })); setFetchResult(null) }}
+                  placeholder="username (không @), t.me/+xxx hoặc -100xxxxxxxxx"
+                  className="min-h-[44px] flex-1"
                 />
+                <Button
+                  onClick={handleFetchChannelInfo}
+                  disabled={fetchingInfo}
+                  variant="secondary"
+                  className="min-h-[44px] shrink-0 gap-1.5"
+                >
+                  {fetchingInfo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
+                  Lấy thông tin kênh
+                </Button>
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Link tham gia <span className="text-muted-foreground/70">tuỳ chọn</span></Label>
-                <Input
-                  value={newCh.url}
-                  onChange={e => setNewCh(n => ({ ...n, url: e.target.value }))}
-                  placeholder="https://t.me/+abcxyz hoặc https://t.me/kenh"
-                  className="min-h-[44px]"
-                />
+
+              {/* Fetch result card */}
+              {fetchResult && (
+                <div className={`rounded-lg border px-3 py-2 text-xs space-y-0.5 ${fetchResult.ok && fetchResult.chatId ? "border-green-300 bg-green-50 dark:bg-green-950/30" : "border-red-300 bg-red-50 dark:bg-red-950/30"}`}>
+                  {fetchResult.ok && fetchResult.chatId ? (
+                    <>
+                      <p className="font-semibold text-green-700 dark:text-green-400">✅ Tìm thấy kênh — thông tin đã tự động điền</p>
+                      <p>Tên: <b>{fetchResult.title}</b></p>
+                      <p>Channel ID: <code className="bg-muted px-1 rounded font-mono">{fetchResult.chatId}</code></p>
+                      {fetchResult.username && <p>Username: <code className="bg-muted px-1 rounded">{fetchResult.username}</code></p>}
+                      {fetchResult.isAdmin
+                        ? <p className="text-green-700 dark:text-green-400">🤖 Bot là <b>{fetchResult.botStatus}</b> — getChatMember hoạt động ✓</p>
+                        : <p className="text-amber-600 font-semibold">⚠️ Bot chưa là admin (status: {fetchResult.botStatus}) — cần thêm bot làm quản trị viên kênh để xác minh thành viên</p>
+                      }
+                    </>
+                  ) : (
+                    <p className="text-red-700 dark:text-red-400">❌ {fetchResult.error ?? "Không thể truy cập kênh"}</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Step 2: Fill remaining fields */}
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold">Bước 2 — Điền thông tin còn lại</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Tên hiển thị *</Label>
+                  <Input
+                    value={newCh.name}
+                    onChange={e => setNewCh(n => ({ ...n, name: e.target.value }))}
+                    placeholder="AI Center Official"
+                    className="min-h-[44px]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Channel ID <span className="text-muted-foreground/70">(tự động từ Bước 1)</span></Label>
+                  <Input
+                    value={newCh.chatId}
+                    onChange={e => setNewCh(n => ({ ...n, chatId: e.target.value }))}
+                    placeholder="-1001234567890"
+                    className={`min-h-[44px] font-mono text-sm ${newCh.chatId ? "border-green-400" : ""}`}
+                    readOnly={!!fetchResult?.ok && !!newCh.chatId}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Link tham gia <span className="text-muted-foreground/70">tuỳ chọn</span></Label>
+                  <Input
+                    value={newCh.url}
+                    onChange={e => setNewCh(n => ({ ...n, url: e.target.value }))}
+                    placeholder="https://t.me/+abcxyz"
+                    className="min-h-[44px]"
+                  />
+                </div>
               </div>
             </div>
-            <div className="text-xs text-muted-foreground space-y-0.5 bg-blue-50 dark:bg-blue-950/30 rounded p-2">
-              <p className="font-semibold text-blue-700 dark:text-blue-300">📋 Hướng dẫn lấy Channel ID:</p>
-              <p>1. Forward 1 tin nhắn từ kênh vào <b>@userinfobot</b></p>
-              <p>2. ID kênh có dạng <code className="bg-muted px-1 rounded">-100xxxxxxxxxx</code> (số âm)</p>
-              <p>3. <b>Channel ID</b> dùng được cho cả kênh public và private — bot không cần là admin để lấy ID, nhưng cần là admin để xác minh thành viên</p>
-            </div>
-            <Button onClick={handleAddChannel} disabled={channelsSaving} variant="outline" className="min-h-[44px]">
+
+            <Button
+              onClick={handleAddChannel}
+              disabled={channelsSaving || !newCh.name.trim()}
+              className="min-h-[44px]"
+            >
               <Plus className="w-4 h-4 mr-1" /> Thêm kênh
             </Button>
           </div>

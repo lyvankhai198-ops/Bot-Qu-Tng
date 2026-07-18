@@ -51370,7 +51370,19 @@ router2.get("/bot/check-channel/:channelId", requireAuth, async (req, res) => {
         isAdmin = ["administrator", "creator"].includes(botStatus);
       }
     }
-    res.json({ ok: true, canAccess: true, title: chatData.result?.title, username: chatData.result?.username ? `@${chatData.result.username}` : null, type: chatData.result?.type, botStatus, isAdmin, getChatMemberWorks: isAdmin });
+    const chat = chatData.result;
+    res.json({
+      ok: true,
+      canAccess: true,
+      chatId: String(chat?.id ?? ""),
+      // numeric e.g. "-1001234567890"
+      title: chat?.title ?? null,
+      username: chat?.username ? `@${chat.username}` : null,
+      type: chat?.type ?? null,
+      botStatus,
+      isAdmin,
+      getChatMemberWorks: isAdmin
+    });
   } catch (e) {
     res.json({ ok: false, canAccess: false, error: e?.message ?? "Network error" });
   }
