@@ -220,9 +220,26 @@ def _fmt_order(L: str, order: dict, settings: dict,
         # Replacement chain section (spec §5 / §12)
         if replacement_count > 0:
             lines.append("")
-            lines.append(f"📧 {'Tài khoản gốc' if vi else 'Original account'}: <code>{original_account}</code>")
-            lines.append(f"🔄 {'Tài khoản hiện tại' if vi else 'Current account'}: <code>{current_account}</code>")
-            lines.append(f"🔢 {'Số lần bảo hành' if vi else 'Times replaced'}: {replacement_count}")
+            lines.append(f"{'━'*30}")
+            lines.append(f"🔁 <b>{'LỊCH SỬ BẢO HÀNH' if vi else 'WARRANTY HISTORY'}</b>")
+            # Original account + original delivery date
+            orig_date = (purchase_date or "")[:10] or "N/A"
+            lines.append(f"📧 {'TK gốc' if vi else 'Original account'}: <code>{original_account}</code>")
+            lines.append(f"   📅 {'Nhận lúc' if vi else 'Received'}: {orig_date}")
+            # Replacement account(s) with dates from account_replacements
+            item_id = item.get("itemId", "")
+            rep_date = ""
+            if item_id:
+                _reps = db.load("account_replacements", {})
+                _item_reps = _reps.get(item_id, [])
+                if _item_reps:
+                    last = _item_reps[-1]
+                    rep_date = (last.get("deliveredAt") or last.get("createdAt") or "")[:10]
+            rep_date_str = rep_date or "N/A"
+            lines.append(f"🔄 {'TK bảo hành' if vi else 'Replacement account'}: <code>{current_account}</code>")
+            lines.append(f"   📅 {'Thay lúc' if vi else 'Replaced on'}: {rep_date_str}")
+            lines.append(f"🔢 {'Số lần BH' if vi else 'Times replaced'}: {replacement_count}")
+            lines.append(f"⚠️ <i>{'Bảo hành & hoàn tiền tính từ ngày nhận TK gốc.' if vi else 'Warranty & refund calculated from original account date.'}</i>")
 
         # Multi-account advisory (spec §3)
         if is_in_multi_order:
