@@ -146,19 +146,31 @@ export default function Settings() {
   // ── Channel helpers ──────────────────────────────────────────────────────
   const handleAddChannel = async () => {
     const name = newCh.name.trim()
-    const username = newCh.username.trim().replace(/^@/, "")
-    const url = newCh.url.trim()
+    let rawUser = newCh.username.trim().replace(/^@/, "")
+    let url = newCh.url.trim()
+
+    // Auto-detect: if username field contains a URL, move it to URL field
+    if (/^https?:\/\/|^t\.me\//i.test(rawUser)) {
+      if (!url) url = rawUser.startsWith("http") ? rawUser : `https://${rawUser}`
+      rawUser = ""
+      setNewCh(n => ({ ...n, username: "", url }))
+      toast({
+        title: "Đã tự động chuyển",
+        description: "Link tham gia đã được chuyển sang trường 'Link tham gia'. Username để trống cho kênh private.",
+      })
+    }
+
     if (!name) {
       toast({ title: "Lỗi", description: "Tên kênh là bắt buộc", variant: "destructive" }); return
     }
-    if (!username && !url) {
+    if (!rawUser && !url) {
       toast({ title: "Lỗi", description: "Cần nhập Username hoặc Link tham gia (ít nhất một trong hai)", variant: "destructive" }); return
     }
     const ch: RequiredChannel = {
       id: Date.now().toString(),
       name,
-      username: username ? `@${username}` : "",
-      url: url || (username ? `https://t.me/${username}` : ""),
+      username: rawUser ? `@${rawUser}` : "",
+      url: url || (rawUser ? `https://t.me/${rawUser}` : ""),
       enabled: true,
     }
     const updated = [...channels, ch]
