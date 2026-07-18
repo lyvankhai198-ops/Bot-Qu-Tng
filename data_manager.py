@@ -372,31 +372,69 @@ def find_item_by_email(email: str):
                 return orders.get(order_id), item
     return None, None
 
+def find_item_by_any_account(email: str):
+    """
+    Search for an order_item by any account in its replacement chain:
+    - item.original_account / item.email (backward compat)
+    - item.current_account
+    - account_replacements[itemId].previousAccount or .newAccount
+    Returns (order_id, item) or (None, None).
+    """
+    email_lower = email.strip().lower()
+    orders   = load("orders", {})
+    all_items = load("order_items", {})
+    reps     = load("account_replacements", {})
+
+    # Pass 1: original_account / current_account / email fields
+    for order_id, item_list in all_items.items():
+        for item in item_list:
+            orig = (item.get("original_account") or item.get("email") or "").lower()
+            curr = (item.get("current_account") or item.get("email") or "").lower()
+            if email_lower in (orig, curr):
+                return order_id, item
+
+    # Pass 2: search historical replacement records
+    for order_id, item_list in all_items.items():
+        for item in item_list:
+            item_id = item.get("itemId", "")
+            for rep in reps.get(item_id, []):
+                if (rep.get("previousAccount") or "").lower() == email_lower:
+                    return order_id, item
+                if (rep.get("newAccount") or "").lower() == email_lower:
+                    return order_id, item
+
+    return None, None
+
+
 def find_order_with_items(query: str) -> dict:
     """
-    Unified lookup by order ID or email.
+    Unified lookup by order ID, original email, current email,
+    or any historical account in the replacement chain.
     Returns:
       { order: dict|None, items: list, lookupType: 'order_id'|'email'|None, matchedItem: dict|None }
-    When found by email, returns ALL items for that order (not just the matched one).
+    Email-based lookups return only the single matched item (never siblings).
     """
     query = query.strip()
-    orders = load("orders", {})
+    orders    = load("orders", {})
     all_items = load("order_items", {})
 
-    # 1. Order ID match
+    # 1. Order ID match — return all items for the order
     if query in orders:
         items = all_items.get(query, [])
         return {"order": orders[query], "items": items, "lookupType": "order_id", "matchedItem": None}
 
-    # 2. Email match in order_items
-    email_lower = query.lower()
-    for order_id, item_list in all_items.items():
-        for item in item_list:
-            if item.get("email", "").lower() == email_lower:
-                # Return ONLY the matched item — never expose sibling accounts to a different user
-                return {"order": orders.get(order_id), "items": [item], "lookupType": "email", "matchedItem": item}
+    # 2. Full chain search (original, current, replacement history)
+    order_id, matched_item = find_item_by_any_account(query)
+    if order_id and matched_item:
+        return {
+            "order": orders.get(order_id),
+            "items": [matched_item],
+            "lookupType": "email",
+            "matchedItem": matched_item,
+        }
 
     # 3. Fallback: email in orders.json (old single-account structure without items)
+    email_lower = query.lower()
     for order in orders.values():
         if order.get("email", "").lower() == email_lower:
             return {"order": order, "items": [], "lookupType": "email", "matchedItem": None}
@@ -431,6 +469,208 @@ def migrate_to_order_items() -> int:
     if migrated:
         save("order_items", all_items)
     return migrated
+
+# ─── Account Replacements ─────────────────────────────────────────────────
+
+def get_account_replacements(item_id: str) -> list:
+    """Returns replacement history for an item, ordered by replacementNumber."""
+    reps = load("account_replacements", {})
+    return sorted(reps.get(item_id, []), key=lambda r: r.get("replacementNumber", 0))
+
+def add_account_replacement(
+    item_id: str,
+    order_id: str,
+    previous_account: str,
+    new_account: str,
+    new_password: str = None,
+    new_two_fa: str = None,
+    reason: str = "",
+    support_ticket_id: str = None,
+    created_by: str = "admin",
+) -> dict:
+    """Record a warranty replacement and update order_items current_account fields."""
+    reps = load("account_replacements", {})
+    if item_id not in reps:
+        reps[item_id] = []
+    replacement_number = len(reps[item_id]) + 1
+    now_iso = datetime.now().isoformat()
+    rec = {
+        "id": str(uuid.uuid4())[:12],
+        "orderId": order_id,
+        "orderItemId": item_id,
+        "previousAccount": previous_account,
+        "newAccount": new_account,
+        "newPassword": new_password,
+        "newTwoFA": new_two_fa,
+        "replacementNumber": replacement_number,
+        "deliveredAt": now_iso,
+        "reason": reason,
+        "supportTicketId": support_ticket_id,
+        "createdBy": created_by,
+        "createdAt": now_iso,
+        "status": "delivered",
+    }
+    reps[item_id].append(rec)
+    save("account_replacements", reps)
+
+    # Update item's current_account in order_items
+    all_items = load("order_items", {})
+    items = all_items.get(order_id, [])
+    for i, item in enumerate(items):
+        if item.get("itemId") == item_id:
+            items[i]["current_account"] = new_account
+            if new_password:
+                items[i]["current_password"] = new_password
+            if new_two_fa:
+                items[i]["current_two_fa"] = new_two_fa
+            items[i]["current_replacement_number"] = replacement_number
+            items[i]["item_status"] = "active"
+            items[i]["updatedAt"] = now_iso
+            break
+    all_items[order_id] = items
+    save("order_items", all_items)
+    return rec
+
+def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
+    """
+    Compute warranty status for a single order item.
+    Always anchored to original_delivered_at — never extended by replacement deliveries.
+    Returns: { warrantyStatus, remainingDays, canReport, refundAmount, warrantyEndDate,
+               originalDeliveredAt, warrantyDays }
+    """
+    today = date.today()
+
+    # Warranty start: prefer item-level fields, fall back to order
+    start_str = (
+        item.get("original_delivered_at") or
+        item.get("deliveredAt") or
+        order.get("purchaseDate") or
+        order.get("paymentAt") or
+        ""
+    )
+
+    # Warranty duration
+    wd = item.get("warranty_days") or order.get("warrantyDays") or 0
+    warranty_days = int(wd) if wd else 0
+
+    # warranty_end_date: use stored value if present, else compute
+    warranty_end = None
+    stored_end = item.get("warranty_end_date") or ""
+    if stored_end:
+        try:
+            warranty_end = date.fromisoformat(stored_end[:10])
+        except Exception:
+            pass
+    if warranty_end is None and start_str and warranty_days:
+        try:
+            from datetime import timedelta
+            start = date.fromisoformat(start_str[:10])
+            warranty_end = start + timedelta(days=warranty_days)
+        except Exception:
+            pass
+    # Fallback to order-level warranty expiry fields
+    if warranty_end is None:
+        we = order.get("warrantyExpiry") or order.get("warrantyDate") or order.get("warrantyExpiry") or ""
+        if we:
+            try:
+                warranty_end = date.fromisoformat(we[:10])
+            except Exception:
+                pass
+
+    remaining_days = None
+    warranty_status = "unknown"
+    can_report = False
+    if warranty_end:
+        remaining_days = max(0, (warranty_end - today).days)
+        warranty_status = "active" if remaining_days > 0 else "expired"
+        can_report = warranty_status == "active"
+
+    # Pro-rated refund
+    refund_amount = 0
+    price = order.get("price", 0) or 0
+    refund_formula = settings.get("refund_formula", "remaining_days")
+    if remaining_days and remaining_days > 0 and price and warranty_days:
+        if refund_formula == "remaining_days":
+            refund_amount = round(price * remaining_days / warranty_days)
+        elif refund_formula == "custom":
+            refund_amount = settings.get("refund_custom_text", "")
+
+    return {
+        "warrantyStatus": warranty_status,
+        "remainingDays": remaining_days,
+        "canReport": can_report,
+        "refundAmount": refund_amount,
+        "warrantyEndDate": warranty_end.isoformat() if warranty_end else None,
+        "originalDeliveredAt": start_str or None,
+        "warrantyDays": warranty_days,
+    }
+
+def migrate_order_items_to_chain() -> int:
+    """
+    Enrich existing order_items with replacement-chain fields where missing.
+    Safe to run on every startup — skips items that already have all fields.
+    Returns number of items updated.
+    """
+    from datetime import timedelta
+    orders    = load("orders", {})
+    all_items = load("order_items", {})
+    updated   = 0
+
+    for order_id, item_list in all_items.items():
+        order = orders.get(order_id, {})
+        for i, item in enumerate(item_list):
+            changed = False
+
+            if not item.get("original_account") and item.get("email"):
+                item["original_account"] = item["email"]
+                changed = True
+            if not item.get("current_account"):
+                item["current_account"] = item.get("original_account") or item.get("email") or ""
+                changed = True
+            if item.get("current_replacement_number") is None:
+                item["current_replacement_number"] = 0
+                changed = True
+            if not item.get("original_delivered_at"):
+                od = (
+                    item.get("deliveredAt") or
+                    item.get("createdAt") or
+                    order.get("purchaseDate") or
+                    order.get("createdAt") or ""
+                )
+                if od:
+                    item["original_delivered_at"] = od
+                    changed = True
+            if not item.get("warranty_days"):
+                wd = order.get("warrantyDays") or 0
+                if wd:
+                    item["warranty_days"] = int(wd)
+                    changed = True
+            if not item.get("warranty_end_date"):
+                start_str = item.get("original_delivered_at", "")
+                wd = item.get("warranty_days") or 0
+                if start_str and wd:
+                    try:
+                        start = date.fromisoformat(start_str[:10])
+                        item["warranty_end_date"] = (start + timedelta(days=int(wd))).isoformat()
+                        changed = True
+                    except Exception:
+                        pass
+                if not item.get("warranty_end_date"):
+                    we = order.get("warrantyExpiry") or order.get("warrantyDate") or ""
+                    if we:
+                        item["warranty_end_date"] = we[:10]
+                        changed = True
+            if not item.get("item_status"):
+                item["item_status"] = item.get("status") or "active"
+                changed = True
+
+            if changed:
+                all_items[order_id][i] = item
+                updated += 1
+
+    if updated:
+        save("order_items", all_items)
+    return updated
 
 # ─── Warranty Requests ────────────────────────────────────────────────────
 

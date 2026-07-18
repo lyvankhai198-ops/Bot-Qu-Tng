@@ -50144,9 +50144,29 @@ router2.post("/bot/orders", requireAuth, (req, res) => {
       (it) => it.email?.toLowerCase() === order.email.toLowerCase()
     );
     if (!alreadyExists) {
+      const itemWd = Number(order.warrantyDays || 0);
+      let itemWarrantyEnd = null;
+      if (order.purchaseDate && itemWd) {
+        try {
+          const d = new Date(order.purchaseDate.slice(0, 10));
+          d.setDate(d.getDate() + itemWd);
+          itemWarrantyEnd = d.toISOString().slice(0, 10);
+        } catch {
+        }
+      }
+      if (!itemWarrantyEnd && (order.warrantyExpiry || order.warrantyDate)) {
+        itemWarrantyEnd = (order.warrantyExpiry || order.warrantyDate || "").slice(0, 10) || null;
+      }
       orderItems[orderId].push({
         itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
         email: order.email,
+        original_account: order.email,
+        current_account: order.email,
+        current_replacement_number: 0,
+        original_delivered_at: order.purchaseDate || now(),
+        warranty_days: itemWd || null,
+        warranty_end_date: itemWarrantyEnd,
+        item_status: order.status ?? "active",
         password: order.password ?? null,
         twoFA: order.twoFA ?? null,
         status: order.status ?? "active",
@@ -50209,9 +50229,27 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
         skipped++;
         continue;
       }
+      const bWd = Number(warrantyDays || 0);
+      let bWarrantyEnd = null;
+      if (purchaseDate && bWd) {
+        try {
+          const d = new Date(purchaseDate.slice(0, 10));
+          d.setDate(d.getDate() + bWd);
+          bWarrantyEnd = d.toISOString().slice(0, 10);
+        } catch {
+        }
+      }
+      if (!bWarrantyEnd && warrantyExpiry) bWarrantyEnd = warrantyExpiry.slice(0, 10) || null;
       orderItems[sharedId].push({
         itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
         email,
+        original_account: email,
+        current_account: email,
+        current_replacement_number: 0,
+        original_delivered_at: purchaseDate || now(),
+        warranty_days: bWd || null,
+        warranty_end_date: bWarrantyEnd,
+        item_status: "active",
         password: acc.password || null,
         twoFA: acc.twoFA || null,
         status: "active",
@@ -50259,9 +50297,27 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
       createdAt: now()
     };
     if (!orderItems[orderId]) orderItems[orderId] = [];
+    const lWd = Number(warrantyDays || 0);
+    let lWarrantyEnd = null;
+    if (purchaseDate && lWd) {
+      try {
+        const d = new Date(purchaseDate.slice(0, 10));
+        d.setDate(d.getDate() + lWd);
+        lWarrantyEnd = d.toISOString().slice(0, 10);
+      } catch {
+      }
+    }
+    if (!lWarrantyEnd && warrantyExpiry) lWarrantyEnd = warrantyExpiry.slice(0, 10) || null;
     orderItems[orderId].push({
       itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
       email,
+      original_account: email,
+      current_account: email,
+      current_replacement_number: 0,
+      original_delivered_at: purchaseDate || now(),
+      warranty_days: lWd || null,
+      warranty_end_date: lWarrantyEnd,
+      item_status: "active",
       password: acc.password || null,
       twoFA: acc.twoFA || null,
       status: "active",
@@ -50403,6 +50459,48 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
   if (req_.orderId && orders[req_.orderId]) {
     orders[req_.orderId].status = "warranted";
     writeJson("orders", orders);
+  }
+  if (req_.orderId && req_.email) {
+    const orderItems = readJson("order_items", {}) ?? {};
+    const itemList = orderItems[req_.orderId] ?? [];
+    const prevEmailLower = (req_.email || "").toLowerCase();
+    const itemIdx = itemList.findIndex(
+      (it) => (it.original_account || it.email || "").toLowerCase() === prevEmailLower || (it.current_account || it.email || "").toLowerCase() === prevEmailLower
+    );
+    if (itemIdx !== -1) {
+      const item = itemList[itemIdx];
+      const repNumber = (item.current_replacement_number ?? 0) + 1;
+      const allReps = readJson("account_replacements", {}) ?? {};
+      if (!allReps[item.itemId]) allReps[item.itemId] = [];
+      allReps[item.itemId].push({
+        id: crypto.randomUUID().slice(0, 12),
+        orderId: req_.orderId,
+        orderItemId: item.itemId,
+        previousAccount: item.current_account || item.email || "",
+        newAccount: email,
+        newPassword: password,
+        newTwoFA: twoFA || null,
+        replacementNumber: repNumber,
+        deliveredAt: now(),
+        reason: note || "",
+        supportTicketId: id,
+        createdBy: "web-admin",
+        createdAt: now(),
+        status: "delivered"
+      });
+      writeJson("account_replacements", allReps);
+      itemList[itemIdx] = {
+        ...item,
+        current_account: email,
+        current_password: password,
+        current_two_fa: twoFA || null,
+        current_replacement_number: repNumber,
+        item_status: "active",
+        updatedAt: now()
+      };
+      orderItems[req_.orderId] = itemList;
+      writeJson("order_items", orderItems);
+    }
   }
   const reminderOff = { reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   if (result.ok) {
@@ -50672,21 +50770,120 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
   }
   const orders = readJson("orders", {}) ?? {};
   const orderItems = readJson("order_items", {}) ?? {};
+  const allReps = readJson("account_replacements", {}) ?? {};
+  const settings = readJson("settings", {}) ?? {};
   const normalized = query.replace(/^(?:email\s*\/?\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*:\s*/i, "").trim();
+  function calcWarranty(item, order) {
+    const today = /* @__PURE__ */ new Date();
+    today.setHours(0, 0, 0, 0);
+    const startStr = item.original_delivered_at || item.deliveredAt || order?.purchaseDate || "";
+    const warrantyDays = Number(item.warranty_days || order?.warrantyDays || 0);
+    let warrantyEnd = null;
+    if (item.warranty_end_date) {
+      try {
+        warrantyEnd = new Date(item.warranty_end_date.slice(0, 10));
+      } catch {
+      }
+    }
+    if (!warrantyEnd && startStr && warrantyDays) {
+      try {
+        warrantyEnd = new Date(startStr.slice(0, 10));
+        warrantyEnd.setDate(warrantyEnd.getDate() + warrantyDays);
+      } catch {
+      }
+    }
+    if (!warrantyEnd) {
+      const we = order?.warrantyExpiry || order?.warrantyDate || "";
+      if (we) {
+        try {
+          warrantyEnd = new Date(we.slice(0, 10));
+        } catch {
+        }
+      }
+    }
+    let remainingDays = null;
+    let warrantyStatus = "unknown";
+    let canReport = false;
+    if (warrantyEnd) {
+      const diffMs = warrantyEnd.getTime() - today.getTime();
+      remainingDays = Math.max(0, Math.floor(diffMs / 864e5));
+      warrantyStatus = remainingDays > 0 ? "active" : "expired";
+      canReport = warrantyStatus === "active";
+    }
+    const price = Number(order?.price || 0);
+    let refundAmount = 0;
+    if (remainingDays && remainingDays > 0 && price && warrantyDays) {
+      if (settings.refund_formula === "custom" && settings.refund_custom_text) {
+        refundAmount = settings.refund_custom_text;
+      } else {
+        refundAmount = Math.round(price * remainingDays / warrantyDays);
+      }
+    }
+    return {
+      warrantyStatus,
+      remainingDays,
+      canReport,
+      refundAmount,
+      warrantyEndDate: warrantyEnd ? warrantyEnd.toISOString().slice(0, 10) : null,
+      originalDeliveredAt: startStr || null,
+      warrantyDays
+    };
+  }
+  function enrichItem(item, orderId, order) {
+    const reps = (allReps[item.itemId] ?? []).sort((a, b) => a.replacementNumber - b.replacementNumber);
+    const wdata = calcWarranty(item, order);
+    return {
+      ...wdata,
+      orderCode: orderId,
+      orderItemId: item.itemId,
+      originalAccount: item.original_account || item.email || "",
+      currentAccount: item.current_account || item.email || "",
+      replacementCount: item.current_replacement_number ?? reps.length,
+      replacementHistory: reps.map((r) => ({
+        replacementNumber: r.replacementNumber,
+        previousAccount: r.previousAccount,
+        newAccount: r.newAccount,
+        deliveredAt: r.deliveredAt,
+        reason: r.reason || ""
+      }))
+    };
+  }
   if (orders[normalized]) {
     const items = orderItems[normalized] ?? [];
-    return res.json({ found: true, lookupType: "order_id", order: orders[normalized], items });
+    return res.json({
+      found: true,
+      lookupType: "order_id",
+      order: orders[normalized],
+      items: items.map((it) => enrichItem(it, normalized, orders[normalized]))
+    });
   }
   const emailLower = normalized.toLowerCase();
   for (const [orderId, itemList] of Object.entries(orderItems)) {
     for (const item of itemList) {
-      if (item.email?.toLowerCase() === emailLower) {
-        return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null, items: [item] });
+      const orig = (item.original_account || item.email || "").toLowerCase();
+      const curr = (item.current_account || item.email || "").toLowerCase();
+      if (emailLower === orig || emailLower === curr) {
+        return res.json({
+          found: true,
+          lookupType: "email",
+          order: orders[orderId] ?? null,
+          items: [enrichItem(item, orderId, orders[orderId])]
+        });
+      }
+      for (const rep of allReps[item.itemId] ?? []) {
+        if ((rep.previousAccount || "").toLowerCase() === emailLower || (rep.newAccount || "").toLowerCase() === emailLower) {
+          return res.json({
+            found: true,
+            lookupType: "email",
+            order: orders[orderId] ?? null,
+            items: [enrichItem(item, orderId, orders[orderId])]
+          });
+        }
       }
     }
   }
   for (const order of Object.values(orders)) {
-    if (order.email?.toLowerCase() === emailLower) {
+    if ((order.email || "").toLowerCase() === emailLower) {
       return res.json({ found: true, lookupType: "email", order, items: [] });
     }
   }
@@ -50695,6 +50892,14 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
 router2.get("/bot/orders/:orderId/items", requireAuth, (req, res) => {
   const orderItems = readJson("order_items", {}) ?? {};
   res.json(orderItems[req.params.orderId] ?? []);
+});
+router2.get("/bot/orders/:orderId/items/:itemId/replacements", requireAuth, (req, res) => {
+  const { itemId } = req.params;
+  const allReps = readJson("account_replacements", {}) ?? {};
+  const reps = (allReps[itemId] ?? []).sort(
+    (a, b) => (a.replacementNumber ?? 0) - (b.replacementNumber ?? 0)
+  );
+  res.json(reps);
 });
 router2.post("/bot/orders/:orderId/items", requireAuth, (req, res) => {
   const { orderId } = req.params;

@@ -63,29 +63,38 @@ def shop_inline(L: str, settings: dict) -> InlineKeyboardMarkup:
         InlineKeyboardButton(t(L, "btn_open_shop"), url=settings["shop_link"])
     ]])
 
-def order_inline(L: str, order_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(t(L, "btn_report_issue"), callback_data=f"order:report:{order_id}"),
-        InlineKeyboardButton(t(L, "btn_back_menu"),    callback_data="order:back"),
-    ]])
+def order_inline(L: str, order_id: str, can_report: bool = True) -> InlineKeyboardMarkup:
+    """Single-account order keyboard. Hides report button when warranty expired."""
+    back_btn = InlineKeyboardButton(t(L, "btn_back_menu"), callback_data="order:back")
+    if can_report:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(L, "btn_report_issue"), callback_data=f"order:report:{order_id}"),
+            back_btn,
+        ]])
+    return InlineKeyboardMarkup([[back_btn]])
 
-def order_inline_multi(L: str, order_id: str, n: int) -> InlineKeyboardMarkup:
+def order_inline_multi(L: str, order_id: str, n_eligible: int, n_total: int) -> InlineKeyboardMarkup:
+    """Multi-account order keyboard. Shows report buttons only when there are eligible accounts."""
     vi = L == "vi"
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            f"📋 {'Báo lỗi tất cả' if vi else 'Report all'} ({n})",
-            callback_data=f"order:report_all:{order_id}",
-        ),
-        InlineKeyboardButton(
-            f"🔘 {'Chọn tài khoản' if vi else 'Pick accounts'}",
-            callback_data=f"order:pick_items:{order_id}",
-        ),
-    ], [
+    rows = []
+    if n_eligible > 0:
+        rows.append([
+            InlineKeyboardButton(
+                f"📋 {'Báo lỗi tất cả' if vi else 'Report all'} ({n_eligible})",
+                callback_data=f"order:report_all:{order_id}",
+            ),
+            InlineKeyboardButton(
+                f"🔘 {'Chọn tài khoản' if vi else 'Pick accounts'}",
+                callback_data=f"order:pick_items:{order_id}",
+            ),
+        ])
+    rows.append([
         InlineKeyboardButton(
             f"🔙 {'Quay lại' if vi else 'Back'}",
             callback_data="order:back",
         ),
-    ]])
+    ])
+    return InlineKeyboardMarkup(rows)
 
 # ─── Order display helper ─────────────────────────────────────────────────────
 
@@ -100,27 +109,81 @@ def _fmt_price(vnd: float, L: str = "vi") -> str:
         return f"{usdt:.2f} USDT"
     return f"{int(vnd):,}đ"
 
-def _fmt_order(L: str, order: dict, settings: dict) -> str:
-    data = db.calc_order_display(order, settings)
+def _fmt_order(L: str, order: dict, settings: dict, item: dict = None) -> str:
+    """
+    Format a single-account order display.
+    When `item` is supplied (new chain model): use calc_item_warranty and show chain fields.
+    When `item` is None (legacy): fall back to calc_order_display on the order header.
+    """
+    vi = L == "vi"
 
+    if item:
+        wdata = db.calc_item_warranty(item, order, settings)
+        original_account  = item.get("original_account") or item.get("email") or ""
+        current_account   = item.get("current_account")  or item.get("email") or ""
+        replacement_count = item.get("current_replacement_number") or 0
+        original_delivered = (item.get("original_delivered_at") or "")[:10] or "N/A"
+        warranty_end_str   = (wdata["warrantyEndDate"] or "")[:10] or "N/A"
+        remaining          = wdata["remainingDays"]
+        warranty_ok        = wdata["warrantyStatus"] == "active"
+        refund_amt         = wdata["refundAmount"]
+
+        remaining_str = (
+            "N/A" if remaining is None
+            else (t(L, "expired") if remaining == 0 else t(L, "days_left", n=remaining))
+        )
+        warranty_str = t(L, "warranty_valid") if warranty_ok else t(L, "warranty_expired")
+        warranty_icon = "✅" if warranty_ok else "❌"
+
+        price = order.get("price", 0) or 0
+        price_str = _fmt_price(int(price), L) if price else "N/A"
+
+        if not warranty_ok:
+            refund_str = "0"
+        elif refund_amt == 0:
+            refund_str = "N/A"
+        elif isinstance(refund_amt, str):
+            refund_str = refund_amt
+        else:
+            refund_str = f"~{_fmt_price(refund_amt, L)}"
+
+        header = "📦 THÔNG TIN ĐƠN HÀNG" if vi else "📦 ORDER INFORMATION"
+        lines = [f"<b>{header}</b>\n"]
+        lines.append(f"🏷 {'Mã đơn' if vi else 'Order'}: <code>{order.get('orderId','')}</code>")
+        lines.append(f"📦 {'Sản phẩm' if vi else 'Product'}: <b>{order.get('productName','')}</b>")
+        lines.append(f"📧 {'Tài khoản gốc' if vi else 'Original account'}: <code>{original_account}</code>")
+        if replacement_count > 0:
+            lines.append(f"🔄 {'Tài khoản hiện tại' if vi else 'Current account'}: <code>{current_account}</code>")
+            lines.append(f"🔢 {'Số lần đã bảo hành' if vi else 'Times replaced'}: {replacement_count}")
+        lines.append(f"📅 {'Ngày giao gốc' if vi else 'Original delivery'}: {original_delivered}")
+        lines.append(f"🛡 {'Bảo hành đến' if vi else 'Warranty until'}: {warranty_end_str}")
+        if warranty_ok:
+            lines.append(f"⌛ {'Còn lại' if vi else 'Remaining'}: {remaining_str}")
+        lines.append(f"{warranty_icon} {'Trạng thái BH' if vi else 'Warranty status'}: {warranty_str}")
+        lines.append(f"💰 {'Giá mua' if vi else 'Price'}: {price_str}")
+        if warranty_ok:
+            lines.append(f"💵 {'Hoàn dự kiến' if vi else 'Est. Refund'}: {refund_str}")
+        lines.append(f"📊 {'Trạng thái' if vi else 'Status'}: {'Đang hoạt động' if (warranty_ok) else ('Hết bảo hành' if vi else 'Warranty expired')}")
+        if not warranty_ok:
+            vi_msg = "\n⚠️ <i>Đơn hàng đã hết thời hạn bảo hành.</i>"
+            en_msg = "\n⚠️ <i>This order's warranty has expired.</i>"
+            lines.append(vi_msg if vi else en_msg)
+        return "\n".join(lines)
+
+    # ── Legacy path: no item record, use order-header fields ──────────────────
+    data = db.calc_order_display(order, settings)
     remaining = data.get("_remaining_days")
     warranty_ok = data.get("_warranty_ok")
     refund_amt = data.get("_refund_amount")
 
-    if remaining is None:
-        remaining_str = "N/A"
-    elif remaining == 0:
-        remaining_str = t(L, "expired")
-    else:
-        remaining_str = t(L, "days_left", n=remaining)
-
-    if warranty_ok is None:
-        warranty_str = "N/A"
-    elif warranty_ok:
-        warranty_str = t(L, "warranty_valid")
-    else:
-        warranty_str = t(L, "warranty_expired")
-
+    remaining_str = (
+        "N/A" if remaining is None
+        else (t(L, "expired") if remaining == 0 else t(L, "days_left", n=remaining))
+    )
+    warranty_str = (
+        "N/A" if warranty_ok is None
+        else (t(L, "warranty_valid") if warranty_ok else t(L, "warranty_expired"))
+    )
     if refund_amt is None:
         refund_str = "N/A"
     elif isinstance(refund_amt, str):
@@ -154,41 +217,13 @@ def _fmt_order(L: str, order: dict, settings: dict) -> str:
     )
 
 def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
-    """Format an order with multiple accounts (no passwords shown)."""
-    data = db.calc_order_display(order, settings)
+    """
+    Format an order with multiple accounts. Each item gets individual warranty check.
+    Returns (message_text, n_eligible) — n_eligible = number of items still under warranty.
+    """
     vi = L == "vi"
-
-    remaining = data.get("_remaining_days")
-    warranty_ok = data.get("_warranty_ok")
-    refund_amt = data.get("_refund_amount")
-
-    if remaining is None:
-        remaining_str = "N/A"
-    elif remaining == 0:
-        remaining_str = t(L, "expired")
-    else:
-        remaining_str = t(L, "days_left", n=remaining)
-
-    warranty_str = "N/A" if warranty_ok is None else (t(L, "warranty_valid") if warranty_ok else t(L, "warranty_expired"))
-
-    if refund_amt is None:
-        refund_str = "N/A"
-    elif isinstance(refund_amt, str):
-        refund_str = refund_amt
-    else:
-        refund_str = f"~{_fmt_price(refund_amt, L)}"
-
     price = order.get("price", 0) or 0
     price_str = _fmt_price(int(price), L) if price else "N/A"
-
-    status_map = {
-        "active":    t(L, "status_active"),
-        "warranted": t(L, "status_warranted"),
-        "refunded":  t(L, "status_refunded"),
-        "expired":   t(L, "status_expired"),
-    }
-    status_str = status_map.get(order.get("status", "active"), order.get("status", ""))
-    warranty_exp = (order.get("warrantyExpiry") or order.get("warrantyDate") or "")[:10] or "N/A"
 
     header = "📦 THÔNG TIN ĐƠN HÀNG" if vi else "📦 ORDER INFORMATION"
     lines = [f"<b>{header}</b>\n"]
@@ -196,21 +231,33 @@ def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
     lines.append(f"📦 {'Sản phẩm' if vi else 'Product'}: <b>{order.get('productName','')}</b>")
     if order.get("customerName"):
         lines.append(f"👤 {'Khách hàng' if vi else 'Customer'}: {order.get('customerName','')}")
-    lines.append(f"📅 {'Ngày mua' if vi else 'Purchase'}: {(order.get('purchaseDate','') or '')[:10]}")
-    lines.append(f"📅 {'Ngày hết hạn' if vi else 'Expiry'}: {(order.get('expiryDate','') or '')[:10]}")
-    lines.append(f"⌛ {'Còn lại' if vi else 'Remaining'}: {remaining_str}")
-    lines.append(f"🛡 {'Bảo hành đến' if vi else 'Warranty until'}: {warranty_exp}")
-    lines.append(f"✅ {'Trạng thái BH' if vi else 'Warranty'}: {warranty_str}")
     lines.append(f"💰 {'Giá mua' if vi else 'Price'}: {price_str}")
-    lines.append(f"💵 {'Hoàn dự kiến' if vi else 'Est. Refund'}: {refund_str}")
-    lines.append(f"📊 {'Trạng thái' if vi else 'Status'}: {status_str}")
     lines.append(f"📦 {'Số lượng' if vi else 'Quantity'}: <b>{len(items)}</b>")
     lines.append(f"\n<b>{'Danh sách tài khoản:' if vi else 'Account list:'}</b>")
+
+    n_eligible = 0
     for i, item in enumerate(items, 1):
-        email = item.get("email", "")
-        item_status = item.get("status", "active")
-        icon = "✅" if item_status == "active" else ("⚠️" if item_status in ("pending", "processing") else "❌")
-        lines.append(f"  {i}. {icon} <code>{email}</code>")
+        email = (item.get("original_account") or item.get("email") or "")
+        current = item.get("current_account") or item.get("email") or ""
+        wdata = db.calc_item_warranty(item, order, settings)
+        can = wdata["canReport"]
+        if can:
+            n_eligible += 1
+        if can:
+            icon = "✅"
+        else:
+            icon = "❌"
+        line = f"  {i}. {icon} <code>{email}</code>"
+        if current and current != email:
+            line += f" → <code>{current}</code>"
+        if not can:
+            line += f" <i>({'Hết BH' if vi else 'Expired'})</i>"
+        lines.append(line)
+
+    if n_eligible == 0:
+        expired_note = "\n⚠️ <i>Không còn tài khoản nào đủ điều kiện bảo hành.</i>" if vi else \
+                       "\n⚠️ <i>No accounts in this order are eligible for warranty.</i>"
+        lines.append(expired_note)
 
     return "\n".join(lines)
 
@@ -636,33 +683,50 @@ async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE
     items    = result["items"]
     settings = db.get_settings()
     order_id = order["orderId"]
+    matched_item = result.get("matchedItem")
+
     db.set_user_state(user.id, "_report_order_id", order_id)
 
-    # Store canonical email for warranty reporting (shared orders have no header email)
-    matched_item = result.get("matchedItem")
-    report_email = (matched_item.get("email", "") if matched_item else "") or order.get("email", "")
+    # Store canonical email for warranty reporting
+    report_email = (
+        (matched_item.get("original_account") or matched_item.get("email") or "" if matched_item else "") or
+        order.get("email", "")
+    )
     if items and not report_email:
-        report_email = items[0].get("email", "")
+        report_email = items[0].get("original_account") or items[0].get("email", "")
     db.set_user_state(user.id, "_report_email", report_email)
 
-    # Multi-account display ONLY for order-ID lookups with >1 item.
-    # Email-based lookups always show single-item view (matched account only).
+    # Store item_id so the report flow can re-check warranty server-side
+    single_item = matched_item or (items[0] if items else None)
+    if single_item:
+        db.set_user_state(user.id, "_report_item_id", single_item.get("itemId", ""))
+
+    # Multi-account: order-ID lookups with >1 item — show item list
     if result["lookupType"] == "order_id" and len(items) > 1:
         msg = _fmt_order_multi(L, order, items, settings)
+        n_eligible = sum(
+            1 for it in items
+            if db.calc_item_warranty(it, order, settings)["canReport"]
+        )
         await update.message.reply_text(
             msg,
             parse_mode=ParseMode.HTML,
-            reply_markup=order_inline_multi(L, order_id, len(items)),
+            reply_markup=order_inline_multi(L, order_id, n_eligible, len(items)),
         )
     else:
-        # Single account: merge item email into order if needed (new-style order without email field)
-        if items and not order.get("email"):
-            order = {**order, "email": items[0].get("email", "")}
-        msg = _fmt_order(L, order, settings)
+        # Single-item display: merge email into order header if absent
+        if single_item and not order.get("email"):
+            order = {**order, "email": single_item.get("original_account") or single_item.get("email", "")}
+        # Determine if reporting is allowed
+        can_report = True
+        if single_item:
+            wdata = db.calc_item_warranty(single_item, order, settings)
+            can_report = wdata["canReport"]
+        msg = _fmt_order(L, order, settings, item=single_item)
         await update.message.reply_text(
             msg,
             parse_mode=ParseMode.HTML,
-            reply_markup=order_inline(L, order_id),
+            reply_markup=order_inline(L, order_id, can_report=can_report),
         )
 
 # ─── Báo lỗi input ────────────────────────────────────────────────────────────
@@ -670,27 +734,52 @@ async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_report_issue_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     L = lang(user.id)
+    vi = L == "vi"
     description = update.message.text.strip()
-    state = db.get_user_state(user.id)
+    state    = db.get_user_state(user.id)
     order_id = state.get("_report_order_id", "")
+    item_id  = state.get("_report_item_id", "")
 
-    # Use stored email first (_report_email is set during lookup so shared orders work correctly)
+    order = db.get_order(order_id) if order_id else None
+
+    # Use stored email; fall back through item / order header
     email = state.get("_report_email", "")
     if not email and order_id:
-        order = db.get_order(order_id)
-        email = order.get("email", "") if order else ""
-        # Fallback: check order_items for this order
+        email = (order or {}).get("email", "")
         if not email:
-            items = db.get_order_items(order_id)
-            if items:
-                email = items[0].get("email", "")
-    order = db.get_order(order_id) if order_id else None
+            for it in db.get_order_items(order_id):
+                email = it.get("original_account") or it.get("email") or ""
+                if email:
+                    break
+
+    # ── Backend warranty gate — blocks even if UI was bypassed ───────────────
+    settings = db.get_settings()
+    found_item = None
+    if item_id and order_id:
+        for it in db.get_order_items(order_id):
+            if it.get("itemId") == item_id:
+                found_item = it
+                break
+    if found_item and order:
+        wdata = db.calc_item_warranty(found_item, order, settings)
+        if not wdata["canReport"]:
+            msg = (
+                "❌ <b>Đơn hàng đã hết thời hạn bảo hành.</b>\n\n"
+                "Không thể tạo yêu cầu hỗ trợ cho đơn này."
+            ) if vi else (
+                "❌ <b>This order's warranty has expired.</b>\n\n"
+                "Cannot create a support request for this order."
+            )
+            for key in ("conv_state", "_report_order_id", "_report_email", "_report_item_id"):
+                db.clear_user_state(user.id, key)
+            db.add_log("WARRANTY_BLOCKED_EXPIRED", f"@{user.username} ({user.id}) | Order: {order_id}", "")
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
+            return
 
     req_id = db.add_warranty_request(user.id, user.username, user.first_name, order_id, email, description, L)
     db.add_log("WARRANTY_REQUEST", f"@{user.username} ({user.id}) | Order: {order_id}", "")
-    db.clear_user_state(user.id, "conv_state")
-    db.clear_user_state(user.id, "_report_order_id")
-    db.clear_user_state(user.id, "_report_email")
+    for key in ("conv_state", "_report_order_id", "_report_email", "_report_item_id"):
+        db.clear_user_state(user.id, key)
 
     await update.message.reply_text(
         t(L, "report_sent"),
@@ -713,9 +802,8 @@ async def callback_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     data = query.data  # "order:report:<id>" or "order:back"
 
     if data == "order:back":
-        db.clear_user_state(user.id, "conv_state")
-        db.clear_user_state(user.id, "_report_order_id")
-        db.clear_user_state(user.id, "_report_email")
+        for key in ("conv_state", "_report_order_id", "_report_email", "_report_item_id"):
+            db.clear_user_state(user.id, key)
         await query.message.reply_text(
             t(L, "welcome", name=user.first_name or "User"),
             parse_mode=ParseMode.HTML,
@@ -736,23 +824,33 @@ async def callback_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if data.startswith("order:report_all:"):
         order_id = data[len("order:report_all:"):]
-        items = db.get_order_items(order_id)
-        if not items:
-            order = db.get_order(order_id)
-            if order and order.get("email"):
-                items = [{"email": order["email"]}]
-        if not items:
+        all_items = db.get_order_items(order_id)
+        order = db.get_order(order_id)
+        if not all_items and order and order.get("email"):
+            all_items = [{"email": order["email"]}]
+        if not all_items:
             await query.answer(
                 "Không tìm thấy tài khoản." if L == "vi" else "No accounts found.",
                 show_alert=True,
             )
             return
-        order = db.get_order(order_id)
+        # Filter: only items still under warranty
+        settings = db.get_settings()
         product_name = order.get("productName", "") if order else ""
-        found = [
-            {"email": it.get("email", ""), "orderId": order_id, "productName": product_name}
-            for it in items
-        ]
+        found = []
+        for it in all_items:
+            wdata = db.calc_item_warranty(it, order or {}, settings)
+            if wdata["canReport"]:
+                email = it.get("original_account") or it.get("email") or ""
+                found.append({"email": email, "orderId": order_id, "productName": product_name})
+        if not found:
+            vi = L == "vi"
+            await query.answer(
+                "Không còn tài khoản nào trong đơn đủ điều kiện bảo hành." if vi
+                else "No accounts in this order are eligible for warranty.",
+                show_alert=True,
+            )
+            return
         db.set_user_state(user.id, "_mw_found", _json.dumps(found, ensure_ascii=False))
         db.set_user_state(user.id, "_mw_sel", ",".join(str(i) for i in range(len(found))))
         db.set_user_state(user.id, "conv_state", "support_multi_desc")
@@ -765,25 +863,35 @@ async def callback_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if data.startswith("order:pick_items:"):
         order_id = data[len("order:pick_items:"):]
-        items = db.get_order_items(order_id)
-        if not items:
-            order = db.get_order(order_id)
-            if order and order.get("email"):
-                items = [{"email": order["email"]}]
-        if not items:
+        all_items = db.get_order_items(order_id)
+        order = db.get_order(order_id)
+        if not all_items and order and order.get("email"):
+            all_items = [{"email": order["email"]}]
+        if not all_items:
             await query.answer(
                 "Không tìm thấy tài khoản." if L == "vi" else "No accounts found.",
                 show_alert=True,
             )
             return
-        order = db.get_order(order_id)
+        # Filter: only items still under warranty
+        settings = db.get_settings()
         product_name = order.get("productName", "") if order else ""
-        found = [
-            {"email": it.get("email", ""), "orderId": order_id, "productName": product_name}
-            for it in items
-        ]
+        found = []
+        for it in all_items:
+            wdata = db.calc_item_warranty(it, order or {}, settings)
+            if wdata["canReport"]:
+                email = it.get("original_account") or it.get("email") or ""
+                found.append({"email": email, "orderId": order_id, "productName": product_name})
+        if not found:
+            vi = L == "vi"
+            await query.answer(
+                "Không còn tài khoản nào trong đơn đủ điều kiện bảo hành." if vi
+                else "No accounts in this order are eligible for warranty.",
+                show_alert=True,
+            )
+            return
         db.set_user_state(user.id, "_mw_found", _json.dumps(found, ensure_ascii=False))
-        db.set_user_state(user.id, "_mw_sel", "")  # none selected initially
+        db.set_user_state(user.id, "_mw_sel", "")
         try:
             await query.edit_message_text(
                 _mw_select_text(L, found, set()),
@@ -1320,6 +1428,9 @@ def main():
         logger.info(f"Migrated {migrated} old warranty ticket(s) to new reminder schema (reminderEnabled=False)")
     if migrated_items:
         logger.info(f"Migrated {migrated_items} order(s) to order_items schema")
+    enriched_items = db.migrate_order_items_to_chain()
+    if enriched_items:
+        logger.info(f"Enriched {enriched_items} order_item(s) with replacement-chain fields")
 
     Thread(target=warranty_reminder_worker, daemon=True).start()
     logger.info("Warranty reminder worker started.")

@@ -357,13 +357,32 @@ router.post("/bot/orders", requireAuth, (req: any, res: any) => {
       (it: any) => it.email?.toLowerCase() === order.email.toLowerCase()
     );
     if (!alreadyExists) {
+      const itemWd = Number(order.warrantyDays || 0);
+      let itemWarrantyEnd: string | null = null;
+      if (order.purchaseDate && itemWd) {
+        try {
+          const d = new Date(order.purchaseDate.slice(0, 10));
+          d.setDate(d.getDate() + itemWd);
+          itemWarrantyEnd = d.toISOString().slice(0, 10);
+        } catch {}
+      }
+      if (!itemWarrantyEnd && (order.warrantyExpiry || order.warrantyDate)) {
+        itemWarrantyEnd = (order.warrantyExpiry || order.warrantyDate || "").slice(0, 10) || null;
+      }
       orderItems[orderId].push({
-        itemId:    crypto.randomUUID().slice(0, 8).toUpperCase(),
-        email:     order.email,
-        password:  order.password  ?? null,
-        twoFA:     order.twoFA     ?? null,
-        status:    order.status    ?? "active",
-        createdAt: now(),
+        itemId:                        crypto.randomUUID().slice(0, 8).toUpperCase(),
+        email:                         order.email,
+        original_account:              order.email,
+        current_account:               order.email,
+        current_replacement_number:    0,
+        original_delivered_at:         order.purchaseDate || now(),
+        warranty_days:                 itemWd || null,
+        warranty_end_date:             itemWarrantyEnd,
+        item_status:                   order.status ?? "active",
+        password:                      order.password  ?? null,
+        twoFA:                         order.twoFA     ?? null,
+        status:                        order.status    ?? "active",
+        createdAt:                     now(),
       });
       writeJson("order_items", orderItems);
     }
@@ -428,13 +447,30 @@ router.post("/bot/orders/bulk", requireAuth, (req: any, res: any) => {
       if (existingItemEmails.has(email.toLowerCase())) {
         errors.push({ email, reason: "Email đã tồn tại trong hệ thống" }); skipped++; continue;
       }
+      const bWd = Number(warrantyDays || 0);
+      let bWarrantyEnd: string | null = null;
+      if (purchaseDate && bWd) {
+        try {
+          const d = new Date((purchaseDate as string).slice(0, 10));
+          d.setDate(d.getDate() + bWd);
+          bWarrantyEnd = d.toISOString().slice(0, 10);
+        } catch {}
+      }
+      if (!bWarrantyEnd && warrantyExpiry) bWarrantyEnd = (warrantyExpiry as string).slice(0, 10) || null;
       orderItems[sharedId].push({
-        itemId:    crypto.randomUUID().slice(0, 8).toUpperCase(),
+        itemId:                        crypto.randomUUID().slice(0, 8).toUpperCase(),
         email,
-        password:  acc.password || null,
-        twoFA:     acc.twoFA    || null,
-        status:    "active",
-        createdAt: now(),
+        original_account:              email,
+        current_account:               email,
+        current_replacement_number:    0,
+        original_delivered_at:         purchaseDate || now(),
+        warranty_days:                 bWd || null,
+        warranty_end_date:             bWarrantyEnd,
+        item_status:                   "active",
+        password:                      acc.password || null,
+        twoFA:                         acc.twoFA    || null,
+        status:                        "active",
+        createdAt:                     now(),
       });
       existingItemEmails.add(email.toLowerCase());
       added++;
@@ -475,15 +511,32 @@ router.post("/bot/orders/bulk", requireAuth, (req: any, res: any) => {
       status: "active",
       createdAt: now(),
     };
-    // Also create item
+    // Also create item with chain fields
     if (!orderItems[orderId]) orderItems[orderId] = [];
+    const lWd = Number(warrantyDays || 0);
+    let lWarrantyEnd: string | null = null;
+    if (purchaseDate && lWd) {
+      try {
+        const d = new Date((purchaseDate as string).slice(0, 10));
+        d.setDate(d.getDate() + lWd);
+        lWarrantyEnd = d.toISOString().slice(0, 10);
+      } catch {}
+    }
+    if (!lWarrantyEnd && warrantyExpiry) lWarrantyEnd = (warrantyExpiry as string).slice(0, 10) || null;
     orderItems[orderId].push({
-      itemId:    crypto.randomUUID().slice(0, 8).toUpperCase(),
+      itemId:                        crypto.randomUUID().slice(0, 8).toUpperCase(),
       email,
-      password:  acc.password || null,
-      twoFA:     acc.twoFA    || null,
-      status:    "active",
-      createdAt: now(),
+      original_account:              email,
+      current_account:               email,
+      current_replacement_number:    0,
+      original_delivered_at:         purchaseDate || now(),
+      warranty_days:                 lWd || null,
+      warranty_end_date:             lWarrantyEnd,
+      item_status:                   "active",
+      password:                      acc.password || null,
+      twoFA:                         acc.twoFA    || null,
+      status:                        "active",
+      createdAt:                     now(),
     });
     existingEmails.add(email.toLowerCase());
     added++;
@@ -624,6 +677,54 @@ router.post("/bot/warranty/:id/replacement", requireAuth, async (req: any, res: 
   // Update order status regardless of send outcome
   const orders: any = readJson("orders", {}) ?? {};
   if (req_.orderId && orders[req_.orderId]) { orders[req_.orderId].status = "warranted"; writeJson("orders", orders); }
+
+  // ── Write replacement chain record ──────────────────────────────────────────
+  // Find the item that corresponds to the warranty request email and record the replacement
+  if (req_.orderId && req_.email) {
+    const orderItems: any = readJson("order_items", {}) ?? {};
+    const itemList: any[] = orderItems[req_.orderId] ?? [];
+    const prevEmailLower = (req_.email || "").toLowerCase();
+    const itemIdx = itemList.findIndex(
+      (it: any) => (it.original_account || it.email || "").toLowerCase() === prevEmailLower ||
+                   (it.current_account  || it.email || "").toLowerCase() === prevEmailLower
+    );
+    if (itemIdx !== -1) {
+      const item = itemList[itemIdx];
+      const repNumber = (item.current_replacement_number ?? 0) + 1;
+      // Write to account_replacements.json
+      const allReps: any = readJson("account_replacements", {}) ?? {};
+      if (!allReps[item.itemId]) allReps[item.itemId] = [];
+      allReps[item.itemId].push({
+        id: crypto.randomUUID().slice(0, 12),
+        orderId: req_.orderId,
+        orderItemId: item.itemId,
+        previousAccount: item.current_account || item.email || "",
+        newAccount: email,
+        newPassword: password,
+        newTwoFA: twoFA || null,
+        replacementNumber: repNumber,
+        deliveredAt: now(),
+        reason: note || "",
+        supportTicketId: id,
+        createdBy: "web-admin",
+        createdAt: now(),
+        status: "delivered",
+      });
+      writeJson("account_replacements", allReps);
+      // Update item
+      itemList[itemIdx] = {
+        ...item,
+        current_account: email,
+        current_password: password,
+        current_two_fa: twoFA || null,
+        current_replacement_number: repNumber,
+        item_status: "active",
+        updatedAt: now(),
+      };
+      orderItems[req_.orderId] = itemList;
+      writeJson("order_items", orderItems);
+    }
+  }
 
   const reminderOff = { reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   if (result.ok) {
@@ -836,35 +937,117 @@ router.post("/bot/warranty/:id/reject", requireAuth, async (req: any, res: any) 
 });
 
 // ── GET /orders/lookup?query=... ─────────────────────────────────────────────
+// Returns enriched response with replacement chain info.
 router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
   const query = String(req.query.query ?? "").trim();
   if (!query) { res.status(400).json({ found: false, error: "query là bắt buộc" }); return; }
 
-  const orders: any     = readJson("orders", {}) ?? {};
-  const orderItems: any = readJson("order_items", {}) ?? {};
+  const orders: any      = readJson("orders", {}) ?? {};
+  const orderItems: any  = readJson("order_items", {}) ?? {};
+  const allReps: any     = readJson("account_replacements", {}) ?? {};
+  const settings: any    = readJson("settings", {}) ?? {};
 
-  // Normalize: strip "email/tài khoản: " label prefix
   const normalized = query.replace(/^(?:email\s*\/?\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*:\s*/i, "").trim();
+
+  function calcWarranty(item: any, order: any) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const startStr = item.original_delivered_at || item.deliveredAt || order?.purchaseDate || "";
+    const warrantyDays = Number(item.warranty_days || order?.warrantyDays || 0);
+    let warrantyEnd: Date | null = null;
+    if (item.warranty_end_date) {
+      try { warrantyEnd = new Date(item.warranty_end_date.slice(0, 10)); } catch {}
+    }
+    if (!warrantyEnd && startStr && warrantyDays) {
+      try {
+        warrantyEnd = new Date(startStr.slice(0, 10));
+        warrantyEnd.setDate(warrantyEnd.getDate() + warrantyDays);
+      } catch {}
+    }
+    if (!warrantyEnd) {
+      const we = order?.warrantyExpiry || order?.warrantyDate || "";
+      if (we) { try { warrantyEnd = new Date(we.slice(0, 10)); } catch {} }
+    }
+    let remainingDays: number | null = null;
+    let warrantyStatus = "unknown";
+    let canReport = false;
+    if (warrantyEnd) {
+      const diffMs = warrantyEnd.getTime() - today.getTime();
+      remainingDays = Math.max(0, Math.floor(diffMs / 86400000));
+      warrantyStatus = remainingDays > 0 ? "active" : "expired";
+      canReport = warrantyStatus === "active";
+    }
+    const price = Number(order?.price || 0);
+    let refundAmount: number | string = 0;
+    if (remainingDays && remainingDays > 0 && price && warrantyDays) {
+      if (settings.refund_formula === "custom" && settings.refund_custom_text) {
+        refundAmount = settings.refund_custom_text;
+      } else {
+        refundAmount = Math.round(price * remainingDays / warrantyDays);
+      }
+    }
+    return {
+      warrantyStatus, remainingDays, canReport, refundAmount,
+      warrantyEndDate: warrantyEnd ? warrantyEnd.toISOString().slice(0, 10) : null,
+      originalDeliveredAt: startStr || null,
+      warrantyDays,
+    };
+  }
+
+  function enrichItem(item: any, orderId: string, order: any) {
+    const reps: any[] = (allReps[item.itemId] ?? []).sort((a: any, b: any) => a.replacementNumber - b.replacementNumber);
+    const wdata = calcWarranty(item, order);
+    return {
+      ...wdata,
+      orderCode: orderId,
+      orderItemId: item.itemId,
+      originalAccount: item.original_account || item.email || "",
+      currentAccount: item.current_account || item.email || "",
+      replacementCount: item.current_replacement_number ?? reps.length,
+      replacementHistory: reps.map((r: any) => ({
+        replacementNumber: r.replacementNumber,
+        previousAccount: r.previousAccount,
+        newAccount: r.newAccount,
+        deliveredAt: r.deliveredAt,
+        reason: r.reason || "",
+      })),
+    };
+  }
 
   // 1. Order ID match
   if (orders[normalized]) {
-    const items = orderItems[normalized] ?? [];
-    return res.json({ found: true, lookupType: "order_id", order: orders[normalized], items });
+    const items: any[] = orderItems[normalized] ?? [];
+    return res.json({
+      found: true, lookupType: "order_id",
+      order: orders[normalized],
+      items: items.map(it => enrichItem(it, normalized, orders[normalized])),
+    });
   }
 
-  // 2. Email match in order_items — return only the matched item, never sibling accounts
   const emailLower = normalized.toLowerCase();
+
+  // 2. Search full replacement chain (original, current, history)
   for (const [orderId, itemList] of Object.entries(orderItems) as [string, any[]][]) {
-    for (const item of itemList) {
-      if (item.email?.toLowerCase() === emailLower) {
-        return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null, items: [item] });
+    for (const item of (itemList as any[])) {
+      const orig = (item.original_account || item.email || "").toLowerCase();
+      const curr = (item.current_account  || item.email || "").toLowerCase();
+      if (emailLower === orig || emailLower === curr) {
+        return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null,
+          items: [enrichItem(item, orderId, orders[orderId])], });
+      }
+      // Check replacement history
+      for (const rep of (allReps[item.itemId] ?? [])) {
+        if ((rep.previousAccount || "").toLowerCase() === emailLower ||
+            (rep.newAccount      || "").toLowerCase() === emailLower) {
+          return res.json({ found: true, lookupType: "email", order: orders[orderId] ?? null,
+            items: [enrichItem(item, orderId, orders[orderId])], });
+        }
       }
     }
   }
 
-  // 3. Fallback: email match in orders.json (old single-account structure)
+  // 3. Fallback: email in orders.json header
   for (const order of Object.values(orders) as any[]) {
-    if (order.email?.toLowerCase() === emailLower) {
+    if ((order.email || "").toLowerCase() === emailLower) {
       return res.json({ found: true, lookupType: "email", order, items: [] });
     }
   }
@@ -876,6 +1059,16 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
 router.get("/bot/orders/:orderId/items", requireAuth, (req: any, res: any) => {
   const orderItems: any = readJson("order_items", {}) ?? {};
   res.json(orderItems[req.params.orderId] ?? []);
+});
+
+// ── GET /bot/orders/:orderId/items/:itemId/replacements ───────────────────────
+router.get("/bot/orders/:orderId/items/:itemId/replacements", requireAuth, (req: any, res: any) => {
+  const { itemId } = req.params;
+  const allReps: any = readJson("account_replacements", {}) ?? {};
+  const reps: any[] = (allReps[itemId] ?? []).sort(
+    (a: any, b: any) => (a.replacementNumber ?? 0) - (b.replacementNumber ?? 0)
+  );
+  res.json(reps);
 });
 
 // ── POST /bot/orders/:orderId/items ──────────────────────────────────────────
