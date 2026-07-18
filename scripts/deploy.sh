@@ -31,6 +31,11 @@ sshpass -p "${VPS_PASSWORD}" scp ${SSH_OPTS} -r \
   artifacts/api-server/dist \
   "${VPS}:${VPS_DEPLOY_PATH}/artifacts/api-server/"
 
+# Upload Python source files (bot logic)
+sshpass -p "${VPS_PASSWORD}" scp ${SSH_OPTS} \
+  bot.py data_manager.py translations.py \
+  "${VPS}:${VPS_DEPLOY_PATH}/"
+
 echo "✓ dist uploaded"
 
 # ── 4. Restart services on VPS ────────────────────────────────────────────────
