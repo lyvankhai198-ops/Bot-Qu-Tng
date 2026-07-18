@@ -1,4 +1,5 @@
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useRef, useEffect } from "react"
+import { createPortal } from "react-dom"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -403,13 +404,18 @@ export default function ImageImportDialog({ open, onClose, existingOrders }: Pro
               </label>
             </div>
 
-            {/* Inputs rendered outside dialog scroll context for max iOS compat */}
-            <input id="ocr-file-multi" ref={fileRef} type="file" accept="image/*" multiple
-              className="absolute w-px h-px opacity-0 pointer-events-none"
-              onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
-            <input id="ocr-file-camera" ref={cameraRef} type="file" accept="image/*" capture="environment"
-              className="absolute w-px h-px opacity-0 pointer-events-none"
-              onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
+            {/* Inputs portalled to document.body — Radix Dialog blocks onChange on iOS when inputs are inside the modal */}
+            {createPortal(
+              <>
+                <input id="ocr-file-multi" ref={fileRef} type="file" accept="image/*" multiple
+                  style={{ position: "fixed", left: "-9999px", top: "-9999px", width: "1px", height: "1px", opacity: 0 }}
+                  onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
+                <input id="ocr-file-camera" ref={cameraRef} type="file" accept="image/*" capture="environment"
+                  style={{ position: "fixed", left: "-9999px", top: "-9999px", width: "1px", height: "1px", opacity: 0 }}
+                  onChange={e => { ingestFiles(Array.from(e.target.files ?? [])); e.target.value = "" }} />
+              </>,
+              document.body
+            )}
 
             {/* Thumbnail grid */}
             {images.length > 0 && (
