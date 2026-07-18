@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react"
+import ImageImportDialog from "@/components/ImageImportDialog"
 import { useListOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, getListOrdersQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Card, CardContent } from "@/components/ui/card"
@@ -9,7 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Search, Plus, Edit2, Trash2, ListPlus, CheckCircle2, AlertTriangle } from "lucide-react"
+import { Search, Plus, Edit2, Trash2, ListPlus, CheckCircle2, AlertTriangle, Camera } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { OrderInput, Order, BulkOrderResult } from "@workspace/api-client-react"
@@ -116,6 +117,7 @@ export default function Orders() {
     return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`
   }
 
+  const [imgOpen, setImgOpen] = useState(false)
   const [bulkOpen, setBulkOpen] = useState(false)
   const [bProd, setBProd] = useState("")
   const [bPrice, setBPrice] = useState("")
@@ -221,6 +223,9 @@ export default function Orders() {
           <p className="text-muted-foreground mt-1 text-sm">Quản lý giao dịch mua bán</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button variant="outline" onClick={() => setImgOpen(true)} className="w-full sm:w-auto min-h-[44px]">
+            <Camera className="w-4 h-4 mr-2" /> Thêm từ ảnh
+          </Button>
           <Button variant="outline" onClick={() => { resetBulk(); setBPurchaseDate(todayStr()); setBulkOpen(true) }} className="w-full sm:w-auto min-h-[44px]">
             <ListPlus className="w-4 h-4 mr-2" /> Thêm hàng loạt
           </Button>
@@ -552,6 +557,13 @@ export default function Orders() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Image Import Dialog */}
+      <ImageImportDialog
+        open={imgOpen}
+        onClose={() => setImgOpen(false)}
+        existingOrders={orders ?? []}
+      />
 
       {/* Delete Confirm */}
       <Dialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>

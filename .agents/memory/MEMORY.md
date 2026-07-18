@@ -3,3 +3,4 @@
 - [Broadcast targeting](broadcast-targeting.md) — pending_broadcasts.json supports target: "all"|"has_received"|"no_received"|"user:<id>"; bot worker polls every 30s
 - [Multi-account warranty](multi-account-warranty.md) — group warranty flow: mw:* callbacks, state keys _mw_found/_mw_sel, type:"group" in warranty_requests.json, sub-account endpoints in botAdmin.ts
 - [VPS Auto-Deploy Workflow](vps-deploy.md) — sau mỗi lần cập nhật PHẢI tự push GitHub + deploy VPS qua scripts/deploy.sh
+- [OCR image import](ocr-image-import.md) — OpenAI vision integration for order creation from screenshots; uses gpt-5.6-luna, endpoint POST /bot/orders/ocr-extract, body limit 20mb
