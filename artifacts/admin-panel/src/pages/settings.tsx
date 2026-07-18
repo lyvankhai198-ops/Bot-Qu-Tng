@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import {
   useGetBotSettings, useUpdateBotSettings, useNewRound, getGetBotSettingsQueryKey,
   useGetNotificationSettings, useUpdateNotificationSettings, getGetNotificationSettingsQueryKey,
@@ -14,13 +14,43 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { Save, AlertTriangle, RefreshCcw, Bell, BellOff, Plus, Trash2 } from "lucide-react"
+import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link } from "lucide-react"
 import type { BotSettings, NotificationSettings } from "@workspace/api-client-react"
+
+const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? ""
+
+interface RequiredChannel {
+  id: string
+  name: string
+  username: string   // e.g. @kenhchính — used as chatId for getChatMember
+  url: string        // full t.me link — used as button URL
+  enabled: boolean
+}
+
+async function fetchChannels(): Promise<RequiredChannel[]> {
+  const token = localStorage.getItem("admin_token") ?? ""
+  const res = await fetch(`${BASE}/api/bot/required-channels`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+async function saveChannels(channels: RequiredChannel[]): Promise<RequiredChannel[]> {
+  const token = localStorage.getItem("admin_token") ?? ""
+  const res = await fetch(`${BASE}/api/bot/required-channels`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(channels),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
 
 export default function Settings() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  
+
   const { data: settings, isLoading } = useGetBotSettings({ query: { queryKey: getGetBotSettingsQueryKey() } })
   const updateSettings = useUpdateBotSettings({
     mutation: {
@@ -61,6 +91,17 @@ export default function Settings() {
   const [newAdminId, setNewAdminId] = useState("")
   const notifInitialized = useRef(false)
 
+  // ── Required channels state ──────────────────────────────────────────────
+  const [channels, setChannels] = useState<RequiredChannel[]>([])
+  const [channelsSaving, setChannelsSaving] = useState(false)
+  const [newCh, setNewCh] = useState({ name: "", username: "", url: "" })
+
+  const loadChannels = useCallback(async () => {
+    try { setChannels(await fetchChannels()) } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { loadChannels() }, [loadChannels])
+
   useEffect(() => {
     if (settings && !initialized.current) {
       setForm(settings)
@@ -76,7 +117,6 @@ export default function Settings() {
   }, [notifData])
 
   const handleSave = () => updateSettings.mutate({ data: form })
-
   const handleSaveNotif = () => updateNotif.mutate({ data: notifForm })
 
   const addAdminId = () => {
@@ -105,6 +145,47 @@ export default function Settings() {
     setNewRoundId("")
   }
 
+  // ── Channel helpers ──────────────────────────────────────────────────────
+  const handleAddChannel = async () => {
+    const name = newCh.name.trim()
+    const username = newCh.username.trim().replace(/^@/, "")
+    const url = newCh.url.trim()
+    if (!name || !username) {
+      toast({ title: "Lỗi", description: "Tên kênh và Username là bắt buộc", variant: "destructive" }); return
+    }
+    const ch: RequiredChannel = {
+      id: Date.now().toString(),
+      name,
+      username: `@${username}`,
+      url: url || `https://t.me/${username}`,
+      enabled: true,
+    }
+    const updated = [...channels, ch]
+    setChannelsSaving(true)
+    try {
+      const saved = await saveChannels(updated)
+      setChannels(saved)
+      setNewCh({ name: "", username: "", url: "" })
+      toast({ title: "Đã thêm kênh", description: ch.name })
+    } catch (e: any) {
+      toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    } finally { setChannelsSaving(false) }
+  }
+
+  const handleToggleChannel = async (id: string, enabled: boolean) => {
+    const updated = channels.map(c => c.id === id ? { ...c, enabled } : c)
+    setChannels(updated)
+    try { await saveChannels(updated) }
+    catch (e: any) { toast({ title: "Lỗi lưu kênh", description: e.message, variant: "destructive" }) }
+  }
+
+  const handleDeleteChannel = async (id: string) => {
+    const updated = channels.filter(c => c.id !== id)
+    setChannels(updated)
+    try { await saveChannels(updated) }
+    catch (e: any) { toast({ title: "Lỗi xóa kênh", description: e.message, variant: "destructive" }) }
+  }
+
   if (isLoading) {
     return <div className="p-8 text-center text-muted-foreground animate-pulse">Đang tải cài đặt...</div>
   }
@@ -123,7 +204,6 @@ export default function Settings() {
           <CardDescription>Bật tắt các module trên hệ thống</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 md:space-y-6">
-          {/* Each toggle row: text left, switch right */}
           <div className="flex items-center justify-between gap-4 border-b border-border/50 pb-4">
             <div className="space-y-0.5 min-w-0">
               <Label className="text-base font-semibold">Tặng quà</Label>
@@ -286,6 +366,137 @@ export default function Settings() {
           disabled={updateSettings.isPending}
         >
           {updateSettings.isPending ? "Đang lưu..." : <><Save className="w-4 h-4 mr-2" /> Lưu thay đổi</>}
+        </Button>
+      </div>
+
+      {/* ── Required channels (gift join-gate) ───────────────────────────── */}
+      <div>
+        <h2 className="text-lg md:text-xl font-semibold tracking-tight flex items-center gap-2 mt-2 mb-1">
+          <Radio className="w-5 h-5 text-orange-500" /> Kênh bắt buộc tham gia trước khi nhận quà
+        </h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Khi bật, người dùng phải tham gia <b>tất cả</b> kênh đang bật thì mới được nhận quà.
+        </p>
+      </div>
+
+      {/* Global toggle */}
+      <Card>
+        <CardContent className="p-4 md:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-base font-medium">Bật kiểm tra tham gia kênh</Label>
+              <p className="text-sm text-muted-foreground mt-1">Bot sẽ xác minh user đã join kênh trước khi cấp quà</p>
+            </div>
+            <Switch
+              checked={!!form.requireChannelCheck}
+              onCheckedChange={v => setForm({ ...form, requireChannelCheck: v })}
+            />
+          </div>
+          {form.requireChannelCheck && channels.length === 0 && (
+            <p className="mt-3 text-sm text-amber-600 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 rounded-md">
+              ⚠️ Đã bật nhưng chưa có kênh nào. Thêm ít nhất 1 kênh bên dưới.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Channel list */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Danh sách kênh bắt buộc</CardTitle>
+          <CardDescription>Bot tham gia kênh và dùng getChatMember để xác minh</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Add new channel */}
+          <div className="border border-dashed border-border/70 rounded-lg p-4 space-y-3 bg-muted/20">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Thêm kênh mới</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Tên hiển thị *</Label>
+                <Input
+                  value={newCh.name}
+                  onChange={e => setNewCh(n => ({ ...n, name: e.target.value }))}
+                  placeholder="AI Center Official"
+                  className="min-h-[44px]"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Username kênh * (không @)</Label>
+                <Input
+                  value={newCh.username}
+                  onChange={e => setNewCh(n => ({ ...n, username: e.target.value }))}
+                  placeholder="kenhchinhthuc"
+                  className="min-h-[44px]"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Link tham gia (tuỳ chọn)</Label>
+                <Input
+                  value={newCh.url}
+                  onChange={e => setNewCh(n => ({ ...n, url: e.target.value }))}
+                  placeholder="https://t.me/..."
+                  className="min-h-[44px]"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Bot phải là <b>admin</b> trong kênh để có thể kiểm tra thành viên.
+            </p>
+            <Button onClick={handleAddChannel} disabled={channelsSaving} variant="outline" className="min-h-[44px]">
+              <Plus className="w-4 h-4 mr-1" /> Thêm kênh
+            </Button>
+          </div>
+
+          {/* Channel list */}
+          {channels.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground text-sm">
+              <Link className="h-6 w-6 mx-auto mb-2 opacity-30" />
+              Chưa có kênh nào được cấu hình
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {channels.map(ch => (
+                <div key={ch.id} className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${ch.enabled ? "bg-background border-border" : "bg-muted/30 border-border/40 opacity-60"}`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm">{ch.name}</span>
+                      <Badge variant="secondary" className="font-mono text-xs">{ch.username}</Badge>
+                      {ch.url && (
+                        <a href={ch.url} target="_blank" rel="noopener noreferrer"
+                           className="text-blue-500 hover:text-blue-600 inline-flex items-center gap-0.5 text-xs">
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Switch
+                      checked={ch.enabled}
+                      onCheckedChange={v => handleToggleChannel(ch.id, v)}
+                    />
+                    <button
+                      onClick={() => handleDeleteChannel(ch.id)}
+                      className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Save settings (includes requireChannelCheck) */}
+      <div className="pb-4">
+        <Button
+          size="lg"
+          className="w-full sm:w-auto min-h-[48px] px-8 bg-orange-600 hover:bg-orange-700"
+          onClick={handleSave}
+          disabled={updateSettings.isPending}
+        >
+          {updateSettings.isPending ? "Đang lưu..." : <><Save className="w-4 h-4 mr-2" /> Lưu cài đặt kênh</>}
         </Button>
       </div>
 

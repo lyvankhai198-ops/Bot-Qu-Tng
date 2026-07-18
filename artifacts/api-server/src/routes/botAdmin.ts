@@ -74,6 +74,7 @@ function readSettings(): any {
     cooldown_hours: 0, round_id: "dot1",
     gift_enabled: true, support_enabled: true, intro_enabled: true,
     maintenance_mode: false, refund_formula: "remaining_days", refund_custom_text: "",
+    require_channel_check: false,
   };
   return { ...defaults, ...(readJson("settings", {}) ?? {}) };
 }
@@ -91,6 +92,7 @@ function settingsToApi(s: any) {
     maintenanceMode: s.maintenance_mode ?? false,
     refundFormula: s.refund_formula ?? "remaining_days",
     refundCustomText: s.refund_custom_text ?? "",
+    requireChannelCheck: s.require_channel_check ?? false,
   };
 }
 
@@ -171,6 +173,7 @@ router.put("/bot/settings", requireAuth, (req: any, res: any) => {
     cooldownHours: "cooldown_hours", roundId: "round_id",
     giftEnabled: "gift_enabled", supportEnabled: "support_enabled", introEnabled: "intro_enabled",
     maintenanceMode: "maintenance_mode", refundFormula: "refund_formula", refundCustomText: "refund_custom_text",
+    requireChannelCheck: "require_channel_check",
   };
   for (const [k, v] of Object.entries(map)) {
     if (b[k] !== undefined) s[v] = k === "cooldownHours" ? Number(b[k]) : b[k];
@@ -1147,6 +1150,19 @@ router.post("/bot/warranty/:id/refund", requireAuth, async (req: any, res: any) 
   await sendTelegramMessage(req_.userId, msg);
   addLog("WARRANTY_REFUND", `${id} → ${amountStr}đ | ${email}`, resolvedBy);
   res.json({ ok: true, message: "Đã xử lý hoàn tiền" });
+});
+
+// ── GET /bot/required-channels ───────────────────────────────────────────────
+router.get("/bot/required-channels", requireAuth, (_req: any, res: any) => {
+  res.json(readJson("required_channels", []) ?? []);
+});
+
+// ── PUT /bot/required-channels ───────────────────────────────────────────────
+router.put("/bot/required-channels", requireAuth, (req: any, res: any) => {
+  const channels = Array.isArray(req.body) ? req.body : [];
+  writeJson("required_channels", channels);
+  addLog("UPDATE_REQUIRED_CHANNELS", `${channels.length} channel(s)`, "web-admin");
+  res.json(channels);
 });
 
 // ── GET /bot/refund-history ───────────────────────────────────────────────────

@@ -534,44 +534,66 @@ async def maintenance_reply(update: Update, L: str) -> bool:
 
 # ─── 🎁 Nhận Quà ─────────────────────────────────────────────────────────────
 
-async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    L = lang(user.id)
-    settings = db.get_settings()
+_JOINED_STATUSES = {"member", "administrator", "creator"}
 
-    if not settings.get("gift_enabled", True):
-        await update.message.reply_text(t(L, "gift_disabled"))
-        return
+async def _check_channels_membership(bot, user_id: int, channels: list) -> list:
+    """Return list of enabled channels the user has NOT joined."""
+    not_joined = []
+    for ch in channels:
+        chat_id = ch.get("chatId") or ch.get("username") or ""
+        if not chat_id:
+            continue
+        # Normalize: if no @ and no +, treat as numeric or add @
+        if not str(chat_id).startswith(("-", "@", "+")):
+            chat_id = f"@{chat_id}"
+        try:
+            member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+            if member.status not in _JOINED_STATUSES:
+                not_joined.append(ch)
+        except Exception:
+            not_joined.append(ch)
+    return not_joined
 
-    if db.is_banned(user.id):
-        await update.message.reply_text(t(L, "gift_banned"))
-        return
+def _build_join_markup(L: str, not_joined: list) -> InlineKeyboardMarkup:
+    vi = L == "vi"
+    buttons = []
+    for ch in not_joined:
+        name = ch.get("name") or "Kênh"
+        url  = ch.get("url") or ch.get("username") or ""
+        if url and not url.startswith("http"):
+            url = f"https://t.me/{url.lstrip('@')}"
+        if url:
+            buttons.append([InlineKeyboardButton(
+                f"📢 Tham gia {name}" if vi else f"📢 Join {name}", url=url
+            )])
+    buttons.append([InlineKeyboardButton(
+        "✅ Đã tham gia" if vi else "✅ I Joined", callback_data="check_join"
+    )])
+    return InlineKeyboardMarkup(buttons)
 
-    if db.stock_count() == 0:
-        await update.message.reply_text(t(L, "gift_empty"))
-        return
-
-    round_id = settings["round_id"]
+async def _claim_gift(user, context, L: str, settings: dict) -> None:
+    """Core gift claim — sends via context.bot so it works from both message and callback."""
+    round_id   = settings["round_id"]
     cooldown_h = settings["cooldown_hours"]
-    claimed = db.get_claimed(round_id)
-    uid = str(user.id)
+    claimed    = db.get_claimed(round_id)
+    uid        = str(user.id)
 
     if uid in claimed:
         if cooldown_h == 0:
-            await update.message.reply_text(t(L, "gift_already_round"))
+            await context.bot.send_message(user.id, t(L, "gift_already_round"))
             return
-        claim_time = datetime.fromisoformat(claimed[uid]["claim_time"])
+        claim_time  = datetime.fromisoformat(claimed[uid]["claim_time"])
         eligible_at = claim_time + timedelta(hours=cooldown_h)
         if datetime.now() < eligible_at:
             rem = eligible_at - datetime.now()
             h = int(rem.total_seconds() // 3600)
             m = int((rem.total_seconds() % 3600) // 60)
-            await update.message.reply_text(t(L, "gift_already", h=h, m=m))
+            await context.bot.send_message(user.id, t(L, "gift_already", h=h, m=m))
             return
 
     account = db.pop_account()
     if not account:
-        await update.message.reply_text(t(L, "gift_empty"))
+        await context.bot.send_message(user.id, t(L, "gift_empty"))
         return
 
     email    = account.get("email", "")
@@ -581,7 +603,8 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     db.add_claim(round_id, user.id, user.username, user.first_name, email, now_str)
     db.add_log("CLAIM_GIFT", f"@{user.username} ({user.id})", "")
 
-    await update.message.reply_text(
+    await context.bot.send_message(
+        user.id,
         t(L, "gift_success", email=email, password=password),
         parse_mode=ParseMode.HTML,
         reply_markup=shop_inline(L, settings),
@@ -596,6 +619,82 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
         except Exception:
             pass
+
+async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    L    = lang(user.id)
+    vi   = L == "vi"
+    settings = db.get_settings()
+
+    if not settings.get("gift_enabled", True):
+        await update.message.reply_text(t(L, "gift_disabled"))
+        return
+    if db.is_banned(user.id):
+        await update.message.reply_text(t(L, "gift_banned"))
+        return
+    if db.stock_count() == 0:
+        await update.message.reply_text(t(L, "gift_empty"))
+        return
+
+    # ── Channel join-gate ──────────────────────────────────────────────────
+    if settings.get("require_channel_check", False):
+        channels         = db.get_required_channels()
+        enabled_channels = [c for c in channels if c.get("enabled", True)]
+        if enabled_channels:
+            not_joined = await _check_channels_membership(context.bot, user.id, enabled_channels)
+            if not_joined:
+                msg = (
+                    "⚠️ <b>Bạn cần tham gia kênh chính thức trước khi nhận quà.</b>\n\n"
+                    "Vui lòng tham gia kênh bên dưới rồi nhấn <b>✅ Đã tham gia</b> để tiếp tục."
+                ) if vi else (
+                    "⚠️ <b>You need to join the official channel before claiming a gift.</b>\n\n"
+                    "Please join the channel(s) below, then tap <b>✅ I Joined</b> to continue."
+                )
+                await update.message.reply_text(
+                    msg, parse_mode=ParseMode.HTML,
+                    reply_markup=_build_join_markup(L, not_joined),
+                )
+                return
+
+    await _claim_gift(user, context, L, settings)
+
+async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Called when user taps '✅ Đã tham gia' — re-verify then claim gift."""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    L    = lang(user.id)
+    vi   = L == "vi"
+    settings = db.get_settings()
+
+    if not settings.get("gift_enabled", True):
+        await query.edit_message_text(t(L, "gift_disabled"))
+        return
+    if db.is_banned(user.id):
+        await query.edit_message_text(t(L, "gift_banned"))
+        return
+
+    channels         = db.get_required_channels()
+    enabled_channels = [c for c in channels if c.get("enabled", True)]
+    not_joined       = await _check_channels_membership(context.bot, user.id, enabled_channels)
+
+    if not_joined:
+        names = ", ".join(f"<b>{c.get('name') or c.get('username') or 'kênh'}</b>" for c in not_joined)
+        msg = (
+            f"❌ <b>Bạn vẫn chưa tham gia kênh.</b>\n\nVui lòng tham gia trước khi nhận quà.\n📢 Chưa tham gia: {names}"
+        ) if vi else (
+            f"❌ <b>You haven't joined the required channel(s) yet.</b>\n\nPlease join first.\n📢 Not joined: {names}"
+        )
+        await query.edit_message_text(msg, parse_mode=ParseMode.HTML,
+                                      reply_markup=query.message.reply_markup)
+        return
+
+    await query.edit_message_text(
+        "✅ <b>Xác minh thành công!</b> Bạn có thể nhận quà ngay bây giờ." if vi else
+        "✅ <b>Verification successful!</b> You can claim your gift now.",
+        parse_mode=ParseMode.HTML,
+    )
+    await _claim_gift(user, context, L, settings)
 
 # ─── 💬 Hỗ Trợ — order lookup entry ─────────────────────────────────────────
 
@@ -1806,6 +1905,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_warranty_ack,  pattern=r"^warranty_ack:"))
     app.add_handler(CallbackQueryHandler(callback_warranty_noop, pattern=r"^warranty_noop$"))
     app.add_handler(CallbackQueryHandler(callback_multi_warranty,  pattern=r"^mw:"))
+    app.add_handler(CallbackQueryHandler(callback_check_join,    pattern=r"^check_join$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
