@@ -62773,7 +62773,7 @@ async function getOpenAI() {
     if (groqKey) {
       const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
       _openai = new OpenAI2({ apiKey: groqKey, baseURL: "https://api.groq.com/openai/v1" });
-      _model = "meta-llama/llama-4-scout-17b-16e-instruct";
+      _model = "llama-4-scout-17b-16e-instruct";
       return _openai;
     }
     const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;

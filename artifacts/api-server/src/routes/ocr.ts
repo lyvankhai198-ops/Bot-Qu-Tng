@@ -12,7 +12,7 @@ async function getOpenAI(): Promise<any> {
     if (groqKey) {
       const { default: OpenAI } = await import("openai");
       _openai = new OpenAI({ apiKey: groqKey, baseURL: "https://api.groq.com/openai/v1" });
-      _model  = "meta-llama/llama-4-scout-17b-16e-instruct";
+      _model  = "llama-4-scout-17b-16e-instruct";
       return _openai;
     }
     // 2. Replit AI Integration (only works inside Replit environment)
