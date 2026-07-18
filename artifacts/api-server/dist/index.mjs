@@ -62766,47 +62766,50 @@ var botAdmin_default = router2;
 var import_express3 = __toESM(require_express2(), 1);
 var import_multer = __toESM(require_multer(), 1);
 var _openai = null;
-var _model = "gpt-5.6-luna";
-function detectBackend() {
-  if (process.env.GOOGLE_AI_API_KEY) return "gemini";
-  if (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL && process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return "openai";
-  throw new Error("Ch\u01B0a c\u1EA5u h\xECnh AI: c\u1EA7n GOOGLE_AI_API_KEY ho\u1EB7c AI env vars");
-}
 async function getOpenAI() {
   if (!_openai) {
     const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
     const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
     const { default: OpenAI2 } = await Promise.resolve().then(() => (init_openai(), openai_exports));
     _openai = new OpenAI2({ apiKey, baseURL });
-    _model = "gpt-5.6-luna";
   }
   return _openai;
 }
 async function callGemini(base64, mimeType) {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
-  const model = "gemini-2.0-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
   const body = {
     system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-    contents: [{
-      parts: [
-        { text: "Tr\xEDch xu\u1EA5t th\xF4ng tin \u0111\u01A1n h\xE0ng t\u1EEB \u1EA3nh n\xE0y." },
-        { inline_data: { mime_type: mimeType, data: base64 } }
-      ]
-    }],
+    contents: [{ parts: [
+      { text: "Tr\xEDch xu\u1EA5t th\xF4ng tin \u0111\u01A1n h\xE0ng t\u1EEB \u1EA3nh n\xE0y." },
+      { inline_data: { mime_type: mimeType, data: base64 } }
+    ] }],
     generationConfig: { maxOutputTokens: 1024 }
   };
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
+  const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`Gemini ${resp.status}: ${text.slice(0, 200)}`);
+    const t = await resp.text().catch(() => "");
+    throw new Error(`Gemini ${resp.status}: ${t.slice(0, 300)}`);
   }
   const data = await resp.json();
   return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+}
+async function proxyToReplit(files, authHeader) {
+  const baseUrl = process.env.REPLIT_BASE_URL;
+  const fd = new globalThis.FormData();
+  for (const f of files) {
+    fd.append("images", new Blob([f.buffer], { type: f.mimetype }), f.originalname);
+  }
+  const resp = await fetch(`${baseUrl}/api/bot/orders/ocr-extract`, {
+    method: "POST",
+    headers: { Authorization: authHeader },
+    body: fd
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`Replit proxy ${resp.status}: ${t.slice(0, 200)}`);
+  }
+  return resp.json();
 }
 var upload = (0, import_multer.default)({
   storage: import_multer.default.memoryStorage(),
@@ -62880,8 +62883,14 @@ router3.post(
   },
   async (req, res) => {
     const files = req.files ?? [];
-    if (!files.length) {
-      return res.status(400).json({ error: "Kh\xF4ng nh\u1EADn \u0111\u01B0\u1EE3c \u1EA3nh. Vui l\xF2ng th\u1EED l\u1EA1i." });
+    if (!files.length) return res.status(400).json({ error: "Kh\xF4ng nh\u1EADn \u0111\u01B0\u1EE3c \u1EA3nh. Vui l\xF2ng th\u1EED l\u1EA1i." });
+    if (process.env.REPLIT_BASE_URL) {
+      try {
+        const data = await proxyToReplit(files, req.headers["authorization"] ?? "");
+        return res.json(data);
+      } catch (err) {
+        return res.status(502).json({ error: `OCR proxy error: ${err.message}` });
+      }
     }
     const results = [];
     for (const file of files) {
@@ -62890,27 +62899,25 @@ router3.post(
       try {
         const base64 = file.buffer.toString("base64");
         const mimeType = file.mimetype.startsWith("image/") ? file.mimetype : "image/jpeg";
-        const backend = detectBackend();
         let raw = "";
-        if (backend === "gemini") {
+        if (process.env.GOOGLE_AI_API_KEY) {
           raw = await callGemini(base64, mimeType);
-        } else {
+        } else if (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {
           const oai = await getOpenAI();
           const response = await oai.chat.completions.create({
-            model: _model,
+            model: "gpt-5.6-luna",
             max_completion_tokens: 1024,
             messages: [
               { role: "system", content: SYSTEM_PROMPT },
-              {
-                role: "user",
-                content: [
-                  { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
-                  { type: "text", text: "Tr\xEDch xu\u1EA5t th\xF4ng tin \u0111\u01A1n h\xE0ng t\u1EEB \u1EA3nh n\xE0y." }
-                ]
-              }
+              { role: "user", content: [
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
+                { type: "text", text: "Tr\xEDch xu\u1EA5t th\xF4ng tin \u0111\u01A1n h\xE0ng t\u1EEB \u1EA3nh n\xE0y." }
+              ] }
             ]
           });
           raw = response.choices[0]?.message?.content ?? "";
+        } else {
+          throw new Error("Ch\u01B0a c\u1EA5u h\xECnh AI. Set REPLIT_BASE_URL ho\u1EB7c GOOGLE_AI_API_KEY.");
         }
         const cleaned = raw.replace(/```(?:json)?/g, "").replace(/```/g, "").trim();
         const extracted = JSON.parse(cleaned);

@@ -1,17 +1,8 @@
 import { Router } from "express";
 import multer from "multer";
 
-// ── AI backend detection ──────────────────────────────────────────────────────
-type AiBackend = "gemini" | "openai";
-let _backend: AiBackend | null = null;
+// ── AI backend ────────────────────────────────────────────────────────────────
 let _openai: any = null;
-let _model: string = "gpt-5.6-luna";
-
-function detectBackend(): AiBackend {
-  if (process.env.GOOGLE_AI_API_KEY) return "gemini";
-  if (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL && process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return "openai";
-  throw new Error("Chưa cấu hình AI: cần GOOGLE_AI_API_KEY hoặc AI env vars");
-}
 
 async function getOpenAI(): Promise<any> {
   if (!_openai) {
@@ -19,41 +10,42 @@ async function getOpenAI(): Promise<any> {
     const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY!;
     const { default: OpenAI } = await import("openai");
     _openai = new OpenAI({ apiKey, baseURL });
-    _model  = "gpt-5.6-luna";
   }
   return _openai;
 }
 
-/** Call Gemini REST API directly — more reliable than OpenAI-compat wrapper */
+/** Call Gemini REST API directly */
 async function callGemini(base64: string, mimeType: string): Promise<string> {
   const apiKey = process.env.GOOGLE_AI_API_KEY!;
-  const model  = "gemini-2.0-flash";
-  const url    = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-  const body = {
+  const url    = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const body   = {
     system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-    contents: [{
-      parts: [
-        { text: "Trích xuất thông tin đơn hàng từ ảnh này." },
-        { inline_data: { mime_type: mimeType, data: base64 } }
-      ]
-    }],
+    contents: [{ parts: [
+      { text: "Trích xuất thông tin đơn hàng từ ảnh này." },
+      { inline_data: { mime_type: mimeType, data: base64 } }
+    ]}],
     generationConfig: { maxOutputTokens: 1024 }
   };
-
-  const resp = await fetch(url, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify(body),
-  });
-
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`Gemini ${resp.status}: ${text.slice(0, 200)}`);
-  }
-
+  const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!resp.ok) { const t = await resp.text().catch(() => ""); throw new Error(`Gemini ${resp.status}: ${t.slice(0, 300)}`); }
   const data: any = await resp.json();
   return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+}
+
+/** Proxy OCR to Replit api-server (has built-in AI Integration) */
+async function proxyToReplit(files: Express.Multer.File[], authHeader: string): Promise<any> {
+  const baseUrl = process.env.REPLIT_BASE_URL!;
+  const fd = new (globalThis as any).FormData();
+  for (const f of files) {
+    fd.append("images", new Blob([f.buffer], { type: f.mimetype }), f.originalname);
+  }
+  const resp = await fetch(`${baseUrl}/api/bot/orders/ocr-extract`, {
+    method:  "POST",
+    headers: { Authorization: authHeader },
+    body:    fd,
+  });
+  if (!resp.ok) { const t = await resp.text().catch(() => ""); throw new Error(`Replit proxy ${resp.status}: ${t.slice(0, 200)}`); }
+  return resp.json();
 }
 
 // ── Multer — multipart/form-data, memory storage ─────────────────────────────
@@ -129,57 +121,57 @@ router.post(
   },
   async (req: any, res: any) => {
     const files: Express.Multer.File[] = req.files ?? [];
+    if (!files.length) return res.status(400).json({ error: "Không nhận được ảnh. Vui lòng thử lại." });
 
-    if (!files.length) {
-      return res.status(400).json({ error: "Không nhận được ảnh. Vui lòng thử lại." });
+    // ── Option A: proxy to Replit api-server (has built-in AI Integration) ──
+    if (process.env.REPLIT_BASE_URL) {
+      try {
+        const data = await proxyToReplit(files, req.headers["authorization"] ?? "");
+        return res.json(data);
+      } catch (err: any) {
+        return res.status(502).json({ error: `OCR proxy error: ${err.message}` });
+      }
     }
 
+    // ── Option B: Gemini native REST ─────────────────────────────────────────
     const results: Array<{ filename: string; success: boolean; extracted?: any; error?: string }> = [];
 
     for (const file of files) {
       const filename = file.originalname || "image";
-      // Log only technical metadata, never content
       console.info(`OCR: ${filename} ${file.size}B ${file.mimetype}`);
       try {
         const base64   = file.buffer.toString("base64");
         const mimeType = file.mimetype.startsWith("image/") ? file.mimetype : "image/jpeg";
-
-        const backend = detectBackend();
         let raw = "";
 
-        if (backend === "gemini") {
+        if (process.env.GOOGLE_AI_API_KEY) {
           raw = await callGemini(base64, mimeType);
-        } else {
+        } else if (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {
           const oai = await getOpenAI();
           const response = await oai.chat.completions.create({
-            model: _model,
+            model: "gpt-5.6-luna",
             max_completion_tokens: 1024,
             messages: [
               { role: "system", content: SYSTEM_PROMPT },
-              {
-                role: "user",
-                content: [
-                  { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
-                  { type: "text", text: "Trích xuất thông tin đơn hàng từ ảnh này." },
-                ],
-              },
+              { role: "user", content: [
+                { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}`, detail: "high" } },
+                { type: "text", text: "Trích xuất thông tin đơn hàng từ ảnh này." },
+              ]},
             ],
           });
           raw = response.choices[0]?.message?.content ?? "";
+        } else {
+          throw new Error("Chưa cấu hình AI. Set REPLIT_BASE_URL hoặc GOOGLE_AI_API_KEY.");
         }
 
         const cleaned   = raw.replace(/```(?:json)?/g, "").replace(/```/g, "").trim();
         const extracted = JSON.parse(cleaned);
-
-        // Validate required field
         if (!extracted.email?.value) throw new Error("Không tìm thấy email/tài khoản trong ảnh");
-
         results.push({ filename, success: true, extracted });
       } catch (err: any) {
         results.push({ filename, success: false, error: String(err?.message ?? "Lỗi không xác định") });
       }
     }
-
     res.json({ results });
   }
 );
