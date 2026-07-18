@@ -152,7 +152,18 @@ def _fmt_order(L: str, order: dict, settings: dict,
             order.get("paymentAt") or
             order.get("purchaseDate") or ""
         )
-        expiry_date    = (order.get("expiryDate") or "")[:10] or "N/A"
+        # Expiry: explicit field first, then compute from purchaseDate + warrantyDays
+        _expiry_raw = (order.get("expiryDate") or "")[:10]
+        if not _expiry_raw:
+            _pd = (order.get("purchaseDate") or "")[:10]
+            _wd = int(order.get("warrantyDays") or 0)
+            if _pd and _wd:
+                try:
+                    from datetime import timedelta as _td2
+                    _expiry_raw = (__import__("datetime").date.fromisoformat(_pd) + _td2(days=_wd)).isoformat()
+                except Exception:
+                    pass
+        expiry_date    = _expiry_raw or "N/A"
         warranty_end   = (wdata["warrantyEndDate"] or "")[:10] or "N/A"
         remaining      = wdata["remainingDays"]
         can_report     = wdata["canReport"]
@@ -258,19 +269,26 @@ def _fmt_order(L: str, order: dict, settings: dict,
     }
     status_str = status_map.get(order.get("status", "active"), order.get("status", ""))
 
-    return t(L, "order_display",
-        order_id    = order.get("orderId", ""),
-        email       = order.get("email", ""),
-        product     = order.get("productName", ""),
-        purchase    = (order.get("purchaseDate", "") or "")[:10],
-        expiry      = (order.get("expiryDate", "") or "")[:10],
-        remaining   = remaining_str,
-        warranty_exp= (order.get("warrantyExpiry") or order.get("warrantyDate") or "")[:10] or "N/A",
-        warranty    = warranty_str,
-        price       = price_str,
-        refund      = refund_str,
-        status      = status_str,
-    )
+    vi = L == "vi"
+    resolved_expiry = data.get("_resolved_expiry_date") or (order.get("expiryDate") or "")[:10]
+    warranty_icon = ""
+    if warranty_ok is True:
+        warranty_icon = "✅ "
+    elif warranty_ok is False:
+        warranty_icon = "❌ "
+    lines_leg = [f"<b>📦 {'THÔNG TIN ĐƠN HÀNG' if vi else 'ORDER INFORMATION'}</b>\n"]
+    lines_leg.append(f"🏷 {'Mã đơn' if vi else 'Order'}: <code>{order.get('orderId','')}</code>")
+    lines_leg.append(f"📧 {'Email' if vi else 'Email'}: <code>{order.get('email','')}</code>")
+    lines_leg.append(f"📦 {'Sản phẩm' if vi else 'Product'}: <b>{order.get('productName','')}</b>")
+    lines_leg.append(f"📅 {'Ngày mua' if vi else 'Purchase date'}: {(order.get('purchaseDate') or '')[:10] or 'N/A'}")
+    lines_leg.append(f"📅 {'Ngày hết hạn' if vi else 'Expiry date'}: {resolved_expiry or 'N/A'}")
+    lines_leg.append(f"⌛ {'Còn lại' if vi else 'Remaining'}: {remaining_str}")
+    lines_leg.append(f"🛡 {'Bảo hành đến' if vi else 'Warranty until'}: {(order.get('warrantyExpiry') or order.get('warrantyDate') or '')[:10] or 'N/A'}")
+    lines_leg.append(f"{warranty_icon}{'Trạng thái BH' if vi else 'Warranty status'}: {warranty_str}")
+    lines_leg.append(f"💰 {'Giá mua' if vi else 'Price'}: {price_str}")
+    lines_leg.append(f"💵 {'Hoàn dự kiến' if vi else 'Est. Refund'}: {refund_str}")
+    lines_leg.append(f"📊 {'Trạng thái' if vi else 'Status'}: <b>{status_str}</b>")
+    return "\n".join(lines_leg)
 
 def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
     """
