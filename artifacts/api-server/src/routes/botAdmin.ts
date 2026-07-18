@@ -348,6 +348,61 @@ router.post("/bot/orders", requireAuth, (req: any, res: any) => {
   res.json(order);
 });
 
+// ── POST /bot/orders/bulk ────────────────────────────────────────────────────
+router.post("/bot/orders/bulk", requireAuth, (req: any, res: any) => {
+  const body = req.body ?? {};
+  const { productName, price, purchaseDate, expiryDate, warrantyExpiry, usagePeriod, warrantyPeriod, notes, accounts } = body;
+  if (!productName || !purchaseDate || !Array.isArray(accounts) || accounts.length === 0) {
+    res.status(400).json({ ok: false, message: "productName, purchaseDate và accounts là bắt buộc" }); return;
+  }
+
+  const orders: any = readJson("orders", {}) ?? {};
+  const existingEmails = new Set(
+    Object.values(orders).map((o: any) => (o.email ?? "").toLowerCase())
+  );
+
+  const errors: { email: string; reason: string }[] = [];
+  let added = 0;
+  let skipped = 0;
+
+  for (const acc of accounts) {
+    const email: string = (acc.email ?? "").trim();
+    if (!email) {
+      errors.push({ email: "(trống)", reason: "Thiếu email" });
+      skipped++;
+      continue;
+    }
+    if (existingEmails.has(email.toLowerCase())) {
+      errors.push({ email, reason: "Email đã tồn tại trong hệ thống" });
+      skipped++;
+      continue;
+    }
+    const orderId = "ORD" + crypto.randomUUID().slice(0, 6).toUpperCase();
+    orders[orderId] = {
+      orderId,
+      email,
+      password: acc.password || null,
+      twoFA: acc.twoFA || null,
+      productName,
+      price: price ?? null,
+      purchaseDate: purchaseDate ?? null,
+      expiryDate: expiryDate ?? null,
+      warrantyExpiry: warrantyExpiry ?? null,
+      usagePeriod: usagePeriod ?? null,
+      warrantyPeriod: warrantyPeriod ?? null,
+      notes: notes ?? null,
+      status: "active",
+      createdAt: now(),
+    };
+    existingEmails.add(email.toLowerCase());
+    added++;
+  }
+
+  writeJson("orders", orders);
+  addLog("BULK_CREATE_ORDERS", `added=${added} skipped=${skipped}`, "web-admin");
+  res.json({ added, skipped, errors });
+});
+
 // ── GET /bot/orders/:orderId ─────────────────────────────────────────────────
 router.get("/bot/orders/:orderId", requireAuth, (req: any, res: any) => {
   const orders: any = readJson("orders", {}) ?? {};

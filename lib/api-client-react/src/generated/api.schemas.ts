@@ -143,6 +143,8 @@ export interface Order {
   orderId: string;
   email: string;
   productName: string;
+  password?: string | null;
+  twoFA?: string | null;
   price?: number | null;
   costPrice?: number | null;
   purchaseDate?: string | null;
@@ -154,6 +156,35 @@ export interface Order {
   notes?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+}
+
+export interface BulkOrderAccountItem {
+  email: string;
+  password?: string | null;
+  twoFA?: string | null;
+}
+
+export interface BulkOrderInput {
+  productName: string;
+  price?: number | null;
+  purchaseDate: string;
+  expiryDate?: string | null;
+  warrantyExpiry?: string | null;
+  usagePeriod?: string | null;
+  warrantyPeriod?: string | null;
+  notes?: string | null;
+  accounts: BulkOrderAccountItem[];
+}
+
+export interface BulkOrderError {
+  email: string;
+  reason: string;
+}
+
+export interface BulkOrderResult {
+  added: number;
+  skipped: number;
+  errors: BulkOrderError[];
 }
 
 export interface OrderInput {

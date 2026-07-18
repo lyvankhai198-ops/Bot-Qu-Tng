@@ -30,6 +30,8 @@ import type {
   BotStats,
   BotUser,
   BroadcastInput,
+  BulkOrderInput,
+  BulkOrderResult,
   ClaimRecord,
   GetBackup200,
   GetBotLogsParams,
@@ -1479,6 +1481,77 @@ export const useCreateOrder = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getCreateOrderMutationOptions(options));
+    }
+
+export const getBulkCreateOrdersUrl = () => {
+
+
+
+
+  return `/api/bot/orders/bulk`
+}
+
+/**
+ * @summary Bulk create orders from a list of accounts
+ */
+export const bulkCreateOrders = async (bulkOrderInput: BulkOrderInput, options?: RequestInit): Promise<BulkOrderResult> => {
+
+  return customFetch<BulkOrderResult>(getBulkCreateOrdersUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(bulkOrderInput)
+  }
+);}
+
+
+
+
+
+export const getBulkCreateOrdersMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkCreateOrders>>, TError,{data: BodyType<BulkOrderInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof bulkCreateOrders>>, TError,{data: BodyType<BulkOrderInput>}, TContext> => {
+
+const mutationKey = ['bulkCreateOrders'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof bulkCreateOrders>>, {data: BodyType<BulkOrderInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  bulkCreateOrders(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BulkCreateOrdersMutationResult = NonNullable<Awaited<ReturnType<typeof bulkCreateOrders>>>
+    export type BulkCreateOrdersMutationBody = BodyType<BulkOrderInput>
+    export type BulkCreateOrdersMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Bulk create orders from a list of accounts
+ */
+export const useBulkCreateOrders = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkCreateOrders>>, TError,{data: BodyType<BulkOrderInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof bulkCreateOrders>>,
+        TError,
+        {data: BodyType<BulkOrderInput>},
+        TContext
+      > => {
+      return useMutation(getBulkCreateOrdersMutationOptions(options));
     }
 
 export const getGetOrderUrl = (orderId: string,) => {

@@ -377,6 +377,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/Order"
 
+  /bot/orders/bulk:
+    post:
+      operationId: bulkCreateOrders
+      tags: [bot]
+      summary: Bulk create orders from a list of accounts
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkOrderInput"
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkOrderResult"
+
   /bot/orders/{orderId}:
     get:
       operationId: getOrder
@@ -1059,6 +1080,12 @@ components:
           type: string
         productName:
           type: string
+        password:
+          type: string
+          nullable: true
+        twoFA:
+          type: string
+          nullable: true
         price:
           type: number
           nullable: true
@@ -1091,6 +1118,72 @@ components:
         updatedAt:
           type: string
           nullable: true
+
+    BulkOrderAccountItem:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+          nullable: true
+        twoFA:
+          type: string
+          nullable: true
+
+    BulkOrderInput:
+      type: object
+      required: [productName, purchaseDate, accounts]
+      properties:
+        productName:
+          type: string
+        price:
+          type: number
+          nullable: true
+        purchaseDate:
+          type: string
+        expiryDate:
+          type: string
+          nullable: true
+        warrantyExpiry:
+          type: string
+          nullable: true
+        usagePeriod:
+          type: string
+          nullable: true
+        warrantyPeriod:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/BulkOrderAccountItem"
+
+    BulkOrderError:
+      type: object
+      required: [email, reason]
+      properties:
+        email:
+          type: string
+        reason:
+          type: string
+
+    BulkOrderResult:
+      type: object
+      required: [added, skipped, errors]
+      properties:
+        added:
+          type: integer
+        skipped:
+          type: integer
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/BulkOrderError"
 
     OrderInput:
       type: object

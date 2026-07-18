@@ -289,6 +289,8 @@ export const ListOrdersResponseItem = zod.object({
   "orderId": zod.string(),
   "email": zod.string(),
   "productName": zod.string(),
+  "password": zod.string().nullish(),
+  "twoFA": zod.string().nullish(),
   "price": zod.number().nullish(),
   "costPrice": zod.number().nullish(),
   "purchaseDate": zod.string().nullish(),
@@ -325,6 +327,8 @@ export const CreateOrderResponse = zod.object({
   "orderId": zod.string(),
   "email": zod.string(),
   "productName": zod.string(),
+  "password": zod.string().nullish(),
+  "twoFA": zod.string().nullish(),
   "price": zod.number().nullish(),
   "costPrice": zod.number().nullish(),
   "purchaseDate": zod.string().nullish(),
@@ -340,6 +344,35 @@ export const CreateOrderResponse = zod.object({
 
 
 /**
+ * @summary Bulk create orders from a list of accounts
+ */
+export const BulkCreateOrdersBody = zod.object({
+  "productName": zod.string(),
+  "price": zod.number().nullish(),
+  "purchaseDate": zod.string(),
+  "expiryDate": zod.string().nullish(),
+  "warrantyExpiry": zod.string().nullish(),
+  "usagePeriod": zod.string().nullish(),
+  "warrantyPeriod": zod.string().nullish(),
+  "notes": zod.string().nullish(),
+  "accounts": zod.array(zod.object({
+  "email": zod.string(),
+  "password": zod.string().nullish(),
+  "twoFA": zod.string().nullish()
+}))
+})
+
+export const BulkCreateOrdersResponse = zod.object({
+  "added": zod.number(),
+  "skipped": zod.number(),
+  "errors": zod.array(zod.object({
+  "email": zod.string(),
+  "reason": zod.string()
+}))
+})
+
+
+/**
  * @summary Get a single order
  */
 export const GetOrderParams = zod.object({
@@ -350,6 +383,8 @@ export const GetOrderResponse = zod.object({
   "orderId": zod.string(),
   "email": zod.string(),
   "productName": zod.string(),
+  "password": zod.string().nullish(),
+  "twoFA": zod.string().nullish(),
   "price": zod.number().nullish(),
   "costPrice": zod.number().nullish(),
   "purchaseDate": zod.string().nullish(),

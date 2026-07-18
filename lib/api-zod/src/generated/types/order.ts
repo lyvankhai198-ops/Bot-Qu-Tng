@@ -10,6 +10,8 @@ export interface Order {
   orderId: string;
   email: string;
   productName: string;
+  password?: string | null;
+  twoFA?: string | null;
   price?: number | null;
   costPrice?: number | null;
   purchaseDate?: string | null;

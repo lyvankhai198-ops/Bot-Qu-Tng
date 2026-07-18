@@ -1,0 +1,183 @@
+THÊM TÍNH NĂNG THÊM ĐƠN HÀNG HÀNG LOẠT
+
+Lần sửa này chỉ thêm chức năng nhập đơn hàng hàng loạt. Không thay đổi các chức năng khác.
+
+Trong trang “Đơn hàng”, thêm nút:
+
++ Thêm hàng loạt
+
+Khi bấm vào, hiển thị một biểu mẫu gồm:
+
+1. Sản phẩm
+2. Giá bán
+3. Ngày mua
+4. Số ngày sử dụng
+5. Số ngày bảo hành
+6. Ghi chú chung
+7. Ô nhập danh sách tài khoản
+
+Ngày mua mặc định là ngày hiện tại.
+
+Tất cả tài khoản trong một lần nhập sẽ sử dụng chung:
+
+- Sản phẩm
+- Giá bán
+- Ngày mua
+- Số ngày sử dụng
+- Số ngày bảo hành
+- Ghi chú
+
+Admin chỉ cần nhập các thông tin chung một lần.
+
+## Định dạng danh sách
+
+Mỗi tài khoản nằm trên một dòng.
+
+Hỗ trợ:
+
+email
+
+email|password
+
+email|password|2fa
+
+Ví dụ:
+
+account1@gmail.com|pass123|ABCDEF
+account2@gmail.com|pass456|GHIJKL
+account3@gmail.com|pass789|MNOPQR
+
+Hệ thống tự động tách:
+
+- Phần 1: Email/tài khoản
+- Phần 2: Mật khẩu
+- Phần 3: 2FA
+
+Không có mã đơn.
+
+Email/tài khoản được dùng để nhận dạng đơn hàng.
+
+## Nút thao tác
+
+Chỉ cần các nút:
+
+- Kiểm tra
+- Lưu tất cả
+- Hủy
+
+Không cần quy trình nhiều bước phức tạp.
+
+## Kiểm tra dữ liệu
+
+Khi admin bấm “Kiểm tra”, hiển thị:
+
+- Tổng số dòng
+- Số tài khoản hợp lệ
+- Số tài khoản bị trùng
+- Số dòng sai định dạng
+
+Nếu có lỗi, ghi rõ số dòng và lý do.
+
+Ví dụ:
+
+Dòng 5: Thiếu email
+Dòng 8: Email đã tồn tại
+Dòng 12: Trùng với dòng 3
+
+Admin có thể chọn:
+
+- Bỏ qua dòng lỗi và lưu các dòng hợp lệ
+- Quay lại sửa danh sách
+
+## Khi lưu
+
+Mỗi dòng hợp lệ tạo thành một đơn hàng riêng.
+
+Mỗi đơn phải lưu:
+
+- Email/tài khoản
+- Mật khẩu
+- 2FA nếu có
+- Sản phẩm
+- Giá bán
+- Ngày mua
+- Số ngày sử dụng
+- Số ngày bảo hành
+- Ngày hết hạn sử dụng
+- Ngày hết hạn bảo hành
+- Ghi chú
+- Trạng thái
+
+Không tạo mã đơn.
+
+Không yêu cầu admin nhập từng tài khoản riêng.
+
+## Tính thời hạn
+
+Tự động tính:
+
+Ngày hết hạn sử dụng =
+Ngày mua + Số ngày sử dụng
+
+Ngày hết hạn bảo hành =
+Ngày mua + Số ngày bảo hành
+
+Tiền hoàn dự kiến vẫn sử dụng công thức hiện tại:
+
+Giá bán ban đầu / Tổng số ngày bảo hành × Số ngày bảo hành còn lại
+
+Tài khoản thay thế sau này không được làm thay đổi ngày mua và thời hạn bảo hành ban đầu.
+
+## Chống trùng
+
+Email/tài khoản không được trùng với đơn đã tồn tại.
+
+Nếu đã tồn tại, chỉ báo lỗi và bỏ qua.
+
+Không tự động ghi đè đơn cũ.
+
+## Kết quả
+
+Sau khi lưu, hiển thị:
+
+“Đã thêm thành công X/Y đơn hàng.”
+
+Kèm:
+
+- Số đơn thành công
+- Số đơn bị bỏ qua
+- Danh sách dòng lỗi
+
+## Ghi nhớ thông tin
+
+Sau khi nhập thành công:
+
+- Ghi nhớ sản phẩm gần nhất
+- Ghi nhớ giá bán
+- Ghi nhớ số ngày sử dụng
+- Ghi nhớ số ngày bảo hành
+
+Lần sau mở trang tự điền lại.
+
+Riêng ngày mua luôn mặc định là ngày hiện tại.
+
+## Giao diện điện thoại
+
+Tối ưu giao diện nhập hàng loạt trên điện thoại:
+
+- Các trường xếp thành một cột
+- Ô dán danh sách đủ lớn
+- Không bị tràn ngang
+- Nút “Lưu tất cả” dễ bấm
+- Hiển thị tổng số tài khoản ngay dưới ô nhập
+
+Ví dụ quy trình sử dụng:
+
+1. Chọn Grok Super
+2. Ngày mua mặc định hôm nay
+3. Nhập bảo hành 10 ngày
+4. Nhập giá bán
+5. Dán 50 tài khoản
+6. Bấm Lưu tất cả
+
+Hệ thống tạo 50 đơn hàng ngay lập tức.

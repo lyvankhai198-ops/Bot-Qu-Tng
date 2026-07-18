@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react"
-import { useListOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, getListOrdersQueryKey } from "@workspace/api-client-react"
+import { useState, useMemo, useEffect } from "react"
+import { useListOrders, useCreateOrder, useUpdateOrder, useDeleteOrder, useBulkCreateOrders, getListOrdersQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Card, CardContent } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -9,10 +9,10 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Search, Plus, Edit2, Trash2 } from "lucide-react"
+import { Search, Plus, Edit2, Trash2, ListPlus, CheckCircle2, AlertTriangle } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import type { OrderInput, Order } from "@workspace/api-client-react"
+import type { OrderInput, Order, BulkOrderResult } from "@workspace/api-client-react"
 import { format } from "date-fns"
 
 const statusLabel = (s?: string) => ({ active: "Hoạt động", expired: "Hết hạn", refunded: "Hoàn tiền" }[s || ""] || s || "-")
@@ -104,6 +104,114 @@ export default function Orders() {
   const formatCurrency = (val?: number | null) => val ? new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val) : "-"
   const formatDate = (val?: string | null) => val ? format(new Date(val), 'dd/MM/yyyy') : "-"
 
+  // ── Bulk add ────────────────────────────────────────────────────────────────
+  const BULK_LS_KEY = "bot_bulk_order_defaults"
+  const bulkCreateOrders = useBulkCreateOrders({ mutation: { onSuccess: () => queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() }) } })
+
+  const todayStr = () => new Date().toISOString().split("T")[0]
+  const addDays = (dateStr: string, days: number): string => {
+    const [y, m, d] = dateStr.split("-").map(Number)
+    const dt = new Date(y, m - 1, d + days)
+    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`
+  }
+
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [bProd, setBProd] = useState("")
+  const [bPrice, setBPrice] = useState("")
+  const [bPurchaseDate, setBPurchaseDate] = useState(todayStr())
+  const [bUsageDays, setBUsageDays] = useState("")
+  const [bWarrDays, setBWarrDays] = useState("")
+  const [bNotes, setBNotes] = useState("")
+  const [bText, setBText] = useState("")
+  const [bValidation, setBValidation] = useState<{
+    totalLines: number
+    valid: { email: string; password: string; twoFA: string; lineNum: number }[]
+    errors: { lineNum: number; email: string; reason: string }[]
+  } | null>(null)
+  const [bResult, setBResult] = useState<BulkOrderResult | null>(null)
+  const [bSaving, setBSaving] = useState(false)
+
+  // Load remembered defaults on mount
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(BULK_LS_KEY) || "{}")
+      if (saved.productName) setBProd(saved.productName)
+      if (saved.price) setBPrice(String(saved.price))
+      if (saved.usageDays) setBUsageDays(String(saved.usageDays))
+      if (saved.warrantyDays) setBWarrDays(String(saved.warrantyDays))
+    } catch {}
+  }, [])
+
+  const saveDefaults = (prod: string, price: string, uDays: string, wDays: string) => {
+    try {
+      localStorage.setItem(BULK_LS_KEY, JSON.stringify({ productName: prod, price, usageDays: uDays, warrantyDays: wDays }))
+    } catch {}
+  }
+
+  const bLineCount = bText.split("\n").filter(l => l.trim()).length
+
+  const validateBulk = () => {
+    const existingEmails = new Set((orders || []).map(o => (o.email || "").toLowerCase()))
+    const lines = bText.split("\n").map(l => l.trim()).filter(l => l)
+    const valid: { email: string; password: string; twoFA: string; lineNum: number }[] = []
+    const errors: { lineNum: number; email: string; reason: string }[] = []
+    const seenInBatch = new Map<string, number>()
+
+    lines.forEach((line, idx) => {
+      const lineNum = idx + 1
+      const parts = line.split("|")
+      const email = (parts[0] || "").trim()
+      if (!email) { errors.push({ lineNum, email: "(trống)", reason: "Thiếu email" }); return }
+      const emailLower = email.toLowerCase()
+      if (existingEmails.has(emailLower)) { errors.push({ lineNum, email, reason: "Email đã tồn tại trong hệ thống" }); return }
+      if (seenInBatch.has(emailLower)) { errors.push({ lineNum, email, reason: `Trùng với dòng ${seenInBatch.get(emailLower)}` }); return }
+      seenInBatch.set(emailLower, lineNum)
+      valid.push({ email, password: (parts[1] || "").trim(), twoFA: (parts[2] || "").trim(), lineNum })
+    })
+
+    return { totalLines: lines.length, valid, errors }
+  }
+
+  const handleBulkValidate = () => { setBValidation(validateBulk()); setBResult(null) }
+
+  const handleBulkSave = async (validOnly?: { email: string; password: string; twoFA: string; lineNum: number }[]) => {
+    if (!bProd) { toast({ title: "Lỗi", description: "Vui lòng nhập tên sản phẩm", variant: "destructive" }); return }
+    const validation = bValidation || validateBulk()
+    if (!bValidation) setBValidation(validation)
+    const accounts = validOnly ?? validation.valid
+    if (accounts.length === 0) { toast({ title: "Không có tài khoản hợp lệ", description: "Kiểm tra lại danh sách", variant: "destructive" }); return }
+
+    const uDays = Number(bUsageDays) || 0
+    const wDays = Number(bWarrDays) || 0
+    const expiryDate = uDays > 0 ? addDays(bPurchaseDate, uDays) : undefined
+    const warrantyExpiry = wDays > 0 ? addDays(bPurchaseDate, wDays) : undefined
+
+    setBSaving(true)
+    try {
+      const result = await bulkCreateOrders.mutateAsync({
+        data: {
+          productName: bProd,
+          price: bPrice ? Number(bPrice) : undefined,
+          purchaseDate: bPurchaseDate,
+          expiryDate: expiryDate ?? null,
+          warrantyExpiry: warrantyExpiry ?? null,
+          usagePeriod: bUsageDays ? `${bUsageDays} ngày` : null,
+          warrantyPeriod: bWarrDays ? `${bWarrDays} ngày` : null,
+          notes: bNotes || null,
+          accounts: accounts.map(a => ({ email: a.email, password: a.password || null, twoFA: a.twoFA || null })),
+        }
+      })
+      saveDefaults(bProd, bPrice, bUsageDays, bWarrDays)
+      setBResult(result)
+      setBValidation(null)
+      setBText("")
+    } catch {
+      toast({ title: "Lỗi", description: "Không thể lưu đơn hàng hàng loạt", variant: "destructive" })
+    } finally { setBSaving(false) }
+  }
+
+  const resetBulk = () => { setBText(""); setBValidation(null); setBResult(null); setBSaving(false) }
+
   return (
     <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -111,9 +219,14 @@ export default function Orders() {
           <h1 className="text-xl md:text-2xl font-bold tracking-tight">Đơn hàng</h1>
           <p className="text-muted-foreground mt-1 text-sm">Quản lý giao dịch mua bán</p>
         </div>
-        <Button onClick={handleOpenAdd} className="w-full sm:w-auto min-h-[44px]">
-          <Plus className="w-4 h-4 mr-2" /> Thêm đơn hàng
-        </Button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button variant="outline" onClick={() => { resetBulk(); setBPurchaseDate(todayStr()); setBulkOpen(true) }} className="w-full sm:w-auto min-h-[44px]">
+            <ListPlus className="w-4 h-4 mr-2" /> Thêm hàng loạt
+          </Button>
+          <Button onClick={handleOpenAdd} className="w-full sm:w-auto min-h-[44px]">
+            <Plus className="w-4 h-4 mr-2" /> Thêm đơn hàng
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -310,6 +423,129 @@ export default function Orders() {
               {createOrder.isPending || updateOrder.isPending ? "Đang lưu..." : "Lưu"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk Add Dialog ─────────────────────────────────────────────── */}
+      <Dialog open={bulkOpen} onOpenChange={(open) => { if (!open) setBulkOpen(false) }}>
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-[640px] max-h-[92dvh] overflow-y-auto p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ListPlus className="w-5 h-5" /> Thêm đơn hàng hàng loạt
+            </DialogTitle>
+            <DialogDescription>Điền thông tin chung, sau đó dán danh sách tài khoản.</DialogDescription>
+          </DialogHeader>
+
+          {/* Result view */}
+          {bResult ? (
+            <div className="space-y-4 py-2">
+              <div className={`rounded-lg p-4 flex items-start gap-3 ${bResult.skipped > 0 ? "bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800" : "bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800"}`}>
+                {bResult.skipped > 0 ? <AlertTriangle className="w-5 h-5 text-yellow-600 shrink-0 mt-0.5" /> : <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />}
+                <div>
+                  <p className="font-semibold text-sm">Đã thêm thành công {bResult.added}/{bResult.added + bResult.skipped} đơn hàng.</p>
+                  <p className="text-sm text-muted-foreground mt-1">{bResult.added} thành công · {bResult.skipped} bị bỏ qua</p>
+                </div>
+              </div>
+              {bResult.errors.length > 0 && (
+                <div className="rounded-md border bg-muted/30 p-3 space-y-1 max-h-40 overflow-y-auto">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">Danh sách lỗi:</p>
+                  {bResult.errors.map((e, i) => (
+                    <p key={i} className="text-xs text-destructive font-mono">{e.email}: {e.reason}</p>
+                  ))}
+                </div>
+              )}
+              <Button className="w-full min-h-[44px]" onClick={() => setBulkOpen(false)}>Đóng</Button>
+            </div>
+          ) : (
+            <>
+              {/* Form fields — single column on mobile */}
+              <div className="grid gap-3 py-2">
+                <div className="grid gap-1.5">
+                  <Label>Sản phẩm *</Label>
+                  <Input value={bProd} onChange={e => setBProd(e.target.value)} placeholder="VD: Grok Super" className="min-h-[44px]" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label>Giá bán (VNĐ)</Label>
+                    <Input type="number" value={bPrice} onChange={e => setBPrice(e.target.value)} placeholder="0" className="min-h-[44px]" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Ngày mua</Label>
+                    <Input type="date" value={bPurchaseDate} onChange={e => setBPurchaseDate(e.target.value)} className="min-h-[44px]" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label>Số ngày sử dụng</Label>
+                    <Input type="number" value={bUsageDays} onChange={e => setBUsageDays(e.target.value)} placeholder="30" className="min-h-[44px]" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>Số ngày bảo hành</Label>
+                    <Input type="number" value={bWarrDays} onChange={e => setBWarrDays(e.target.value)} placeholder="7" className="min-h-[44px]" />
+                  </div>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Ghi chú chung</Label>
+                  <Input value={bNotes} onChange={e => setBNotes(e.target.value)} placeholder="(tùy chọn)" className="min-h-[44px]" />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Danh sách tài khoản</Label>
+                  <Textarea
+                    value={bText}
+                    onChange={e => { setBText(e.target.value); setBValidation(null) }}
+                    placeholder={"email|password|2fa\naccount1@gmail.com|pass123|ABCDEF\naccount2@gmail.com|pass456"}
+                    className="font-mono text-xs min-h-[180px] sm:min-h-[200px] resize-y"
+                    spellCheck={false}
+                  />
+                  <p className="text-xs text-muted-foreground">{bLineCount > 0 ? `${bLineCount} tài khoản` : "Mỗi dòng một tài khoản. Định dạng: email | email|mật khẩu | email|mật khẩu|2fa"}</p>
+                </div>
+
+                {/* Validation results */}
+                {bValidation && (
+                  <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                      <div className="rounded-md bg-background p-2">
+                        <p className="text-lg font-bold">{bValidation.totalLines}</p>
+                        <p className="text-xs text-muted-foreground">Tổng dòng</p>
+                      </div>
+                      <div className="rounded-md bg-background p-2">
+                        <p className="text-lg font-bold text-green-600">{bValidation.valid.length}</p>
+                        <p className="text-xs text-muted-foreground">Hợp lệ</p>
+                      </div>
+                      <div className="rounded-md bg-background p-2">
+                        <p className="text-lg font-bold text-destructive">{bValidation.errors.length}</p>
+                        <p className="text-xs text-muted-foreground">Lỗi / trùng</p>
+                      </div>
+                      <div className="rounded-md bg-background p-2">
+                        <p className="text-lg font-bold text-yellow-600">{bValidation.errors.filter(e => e.reason.startsWith("Trùng")).length}</p>
+                        <p className="text-xs text-muted-foreground">Trùng lặp</p>
+                      </div>
+                    </div>
+                    {bValidation.errors.length > 0 && (
+                      <div className="max-h-32 overflow-y-auto space-y-1 rounded border bg-background p-2">
+                        {bValidation.errors.map((e, i) => (
+                          <p key={i} className="text-xs text-destructive font-mono">Dòng {e.lineNum}: {e.reason}{e.email && e.email !== "(trống)" ? ` (${e.email})` : ""}</p>
+                        ))}
+                      </div>
+                    )}
+                    {bValidation.errors.length > 0 && bValidation.valid.length > 0 && (
+                      <Button size="sm" variant="outline" className="w-full" onClick={() => handleBulkSave(bValidation.valid)} disabled={bSaving}>
+                        {bSaving ? "Đang lưu..." : `Bỏ qua lỗi và lưu ${bValidation.valid.length} đơn hợp lệ`}
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="flex-col sm:flex-row gap-2 pt-2">
+                <Button variant="outline" className="w-full sm:w-auto min-h-[44px] sm:order-1" onClick={() => setBulkOpen(false)}>Hủy</Button>
+                <Button variant="secondary" className="w-full sm:w-auto min-h-[44px] sm:order-2" onClick={handleBulkValidate} disabled={!bText.trim()}>Kiểm tra</Button>
+                <Button className="w-full sm:w-auto min-h-[44px] sm:order-3" onClick={() => handleBulkSave()} disabled={bSaving || !bText.trim() || !bProd}>
+                  {bSaving ? "Đang lưu..." : "Lưu tất cả"}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
