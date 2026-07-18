@@ -52,6 +52,7 @@ export interface BotSettings {
   maintenanceMode?: boolean;
   refundFormula?: string;
   refundCustomText?: string;
+  requireChannelCheck?: boolean;
 }
 
 export interface BotSettingsInput {
@@ -66,6 +67,7 @@ export interface BotSettingsInput {
   maintenanceMode?: boolean;
   refundFormula?: string;
   refundCustomText?: string;
+  requireChannelCheck?: boolean;
 }
 
 export interface Account {

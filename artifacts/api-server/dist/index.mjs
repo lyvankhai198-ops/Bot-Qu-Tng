@@ -49881,7 +49881,8 @@ function readSettings() {
     intro_enabled: true,
     maintenance_mode: false,
     refund_formula: "remaining_days",
-    refund_custom_text: ""
+    refund_custom_text: "",
+    require_channel_check: false
   };
   return { ...defaults, ...readJson("settings", {}) ?? {} };
 }
@@ -49897,7 +49898,8 @@ function settingsToApi(s) {
     introEnabled: s.intro_enabled ?? true,
     maintenanceMode: s.maintenance_mode ?? false,
     refundFormula: s.refund_formula ?? "remaining_days",
-    refundCustomText: s.refund_custom_text ?? ""
+    refundCustomText: s.refund_custom_text ?? "",
+    requireChannelCheck: s.require_channel_check ?? false
   };
 }
 router2.post("/bot/auth", (req, res) => {
@@ -49969,7 +49971,8 @@ router2.put("/bot/settings", requireAuth, (req, res) => {
     introEnabled: "intro_enabled",
     maintenanceMode: "maintenance_mode",
     refundFormula: "refund_formula",
-    refundCustomText: "refund_custom_text"
+    refundCustomText: "refund_custom_text",
+    requireChannelCheck: "require_channel_check"
   };
   for (const [k, v] of Object.entries(map)) {
     if (b[k] !== void 0) s[v] = k === "cooldownHours" ? Number(b[k]) : b[k];
@@ -50949,6 +50952,15 @@ Ti\u1EC1n ho\xE0n s\u1EBD \u0111\u01B0\u1EE3c c\u1ED9ng tr\u1EF1c ti\u1EBFp v\xE
   await sendTelegramMessage(req_.userId, msg);
   addLog("WARRANTY_REFUND", `${id} \u2192 ${amountStr}\u0111 | ${email}`, resolvedBy);
   res.json({ ok: true, message: "\u0110\xE3 x\u1EED l\xFD ho\xE0n ti\u1EC1n" });
+});
+router2.get("/bot/required-channels", requireAuth, (_req, res) => {
+  res.json(readJson("required_channels", []) ?? []);
+});
+router2.put("/bot/required-channels", requireAuth, (req, res) => {
+  const channels = Array.isArray(req.body) ? req.body : [];
+  writeJson("required_channels", channels);
+  addLog("UPDATE_REQUIRED_CHANNELS", `${channels.length} channel(s)`, "web-admin");
+  res.json(channels);
 });
 router2.get("/bot/refund-history", requireAuth, (req, res) => {
   const history = readJson("refund_history", []) ?? [];

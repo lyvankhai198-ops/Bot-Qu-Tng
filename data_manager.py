@@ -974,6 +974,14 @@ def get_refund_record(order_id: str) -> dict | None:
     matches = [r for r in history if r.get("orderId") == order_id]
     return matches[-1] if matches else None
 
+# ─── Required channels (join-gate for gift) ──────────────────────────────────
+
+def get_required_channels() -> list:
+    return load("required_channels", [])
+
+def save_required_channels(channels: list):
+    save("required_channels", channels)
+
 # ─── Logs ──────────────────────────────────────────────────────────────────
 
 def add_log(action: str, user: str = "", admin: str = ""):
