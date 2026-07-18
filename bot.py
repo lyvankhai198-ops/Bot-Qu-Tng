@@ -486,12 +486,21 @@ def _get_all_admin_ids(ns: dict | None = None) -> list:
     return list(ids)
 
 def _warranty_admin_markup(req_id: str) -> dict:
+    url = f"{ADMIN_PANEL_URL}?id={req_id}" if req_id else ADMIN_PANEL_URL
     return {
         "inline_keyboard": [[
-            {"text": "📋 Mở trang bảo hành", "url": ADMIN_PANEL_URL},
-            {"text": "✅ Đang xử lý", "callback_data": f"warranty_ack:{req_id}"},
+            {"text": "📋 Mở trang bảo hành", "url": url},
+            {"text": "✅ Tiếp nhận xử lý", "callback_data": f"warranty_ack:{req_id}"},
         ]]
     }
+
+def _warranty_acked_markup(req_id: str) -> InlineKeyboardMarkup:
+    """Markup after admin acks — callback button replaced with a disabled-style label."""
+    url = f"{ADMIN_PANEL_URL}?id={req_id}" if req_id else ADMIN_PANEL_URL
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 Mở trang bảo hành", url=url),
+        InlineKeyboardButton("✅ Đã tiếp nhận", callback_data="warranty_noop"),
+    ]])
 
 def _tg_send_markup(token: str, chat_id: int, text: str, markup: dict | None = None, max_retries: int = 3) -> bool:
     """Send message with optional inline keyboard; retries up to max_retries times."""
@@ -623,43 +632,78 @@ def warranty_reminder_worker() -> None:
             logger.error(f"warranty_reminder_worker error: {e}")
 
 async def callback_warranty_ack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Admin taps '✅ Đang xử lý' button in notification message."""
+    """Admin taps '✅ Tiếp nhận xử lý' button in notification message."""
     query = update.callback_query
     user  = update.effective_user
-    await query.answer()
 
+    # Validate admin
     ns        = db.get_notification_settings()
     admin_ids = _get_all_admin_ids(ns)
     if user.id not in admin_ids:
-        await query.answer("Bạn không có quyền thực hiện thao tác này.", show_alert=True)
+        await query.answer("⛔ Bạn không có quyền thực hiện thao tác này.", show_alert=True)
         return
 
     req_id = query.data.split(":", 1)[1] if ":" in query.data else ""
     req    = db.get_warranty_request(req_id)
     if not req:
-        await query.answer("Không tìm thấy yêu cầu này.", show_alert=True)
+        await query.answer("❌ Không tìm thấy yêu cầu bảo hành này.", show_alert=True)
         return
     if req.get("acknowledgedAt"):
-        await query.answer("Yêu cầu này đã được nhận xử lý rồi.", show_alert=True)
+        await query.answer("ℹ️ Yêu cầu này đã được tiếp nhận rồi.", show_alert=True)
         return
 
+    # Mark as processing
+    now_dt = datetime.now()
     db.update_warranty_request(req_id, {
         "status": "processing",
-        "acknowledgedAt": datetime.now().isoformat(),
+        "acknowledgedAt": now_dt.isoformat(),
         "acknowledgedBy": str(user.id),
     })
     db.add_log("WARRANTY_ACK", f"{req_id} by @{user.username or user.id}", "bot")
 
+    # Send confirmation to customer
+    order_id = req.get("orderId", "N/A")
+    cust_msg = (
+        f"✅ <b>YÊU CẦU ĐÃ ĐƯỢC TIẾP NHẬN</b>\n\n"
+        f"Mã đơn: <code>{order_id}</code>\n\n"
+        f"Shop đã nhận được yêu cầu bảo hành của bạn và đang tiến hành kiểm tra. "
+        f"Kết quả xử lý sẽ được bot thông báo ngay khi hoàn tất. "
+        f"Vui lòng chờ và không gửi lại yêu cầu trùng lặp."
+    )
+    try:
+        sent_ok = _tg_send(TOKEN, int(req["userId"]), cust_msg)
+    except Exception as e:
+        logger.warning(f"WARRANTY_ACK: send to customer failed: {e}")
+        sent_ok = False
+
+    db.update_warranty_request(req_id, {
+        "ackNotifSentStatus": "sent" if sent_ok else "failed",
+        "ackNotifSentAt":     now_dt.isoformat() if sent_ok else None,
+        "ackNotifError":      None if sent_ok else "Gửi Telegram cho khách thất bại",
+    })
+
+    # Edit admin message: replace callback button with "✅ Đã tiếp nhận" (non-clickable)
     admin_name = f"@{user.username}" if user.username else user.first_name
+    acked_markup = _warranty_acked_markup(req_id)
     try:
         original = query.message.text or ""
         await query.edit_message_text(
-            original + f"\n\n✅ <b>Đã nhận xử lý bởi {admin_name}</b>",
+            original + f"\n\n✅ <b>Đã tiếp nhận bởi {admin_name}</b>",
             parse_mode=ParseMode.HTML,
+            reply_markup=acked_markup,
         )
     except Exception:
         pass
-    await query.answer("✅ Đã đánh dấu đang xử lý!", show_alert=False)
+
+    if sent_ok:
+        await query.answer("✅ Đã tiếp nhận! Khách hàng đã được thông báo.", show_alert=True)
+    else:
+        await query.answer("✅ Đã tiếp nhận! Nhưng gửi thông báo cho khách thất bại — vào web để gửi lại.", show_alert=True)
+
+
+async def callback_warranty_noop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """No-op handler for disabled inline buttons (e.g. '✅ Đã tiếp nhận')."""
+    await update.callback_query.answer()
 
 # ─── Broadcast worker ─────────────────────────────────────────────────────────
 
@@ -750,6 +794,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_lang,          pattern=r"^lang:"))
     app.add_handler(CallbackQueryHandler(callback_order,         pattern=r"^order:"))
     app.add_handler(CallbackQueryHandler(callback_warranty_ack,  pattern=r"^warranty_ack:"))
+    app.add_handler(CallbackQueryHandler(callback_warranty_noop, pattern=r"^warranty_noop$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
 
     logger.info("Bot is polling...")

@@ -191,6 +191,13 @@ export interface WarrantyRequest {
   sentStatus?: string | null;
   sentError?: string | null;
   sentAt?: string | null;
+  acknowledgedAt?: string | null;
+  acknowledgedBy?: string | null;
+  ackNotifSentStatus?: string | null;
+  ackNotifSentAt?: string | null;
+  ackNotifError?: string | null;
+  productName?: string | null;
+  userLang?: string | null;
 }
 
 export interface WarrantyReplacementInput {

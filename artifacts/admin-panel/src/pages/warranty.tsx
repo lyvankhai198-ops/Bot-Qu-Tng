@@ -1,10 +1,11 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import {
   useListWarranty,
   useResolveWarrantyReplacement,
   useResolveWarrantyRefund,
   useResolveWarrantyReject,
   useResendWarrantyReplacement,
+  useResendWarrantyAckNotif,
   getListWarrantyQueryKey,
 } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
@@ -18,7 +19,15 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import type { WarrantyRequest } from "@workspace/api-client-react"
 import { format } from "date-fns"
-import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle } from "lucide-react"
+import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle, Clock } from "lucide-react"
+
+// Parse ?id=xxx from URL hash (e.g. #/warranty?id=abc123)
+function getUrlTargetId(): string | null {
+  const hash = window.location.hash
+  const qIdx = hash.indexOf("?")
+  if (qIdx === -1) return null
+  return new URLSearchParams(hash.slice(qIdx)).get("id")
+}
 
 export default function Warranty() {
   const queryClient = useQueryClient()
@@ -26,10 +35,11 @@ export default function Warranty() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: getListWarrantyQueryKey() })
 
   const { data: warranties, isLoading } = useListWarranty({ query: { queryKey: getListWarrantyQueryKey() } })
-  const replaceM = useResolveWarrantyReplacement({ mutation: { onSuccess: invalidate } })
-  const refundM  = useResolveWarrantyRefund({ mutation: { onSuccess: invalidate } })
-  const rejectM  = useResolveWarrantyReject({ mutation: { onSuccess: invalidate } })
-  const resendM  = useResendWarrantyReplacement({ mutation: { onSuccess: invalidate } })
+  const replaceM   = useResolveWarrantyReplacement({ mutation: { onSuccess: invalidate } })
+  const refundM    = useResolveWarrantyRefund({ mutation: { onSuccess: invalidate } })
+  const rejectM    = useResolveWarrantyReject({ mutation: { onSuccess: invalidate } })
+  const resendM    = useResendWarrantyReplacement({ mutation: { onSuccess: invalidate } })
+  const ackResendM = useResendWarrantyAckNotif({ mutation: { onSuccess: invalidate } })
 
   const [activeReq, setActiveReq] = useState<WarrantyRequest | null>(null)
   const [modalType, setModalType] = useState<"replace" | "refund" | "reject" | null>(null)
@@ -44,6 +54,21 @@ export default function Warranty() {
   const [refNote,   setRefNote]   = useState("")
   // Reject field
   const [rejReason, setRejReason] = useState("")
+
+  // Deep-link: highlight target warranty from URL
+  const [targetId, setTargetId] = useState<string | null>(null)
+  const targetRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const id = getUrlTargetId()
+    if (id) setTargetId(id)
+  }, [])
+
+  useEffect(() => {
+    if (targetId && targetRef.current) {
+      setTimeout(() => targetRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 400)
+    }
+  }, [targetId, warranties])
 
   const openModal = (req: WarrantyRequest, type: "replace" | "refund" | "reject") => {
     setActiveReq(req); setModalType(type)
@@ -89,14 +114,42 @@ export default function Warranty() {
     }
   }
 
-  const pendingWarranties  = warranties?.filter(w => w.status === "pending") || []
-  const processedWarranties = warranties?.filter(w => w.status !== "pending") || []
+  const handleResendAck = async (req: WarrantyRequest) => {
+    try {
+      const result = await ackResendM.mutateAsync({ id: req.id })
+      if ((result as any)?.ok === false) {
+        toast({ title: "Gửi lại thất bại", description: (result as any).message, variant: "destructive" })
+      } else {
+        toast({ title: "✅ Đã gửi lại thông báo tiếp nhận", description: "Khách hàng đã được thông báo" })
+      }
+    } catch {
+      toast({ title: "Gửi lại thất bại", description: "Kiểm tra token bot hoặc thử lại sau", variant: "destructive" })
+    }
+  }
+
+  const pendingWarranties    = warranties?.filter(w => w.status === "pending")    || []
+  const processingWarranties = warranties?.filter(w => w.status === "processing") || []
+  const resolvedWarranties   = warranties?.filter(w => !["pending", "processing"].includes(w.status)) || []
 
   const sentStatusBadge = (req: WarrantyRequest) => {
-    if (req.status === "rejected") return <Badge variant="destructive">Từ chối</Badge>
-    if ((req as any).sentStatus === "sent")   return <Badge className="bg-green-600 text-white">Đã gửi cho khách</Badge>
+    if (req.status === "rejected")          return <Badge variant="destructive">Từ chối</Badge>
+    if (req.status === "processing")        return <Badge className="bg-blue-600 text-white">Đang xử lý</Badge>
+    if ((req as any).sentStatus === "sent") return <Badge className="bg-green-600 text-white">Đã gửi cho khách</Badge>
     if ((req as any).sentStatus === "failed") return <Badge variant="destructive">Gửi thất bại</Badge>
     return <Badge variant="secondary">Đã xử lý</Badge>
+  }
+
+  // Card wrapper — highlighted if it's the deep-linked target
+  const WarrantyCard = ({ req, children }: { req: WarrantyRequest; children: React.ReactNode }) => {
+    const isTarget = req.id === targetId
+    return (
+      <div
+        ref={isTarget ? targetRef : undefined}
+        className={`p-4 md:p-6 space-y-4 transition-colors duration-700 ${isTarget ? "bg-yellow-500/10 border-l-4 border-yellow-500" : ""}`}
+      >
+        {children}
+      </div>
+    )
   }
 
   return (
@@ -107,12 +160,13 @@ export default function Warranty() {
       </div>
 
       <div className="grid gap-4 md:gap-6">
-        {/* Pending */}
+
+        {/* ── Pending ─────────────────────────────────────────────── */}
         <Card className="border-warning/50">
           <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
             <CardTitle className="flex items-center text-base md:text-lg">
               <ShieldAlert className="w-5 h-5 mr-2 text-yellow-500" />
-              Cần xử lý ({pendingWarranties.length})
+              Chờ xử lý ({pendingWarranties.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -121,7 +175,7 @@ export default function Warranty() {
             ) : pendingWarranties.length > 0 ? (
               <div className="divide-y divide-border/50">
                 {pendingWarranties.map(req => (
-                  <div key={req.id} className="p-4 md:p-6 space-y-4">
+                  <WarrantyCard key={req.id} req={req}>
                     <div className="space-y-3">
                       <div className="flex flex-wrap items-center gap-2 justify-between">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -146,7 +200,7 @@ export default function Warranty() {
                         <XCircle className="w-4 h-4 mr-2" /> Từ chối
                       </Button>
                     </div>
-                  </div>
+                  </WarrantyCard>
                 ))}
               </div>
             ) : (
@@ -158,19 +212,98 @@ export default function Warranty() {
           </CardContent>
         </Card>
 
-        {/* Processed */}
-        {processedWarranties.length > 0 && (
-          <Card>
-            <CardHeader className="pb-3 border-b border-border/50">
-              <CardTitle className="text-base md:text-lg">Đã xử lý ({processedWarranties.length})</CardTitle>
+        {/* ── Processing ──────────────────────────────────────────── */}
+        {processingWarranties.length > 0 && (
+          <Card className="border-blue-500/30">
+            <CardHeader className="pb-3 border-b border-border/50 bg-blue-500/5">
+              <CardTitle className="flex items-center text-base md:text-lg text-blue-700 dark:text-blue-400">
+                <Clock className="w-5 h-5 mr-2" />
+                Đang xử lý ({processingWarranties.length})
+              </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               <div className="divide-y divide-border/50">
-                {processedWarranties.slice(0, 20).map(req => {
+                {processingWarranties.map(req => {
+                  const r = req as any
+                  const ackFailed = r.ackNotifSentStatus === "failed"
+                  return (
+                    <WarrantyCard key={req.id} req={req}>
+                      {/* Header */}
+                      <div className="flex flex-wrap items-center gap-2 justify-between">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge className="bg-blue-600 text-white">Đang xử lý</Badge>
+                          <span className="text-sm font-medium">{req.email || req.username || "Ẩn danh"}</span>
+                        </div>
+                        <code className="text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded">{req.orderId}</code>
+                      </div>
+
+                      {/* Description */}
+                      <div className="bg-muted/50 p-3 rounded-lg text-sm border border-border/50">{req.description}</div>
+
+                      {/* Ack info */}
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        {r.acknowledgedAt && (
+                          <div>✅ Tiếp nhận lúc: {format(new Date(r.acknowledgedAt), 'dd/MM/yyyy HH:mm')}
+                            {r.acknowledgedBy && <span className="ml-1">(Admin #{r.acknowledgedBy})</span>}
+                          </div>
+                        )}
+                        {r.ackNotifSentStatus === "sent" && r.ackNotifSentAt && (
+                          <div className="text-green-600">📨 Đã thông báo khách lúc: {format(new Date(r.ackNotifSentAt), 'dd/MM/yyyy HH:mm')}</div>
+                        )}
+                      </div>
+
+                      {/* Ack notif failed → resend button */}
+                      {ackFailed && (
+                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 space-y-2">
+                          <div className="flex items-center gap-2 text-red-600 text-xs font-medium">
+                            <AlertTriangle className="w-4 h-4" /> Gửi thông báo tiếp nhận cho khách thất bại
+                          </div>
+                          {r.ackNotifError && <p className="text-xs text-muted-foreground">{r.ackNotifError}</p>}
+                          <Button
+                            size="sm"
+                            className="w-full min-h-[40px] bg-blue-600 hover:bg-blue-700"
+                            onClick={() => handleResendAck(req)}
+                            disabled={ackResendM.isPending}
+                          >
+                            <SendHorizonal className="w-4 h-4 mr-2" />
+                            {ackResendM.isPending ? "Đang gửi lại..." : "Gửi lại thông báo tiếp nhận"}
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Action buttons (can still resolve from processing state) */}
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <Button size="sm" className="w-full sm:flex-1 min-h-[44px] bg-blue-600 hover:bg-blue-700" onClick={() => openModal(req, "replace")}>
+                          <RefreshCcw className="w-4 h-4 mr-2" /> Tài khoản mới
+                        </Button>
+                        <Button size="sm" variant="outline" className="w-full sm:flex-1 min-h-[44px]" onClick={() => openModal(req, "refund")}>
+                          <DollarSign className="w-4 h-4 mr-2" /> Hoàn tiền
+                        </Button>
+                        <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject")}>
+                          <XCircle className="w-4 h-4 mr-2" /> Từ chối
+                        </Button>
+                      </div>
+                    </WarrantyCard>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Resolved / Rejected ─────────────────────────────────── */}
+        {resolvedWarranties.length > 0 && (
+          <Card>
+            <CardHeader className="pb-3 border-b border-border/50">
+              <CardTitle className="text-base md:text-lg">Đã xử lý ({resolvedWarranties.length})</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-border/50">
+                {resolvedWarranties.slice(0, 20).map(req => {
                   const r = req as any
                   const isFailed = r.sentStatus === "failed"
                   return (
-                    <div key={req.id} className={`p-4 space-y-3 hover:bg-muted/10 ${isFailed ? "bg-red-500/5" : ""}`}>
+                    <WarrantyCard key={req.id} req={req}>
                       {/* Header row */}
                       <div className="flex flex-wrap items-center gap-2 justify-between">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -217,7 +350,7 @@ export default function Warranty() {
                           </Button>
                         </div>
                       )}
-                    </div>
+                    </WarrantyCard>
                   )
                 })}
               </div>
@@ -226,7 +359,7 @@ export default function Warranty() {
         )}
       </div>
 
-      {/* Replacement Modal */}
+      {/* ── Replacement Modal ──────────────────────────────────────── */}
       <Dialog open={modalType === "replace"} onOpenChange={open => !open && setModalType(null)}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
@@ -261,7 +394,7 @@ export default function Warranty() {
         </DialogContent>
       </Dialog>
 
-      {/* Refund Modal */}
+      {/* ── Refund Modal ───────────────────────────────────────────── */}
       <Dialog open={modalType === "refund"} onOpenChange={open => !open && setModalType(null)}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
@@ -287,7 +420,7 @@ export default function Warranty() {
         </DialogContent>
       </Dialog>
 
-      {/* Reject Modal */}
+      {/* ── Reject Modal ───────────────────────────────────────────── */}
       <Dialog open={modalType === "reject"} onOpenChange={open => !open && setModalType(null)}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>

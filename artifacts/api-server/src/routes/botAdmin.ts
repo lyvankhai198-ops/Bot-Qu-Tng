@@ -476,6 +476,31 @@ router.post("/bot/warranty/:id/replacement", requireAuth, async (req: any, res: 
   }
 });
 
+// ── POST /bot/warranty/:id/resend-ack ────────────────────────────────────────
+router.post("/bot/warranty/:id/resend-ack", requireAuth, async (req: any, res: any) => {
+  const { id } = req.params;
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  if (!req_.acknowledgedAt) {
+    res.status(400).json({ ok: false, message: "Yêu cầu chưa được tiếp nhận" }); return;
+  }
+  const orderId = req_.orderId || "N/A";
+  const msg = `✅ <b>YÊU CẦU ĐÃ ĐƯỢC TIẾP NHẬN</b>\n\nMã đơn: <code>${orderId}</code>\n\nShop đã nhận được yêu cầu bảo hành của bạn và đang tiến hành kiểm tra. Kết quả xử lý sẽ được bot thông báo ngay khi hoàn tất. Vui lòng chờ và không gửi lại yêu cầu trùng lặp.`;
+  const result = await sendTelegramMessage(req_.userId, msg);
+  if (result.ok) {
+    requests[idx] = { ...req_, ackNotifSentStatus: "sent", ackNotifSentAt: now(), ackNotifError: null };
+    writeJson("warranty_requests", requests);
+    addLog("WARRANTY_ACK_RESEND", `${id} → sent OK`, "web-admin");
+    res.json({ ok: true, message: "Đã gửi lại thông báo tiếp nhận cho khách" });
+  } else {
+    requests[idx] = { ...req_, ackNotifSentStatus: "failed", ackNotifError: result.error };
+    writeJson("warranty_requests", requests);
+    res.json({ ok: false, message: `Gửi lại thất bại: ${result.error}` });
+  }
+});
+
 // ── POST /bot/warranty/:id/resend ────────────────────────────────────────────
 router.post("/bot/warranty/:id/resend", requireAuth, async (req: any, res: any) => {
   const { id } = req.params;

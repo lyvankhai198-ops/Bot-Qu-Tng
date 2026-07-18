@@ -428,7 +428,14 @@ export const ListWarrantyResponseItem = zod.object({
   "replacementNote": zod.string().nullish(),
   "sentStatus": zod.string().nullish(),
   "sentError": zod.string().nullish(),
-  "sentAt": zod.string().nullish()
+  "sentAt": zod.string().nullish(),
+  "acknowledgedAt": zod.string().nullish(),
+  "acknowledgedBy": zod.string().nullish(),
+  "ackNotifSentStatus": zod.string().nullish(),
+  "ackNotifSentAt": zod.string().nullish(),
+  "ackNotifError": zod.string().nullish(),
+  "productName": zod.string().nullish(),
+  "userLang": zod.string().nullish()
 })
 export const ListWarrantyResponse = zod.array(ListWarrantyResponseItem)
 
@@ -520,6 +527,19 @@ export const UpdateNotificationSettingsResponse = zod.object({
   "reminder1Minutes": zod.number().optional(),
   "reminder2Minutes": zod.number().optional(),
   "urgentMinutes": zod.number().optional()
+})
+
+
+/**
+ * @summary Resend "request acknowledged" notification to customer
+ */
+export const ResendWarrantyAckNotifParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ResendWarrantyAckNotifResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
 })
 
 

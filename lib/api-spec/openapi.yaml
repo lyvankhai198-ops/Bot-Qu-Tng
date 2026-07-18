@@ -576,6 +576,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/NotificationSettings"
 
+  /bot/warranty/{id}/resend-ack:
+    post:
+      operationId: resendWarrantyAckNotif
+      tags: [bot]
+      summary: Resend "request acknowledged" notification to customer
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
   /bot/warranty/{id}/resend:
     post:
       operationId: resendWarrantyReplacement
@@ -1036,6 +1057,27 @@ components:
           type: string
           nullable: true
         sentAt:
+          type: string
+          nullable: true
+        acknowledgedAt:
+          type: string
+          nullable: true
+        acknowledgedBy:
+          type: string
+          nullable: true
+        ackNotifSentStatus:
+          type: string
+          nullable: true
+        ackNotifSentAt:
+          type: string
+          nullable: true
+        ackNotifError:
+          type: string
+          nullable: true
+        productName:
+          type: string
+          nullable: true
+        userLang:
           type: string
           nullable: true
 

@@ -2141,6 +2141,77 @@ export const useUpdateNotificationSettings = <TError = ErrorType<unknown>,
       return useMutation(getUpdateNotificationSettingsMutationOptions(options));
     }
 
+export const getResendWarrantyAckNotifUrl = (id: string,) => {
+
+
+
+
+  return `/api/bot/warranty/${id}/resend-ack`
+}
+
+/**
+ * @summary Resend "request acknowledged" notification to customer
+ */
+export const resendWarrantyAckNotif = async (id: string, options?: RequestInit): Promise<ActionResult> => {
+
+  return customFetch<ActionResult>(getResendWarrantyAckNotifUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getResendWarrantyAckNotifMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resendWarrantyAckNotif>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resendWarrantyAckNotif>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['resendWarrantyAckNotif'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resendWarrantyAckNotif>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  resendWarrantyAckNotif(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResendWarrantyAckNotifMutationResult = NonNullable<Awaited<ReturnType<typeof resendWarrantyAckNotif>>>
+
+    export type ResendWarrantyAckNotifMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Resend "request acknowledged" notification to customer
+ */
+export const useResendWarrantyAckNotif = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resendWarrantyAckNotif>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resendWarrantyAckNotif>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getResendWarrantyAckNotifMutationOptions(options));
+    }
+
 export const getResendWarrantyReplacementUrl = (id: string,) => {
 
 
