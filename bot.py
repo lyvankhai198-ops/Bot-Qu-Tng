@@ -18,6 +18,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    BotCommand, BotCommandScopeAllPrivateChats,
     ContextTypes, filters,
 )
 from telegram.constants import ParseMode
@@ -425,6 +426,44 @@ async def callback_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def cmd_myid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"🆔 Your ID: <code>{update.effective_user.id}</code>", parse_mode=ParseMode.HTML)
+
+async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await handle_support(update, context)
+
+async def cmd_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await handle_gift(update, context)
+
+async def cmd_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await handle_check_order(update, context)
+
+async def cmd_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Catch-all for unrecognised slash commands — show the command list."""
+    user = update.effective_user
+    L = lang(user.id)
+    vi = L == "vi"
+    if vi:
+        msg = (
+            "❓ <b>Lệnh không hợp lệ.</b>\n\n"
+            "📋 Các lệnh có thể dùng:\n"
+            "/start — Bắt đầu / chọn ngôn ngữ\n"
+            "/support — Hỗ trợ & kiểm tra đơn hàng\n"
+            "/gift — Nhận quà miễn phí\n"
+            "/orders — Kiểm tra đơn hàng\n"
+            "/myid — Xem ID Telegram của bạn\n\n"
+            "Hoặc dùng menu bên dưới 👇"
+        )
+    else:
+        msg = (
+            "❓ <b>Unknown command.</b>\n\n"
+            "📋 Available commands:\n"
+            "/start — Start / choose language\n"
+            "/support — Support & order lookup\n"
+            "/gift — Claim free gift\n"
+            "/orders — Check your order\n"
+            "/myid — View your Telegram ID\n\n"
+            "Or use the menu below 👇"
+        )
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
 
 # ─── Show main menu ───────────────────────────────────────────────────────────
 
@@ -1245,7 +1284,30 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         elif state == "report_issue":
             await handle_report_issue_input(update, context)
         else:
-            await update.message.reply_text(t(L, "unknown_cmd"), reply_markup=main_keyboard(user.id))
+            vi = L == "vi"
+            if vi:
+                cmd_hint = (
+                    "❓ Không hiểu lệnh này.\n\n"
+                    "📋 Các lệnh có thể dùng:\n"
+                    "/start — Bắt đầu\n"
+                    "/support — Hỗ trợ\n"
+                    "/gift — Nhận quà\n"
+                    "/orders — Kiểm tra đơn\n"
+                    "/myid — ID của bạn\n\n"
+                    "Hoặc dùng menu bên dưới 👇"
+                )
+            else:
+                cmd_hint = (
+                    "❓ Command not recognized.\n\n"
+                    "📋 Available commands:\n"
+                    "/start — Start\n"
+                    "/support — Support\n"
+                    "/gift — Claim gift\n"
+                    "/orders — Check order\n"
+                    "/myid — Your Telegram ID\n\n"
+                    "Or use the menu below 👇"
+                )
+            await update.message.reply_text(cmd_hint, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
 
 # ─── Admin warranty notification system ──────────────────────────────────────
 
@@ -1663,14 +1725,40 @@ def main():
     logger.info("Warranty reminder worker started.")
 
     app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("myid", cmd_myid))
+
+    # ── Set bot command menu (left "/" button) for each language ──────────────
+    vi_commands = [
+        BotCommand("start",   "🚀 Bắt đầu / chọn ngôn ngữ"),
+        BotCommand("support", "💬 Hỗ trợ & kiểm tra đơn hàng"),
+        BotCommand("gift",    "🎁 Nhận quà miễn phí"),
+        BotCommand("orders",  "📦 Kiểm tra đơn hàng"),
+        BotCommand("myid",    "🆔 ID Telegram của bạn"),
+    ]
+    en_commands = [
+        BotCommand("start",   "🚀 Start / choose language"),
+        BotCommand("support", "💬 Support & order lookup"),
+        BotCommand("gift",    "🎁 Claim free gift"),
+        BotCommand("orders",  "📦 Check your order"),
+        BotCommand("myid",    "🆔 Your Telegram ID"),
+    ]
+    scope = BotCommandScopeAllPrivateChats()
+    await app.bot.set_my_commands(vi_commands, scope=scope)                        # default (vi)
+    await app.bot.set_my_commands(en_commands, scope=scope, language_code="en")    # EN clients
+
+    # ── Register handlers ─────────────────────────────────────────────────────
+    app.add_handler(CommandHandler("start",   cmd_start))
+    app.add_handler(CommandHandler("myid",    cmd_myid))
+    app.add_handler(CommandHandler("support", cmd_support))
+    app.add_handler(CommandHandler("gift",    cmd_gift))
+    app.add_handler(CommandHandler("orders",  cmd_orders))
+    app.add_handler(CommandHandler("order",   cmd_orders))   # alias
     app.add_handler(CallbackQueryHandler(callback_lang,          pattern=r"^lang:"))
     app.add_handler(CallbackQueryHandler(callback_order,         pattern=r"^order:"))
     app.add_handler(CallbackQueryHandler(callback_warranty_ack,  pattern=r"^warranty_ack:"))
     app.add_handler(CallbackQueryHandler(callback_warranty_noop, pattern=r"^warranty_noop$"))
     app.add_handler(CallbackQueryHandler(callback_multi_warranty,  pattern=r"^mw:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
+    app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
     logger.info("Bot is polling...")
     app.run_polling(drop_pending_updates=True)
