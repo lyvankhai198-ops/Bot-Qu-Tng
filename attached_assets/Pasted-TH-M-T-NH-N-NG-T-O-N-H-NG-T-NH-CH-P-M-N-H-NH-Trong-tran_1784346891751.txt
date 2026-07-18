@@ -1,0 +1,207 @@
+THÊM TÍNH NĂNG TẠO ĐƠN HÀNG TỪ ẢNH CHỤP MÀN HÌNH
+
+Trong trang “Đơn hàng”, thêm nút:
+
+📷 Thêm từ ảnh
+
+Mục tiêu:
+Admin chỉ cần tải lên ảnh chụp màn hình chi tiết đơn hàng. Hệ thống tự đọc nội dung trong ảnh, tự điền thông tin đơn hàng và cho admin kiểm tra trước khi lưu.
+
+## 1. Giao diện
+
+Khi bấm “Thêm từ ảnh”, mở cửa sổ gồm:
+
+- Chụp ảnh bằng camera
+- Chọn ảnh từ thư viện
+- Kéo thả ảnh trên máy tính
+- Nút “Đọc dữ liệu”
+- Nút “Hủy”
+
+Cho phép tải nhiều ảnh cùng lúc để tạo nhiều đơn hàng.
+
+## 2. Dữ liệu cần tự nhận diện
+
+Hệ thống cần đọc các trường sau từ ảnh:
+
+- Sản phẩm
+- Loại đơn
+- Số lượng
+- Số tiền
+- Khách hàng
+- Trạng thái
+- Thời gian tạo
+- Thời gian thanh toán
+- Thời gian giao
+- Phương thức thanh toán
+- Email/tài khoản đã giao
+- Mật khẩu
+- 2FA nếu có
+
+Không cần đọc hoặc lưu “Mã đơn”, vì hệ thống đã bỏ mã đơn.
+
+Email/tài khoản đã giao được dùng làm thông tin nhận dạng chính.
+
+## 3. Ví dụ nhận diện
+
+Từ ảnh có nội dung:
+
+Sản phẩm:
+GROK SUPER 30D BHF
+
+Số tiền:
+90.000đ
+
+Khách hàng:
+Tự Mã Trọng Đạt
+
+Trạng thái:
+Đã giao
+
+Tạo lúc:
+10:35:59 18/7/2026
+
+Thanh toán:
+10:37:12 18/7/2026
+
+Giao lúc:
+10:37:14 18/7/2026
+
+Phương thức:
+vietqr
+
+Email/tài khoản:
+robertyteoG@outlook.com
+
+Mật khẩu:
+GrokSuperPro123#
+
+Hệ thống phải tự điền đúng các trường tương ứng.
+
+## 4. Tự suy ra thời hạn bảo hành
+
+Sau khi nhận diện tên sản phẩm, hệ thống tự lấy số ngày bảo hành từ tên hoặc cấu hình sản phẩm.
+
+Ví dụ:
+
+- GROK SUPER 30D BHF → bảo hành 30 ngày
+- GROK SUPER 10D BHF → bảo hành 10 ngày
+- GROK SUPER 3 THÁNG BHF → bảo hành 90 ngày
+- NO WARRANTY → bảo hành 0 ngày
+
+Ưu tiên lấy cấu hình bảo hành đã lưu trong sản phẩm.
+
+Nếu không nhận diện được, hiển thị ô để admin chọn lại.
+
+## 5. Ngày mua
+
+Mặc định:
+
+- Ngày mua = thời gian thanh toán
+- Nếu không có thời gian thanh toán thì dùng thời gian giao
+- Nếu vẫn không có thì dùng thời gian tạo
+
+Chỉ lấy phần ngày để tính bảo hành.
+
+## 6. Màn hình kiểm tra trước khi lưu
+
+Sau khi đọc ảnh, hiển thị form đã điền sẵn:
+
+- Email/tài khoản
+- Mật khẩu
+- 2FA
+- Sản phẩm
+- Giá bán
+- Khách hàng
+- Ngày mua
+- Số ngày bảo hành
+- Ngày hết bảo hành
+- Trạng thái
+- Phương thức thanh toán
+
+Admin có thể sửa bất kỳ trường nào trước khi lưu.
+
+Hiển thị ảnh gốc cạnh form để đối chiếu.
+
+## 7. Độ tin cậy nhận diện
+
+Mỗi trường cần có mức độ tin cậy:
+
+- Chính xác cao
+- Cần kiểm tra
+- Không nhận diện được
+
+Các trường không chắc chắn phải được tô nổi bật để admin kiểm tra.
+
+Không tự lưu đơn nếu thiếu:
+
+- Email/tài khoản
+- Sản phẩm
+- Ngày mua
+- Giá bán
+
+## 8. Chống trùng
+
+Trước khi lưu, kiểm tra email/tài khoản đã tồn tại chưa.
+
+Nếu đã tồn tại, hiển thị:
+
+“Tài khoản này đã có trong hệ thống.”
+
+Cho admin chọn:
+
+- Bỏ qua
+- Cập nhật đơn cũ
+- Hủy
+
+Không tự động ghi đè dữ liệu cũ.
+
+## 9. Nhập nhiều ảnh
+
+Cho phép chọn nhiều ảnh cùng lúc.
+
+Mỗi ảnh tạo một bản xem trước riêng.
+
+Hiển thị kết quả:
+
+- Tổng số ảnh
+- Số ảnh đọc thành công
+- Số ảnh cần kiểm tra
+- Số ảnh bị lỗi
+
+Admin có thể bấm “Lưu tất cả đơn hợp lệ”.
+
+## 10. Xử lý ảnh
+
+Trước khi đọc, tự động:
+
+- Xoay ảnh đúng chiều
+- Tăng độ rõ chữ
+- Cắt phần viền trình duyệt nếu cần
+- Chuẩn hóa ký tự tiếng Việt
+- Loại bỏ khoảng trắng thừa
+
+Phải hỗ trợ ảnh chụp từ điện thoại có kích thước dài như ảnh màn hình web.
+
+## 11. Bảo mật
+
+Ảnh có thể chứa email và mật khẩu.
+
+Yêu cầu:
+
+- Không lưu ảnh vĩnh viễn nếu không cần thiết
+- Xóa ảnh tạm sau khi đọc xong
+- Không ghi mật khẩu vào log
+- Không gửi dữ liệu ảnh sang dịch vụ không được cấu hình rõ ràng
+- Mật khẩu và 2FA phải được mã hóa khi lưu
+
+## 12. Trải nghiệm nhanh
+
+Quy trình sử dụng phải là:
+
+1. Bấm “Thêm từ ảnh”
+2. Chọn hoặc chụp ảnh
+3. Hệ thống tự đọc
+4. Admin kiểm tra nhanh
+5. Bấm “Lưu đơn”
+
+Không bắt admin nhập lại toàn bộ dữ liệu bằng tay.
