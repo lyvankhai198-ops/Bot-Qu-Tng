@@ -1,0 +1,273 @@
+8. QUY TẮC NGÀY HẾT HẠN
+
+--------------------------------------------------
+
+Cần phân biệt rõ hai mốc:
+
+A. Ngày hết hạn sử dụng:
+
+expiry_date
+
+B. Ngày hết hạn bảo hành:
+
+warranty_end_date
+
+Nếu database chưa có warranty_end_date thì tính:
+
+warranty_end_date =
+
+original_delivered_at hoặc purchase_date + warranty_days
+
+Tài khoản thay thế không được làm thay đổi hai mốc này.
+
+--------------------------------------------------
+
+9. TÍNH SỐ NGÀY CÒN LẠI
+
+--------------------------------------------------
+
+Số ngày còn lại phải tính bằng thời gian server:
+
+remaining_days =
+
+warranty_end_date - ngày hiện tại
+
+Nếu remaining_days <= 0:
+
+- remaining_days = 0
+
+- warranty_status = expired
+
+- can_report = false
+
+- refund_amount = 0
+
+Không lấy số ngày còn lại đã lưu cứng từ trước.
+
+--------------------------------------------------
+
+10. TÍNH TIỀN HOÀN
+
+--------------------------------------------------
+
+Chỉ hiển thị hoàn dự kiến khi còn bảo hành.
+
+Công thức:
+
+refund_amount =
+
+original_price / warranty_days × remaining_days
+
+Luôn lấy:
+
+- Giá mua gốc
+
+- Số ngày bảo hành gốc
+
+- Ngày giao tài khoản gốc
+
+Không lấy giá hoặc ngày của tài khoản thay thế.
+
+Nếu warranty_days = 0 hoặc đã hết hạn:
+
+refund_amount = 0
+
+--------------------------------------------------
+
+11. CHẶN BÁO LỖI KHI HẾT BẢO HÀNH
+
+--------------------------------------------------
+
+Nếu tài khoản đã hết bảo hành:
+
+Hiển thị:
+
+❌ Trạng thái BH: Hết bảo hành
+
+📅 Bảo hành đến: ...
+
+📊 Trạng thái: Hết bảo hành
+
+Không hiển thị:
+
+- Báo lỗi
+
+- Báo lỗi tất cả
+
+- Chọn tài khoản cụ thể
+
+- Hoàn dự kiến
+
+Backend cũng phải chặn tạo ticket.
+
+Không được gửi thông báo cho admin.
+
+--------------------------------------------------
+
+12. TRA TÀI KHOẢN THAY THẾ
+
+--------------------------------------------------
+
+Khách nhập bất kỳ tài khoản nào trong chuỗi:
+
+Tài khoản gốc
+
+→ Bảo hành lần 1
+
+→ Bảo hành lần 2
+
+đều phải tra ra cùng order_item gốc.
+
+Sau đó hiển thị:
+
+- Tài khoản gốc
+
+- Tài khoản hiện tại
+
+- Số lần đã bảo hành
+
+- Ngày giao tài khoản gốc
+
+- Ngày hết bảo hành gốc
+
+Không được tính bảo hành từ ngày giao tài khoản thay thế.
+
+--------------------------------------------------
+
+13. API TRA CỨU
+
+--------------------------------------------------
+
+Sửa endpoint tra cứu để trả dữ liệu dạng:
+
+{
+
+  "found": true,
+
+  "lookupType": "email",
+
+  "isMultiAccountOrder": false,
+
+  "order": {
+
+    "orderCode": "ORD1AC006",
+
+    "product": "Grok",
+
+    "customer": "...",
+
+    "purchaseDate": "2026-07-18",
+
+    "expiryDate": "2026-07-31",
+
+    "warrantyEndDate": "2026-07-30",
+
+    "originalPrice": 10000,
+
+    "quantity": 1,
+
+    "status": "active"
+
+  },
+
+  "item": {
+
+    "originalAccount": "account@example.com",
+
+    "currentAccount": "account@example.com",
+
+    "replacementCount": 0,
+
+    "itemStatus": "active"
+
+  },
+
+  "remainingDays": 14,
+
+  "warrantyStatus": "active",
+
+  "refundAmount": 10769,
+
+  "canReport": true
+
+}
+
+Khi tra mã đơn nhiều tài khoản:
+
+{
+
+  "lookupType": "order_code",
+
+  "isMultiAccountOrder": true,
+
+  "order": {...},
+
+  "items": [...]
+
+}
+
+--------------------------------------------------
+
+14. VALIDATION DỮ LIỆU
+
+--------------------------------------------------
+
+Nếu đơn thiếu ngày mua hoặc ngày giao gốc:
+
+Không được tự đoán.
+
+Hiển thị trên web admin:
+
+“Đơn hàng thiếu ngày mua/ngày giao gốc, vui lòng cập nhật để tính bảo hành.”
+
+Trên Telegram không được hiện kết quả bảo hành sai.
+
+Nếu thiếu dữ liệu quan trọng, trả:
+
+“Đơn hàng chưa đủ dữ liệu để tính bảo hành. Vui lòng liên hệ hỗ trợ.”
+
+--------------------------------------------------
+
+15. TEST BẮT BUỘC
+
+--------------------------------------------------
+
+Test các trường hợp:
+
+1. Đơn một tài khoản, tra bằng email.
+
+2. Đơn một tài khoản, tra bằng mã đơn.
+
+3. Đơn nhiều tài khoản, tra bằng mã đơn.
+
+4. Đơn nhiều tài khoản, tra bằng một email.
+
+5. Tra tài khoản gốc.
+
+6. Tra tài khoản thay thế lần 1.
+
+7. Tra tài khoản thay thế lần 2.
+
+8. Tài khoản còn bảo hành.
+
+9. Tài khoản hết bảo hành.
+
+10. Đơn thiếu ngày mua.
+
+11. Đơn thiếu warranty_days.
+
+12. Cập nhật ngày mua trên web rồi tra lại Telegram phải thấy dữ liệu mới.
+
+13. Cập nhật ngày hết hạn trên web rồi tra lại Telegram phải thấy dữ liệu mới.
+
+14. Restart và deploy không làm thay đổi dữ liệu.
+
+Mục tiêu cuối cùng:
+
+- Đơn một tài khoản: tra bằng mã đơn hoặc email.
+
+- Đơn nhiều tài khoản: muốn xem toàn bộ bắt buộc dùng mã đơn.
+
+- Tra email chỉ trả đúng một tài khoản.
+
+- Chi tiết trên Telegram phải lấy trực tiếp từ dữ liệu đơn hàng trên web và tính bảo hành chính xác.
