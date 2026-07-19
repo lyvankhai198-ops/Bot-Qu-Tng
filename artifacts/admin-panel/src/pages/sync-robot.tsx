@@ -344,6 +344,7 @@ export default function SyncRobot() {
   function setField<K extends keyof FormData>(key: K, value: FormData[K]) {
     setFormData(prev => ({ ...prev, [key]: value }))
     setIsDirty(true)
+    setTestResult(null)   // cấu hình đổi → kết quả test cũ không còn hợp lệ
   }
 
   function buildBody(extraEnabled?: boolean) {
@@ -598,7 +599,12 @@ export default function SyncRobot() {
                   </Button>
                 )}
                 <Button type="button" variant="secondary"
-                  onClick={handleSyncNow} disabled={syncing || status.running}>
+                  onClick={handleSyncNow}
+                  disabled={syncing || status.running || isDirty || !testResult?.ok}
+                  title={
+                    isDirty ? "Lưu cấu hình trước khi đồng bộ" :
+                    !testResult?.ok ? "Kiểm tra đăng nhập thành công trước khi đồng bộ" : ""
+                  }>
                   <Play className="h-4 w-4 mr-2" />
                   {syncing ? "Đã kích hoạt..." : "Đồng bộ ngay"}
                 </Button>

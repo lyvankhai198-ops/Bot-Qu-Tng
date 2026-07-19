@@ -910,22 +910,35 @@ async def _wait_for_sidebar(page) -> bool:
 
 async def _find_and_navigate_order_item(page) -> bool:
     """
-    Tìm mục 'Đơn hàng' trong DOM (toàn bộ document), đọc href thật, điều hướng.
-    Trả True nếu thành công.
+    Tìm mục 'Đơn hàng' trong DOM, click, rồi chờ xác nhận bằng NỘI DUNG trang.
+    Trả True chỉ khi đã xác nhận đang ở trang Đơn hàng thật sự.
+    Website là SPA — URL có thể không đổi, xác nhận bằng content.
     """
     target = "Đơn hàng"
-
-    # 1. Tìm qua <a> filter hasText exact
     order_link = None
     order_href = None
-    try:
-        el = page.locator("a").filter(has_text=re.compile(r"^Đơn hàng$", re.IGNORECASE)).first
-        if await el.count() > 0 and await el.is_visible():
-            order_link = el
-    except Exception:
-        pass
 
-    # 2. Fallback: duyệt tất cả <a> và so sánh text sau normalize
+    # ── Tìm element "Đơn hàng" bằng nhiều cách ──────────────────────────────
+
+    # Cách 1: <a> có text chính xác "Đơn hàng"
+    if not order_link:
+        try:
+            el = page.locator("a").filter(has_text=re.compile(r"^Đơn hàng$", re.IGNORECASE)).first
+            if await el.count() > 0 and await el.is_visible():
+                order_link = el
+        except Exception:
+            pass
+
+    # Cách 2: role=link name="Đơn hàng"
+    if not order_link:
+        try:
+            el = page.get_by_role("link", name="Đơn hàng").first
+            if await el.count() > 0 and await el.is_visible():
+                order_link = el
+        except Exception:
+            pass
+
+    # Cách 3: duyệt toàn bộ <a> và so sánh text sau normalize
     if not order_link:
         try:
             all_a = page.locator("a")
@@ -942,64 +955,104 @@ async def _find_and_navigate_order_item(page) -> bool:
         except Exception:
             pass
 
-    # 3. Fallback: get_by_text exact
+    # Cách 4: get_by_text exact (bất kỳ tag nào)
     if not order_link:
         try:
             el = page.get_by_text(target, exact=True).first
             if await el.count() > 0 and await el.is_visible():
-                # Tìm phần tử cha có thể click (a/button/role)
                 order_link = el
         except Exception:
             pass
 
+    # Cách 5: button/div/li có text "Đơn hàng" (SPA có thể dùng div thay <a>)
     if not order_link:
+        for tag in ["button", "li", "div", "span"]:
+            try:
+                el = page.locator(tag).filter(
+                    has_text=re.compile(r"^Đơn hàng$", re.IGNORECASE)
+                ).first
+                if await el.count() > 0 and await el.is_visible():
+                    order_link = el
+                    break
+            except Exception:
+                continue
+
+    if not order_link:
+        logger.warning(f"[SYNC] Không tìm thấy element 'Đơn hàng' trong DOM — URL={page.url}")
         return False
 
-    # Đọc href thật
+    # Đọc href thật (chỉ để log — không tự ghép URL)
     try:
         order_href = await order_link.get_attribute("href")
-        logger.info(f"[SYNC] Đã tìm thấy link Đơn hàng: {order_href}")
+    except Exception:
+        pass
+    logger.info(f"[SYNC] Tìm thấy 'Đơn hàng' — href={order_href!r}")
+
+    # ── Click ────────────────────────────────────────────────────────────────
+    try:
+        await order_link.click()
+        logger.info("[SYNC] Đã click 'Đơn hàng'")
+    except Exception as ex:
+        logger.warning(f"[SYNC] click() thất bại: {ex} — thử JS click")
+        try:
+            await order_link.evaluate("el => el.click()")
+            logger.info("[SYNC] Đã JS click 'Đơn hàng'")
+        except Exception as ex2:
+            logger.warning(f"[SYNC] JS click cũng thất bại: {ex2}")
+
+    # ── Chờ xác nhận bằng nội dung trang (SPA — không dựa vào URL) ───────────
+    # Các tín hiệu xuất hiện khi đã vào trang Đơn hàng:
+    ORDER_SIGNALS = [
+        'text=Đơn hàng của bạn',
+        'text=Tất cả đơn hàng',
+        'th:has-text("MÃ ĐƠN")',
+        'th:has-text("SẢN PHẨM")',
+        'button:has-text("Tải xuống")',
+        'a:has-text("Tải xuống")',
+        'h1:has-text("Đơn hàng")',
+        'h2:has-text("Đơn hàng")',
+    ]
+
+    # Poll 10s
+    for tick in range(20):
+        for sig in ORDER_SIGNALS:
+            try:
+                el = page.locator(sig).first
+                if await el.count() > 0 and await el.is_visible():
+                    logger.info(f"[SYNC] ✅ Trang Đơn hàng xác nhận bằng: {sig!r}")
+                    return True
+            except Exception:
+                pass
+        await asyncio.sleep(0.5)
+
+    # Lần cuối: chờ thêm 10s cho heading
+    try:
+        await page.get_by_text("Đơn hàng của bạn", exact=False).wait_for(
+            state="visible", timeout=10_000
+        )
+        logger.info("[SYNC] ✅ Trang Đơn hàng xác nhận bằng heading (chờ thêm)")
+        return True
     except Exception:
         pass
 
-    # Click trực tiếp
-    url_before = page.url
-    try:
-        await order_link.click()
-        logger.info(f"[SYNC] Clicked 'Đơn hàng' link")
-    except Exception as ex:
-        logger.warning(f"[SYNC] click() failed: {ex}")
-
-    # Nếu URL không đổi sau 2s và có href → dùng goto
-    await page.wait_for_timeout(2_000)
-    if page.url == url_before and order_href:
-        try:
-            from urllib.parse import urljoin
-            full_url = urljoin(page.url, order_href)
-            logger.info(f"[SYNC] URL unchanged — navigating directly to {full_url}")
-            await page.goto(full_url, timeout=20_000, wait_until="domcontentloaded")
-        except Exception as ex:
-            logger.warning(f"[SYNC] goto(href) failed: {ex}")
-
-    return True
+    logger.warning(f"[SYNC] Đã click 'Đơn hàng' nhưng nội dung trang chưa xác nhận — URL={page.url}")
+    return False
 
 
 async def _open_orders_page(page) -> None:
     """
-    Điều hướng đến trang Đơn hàng:
-      1. Chờ dashboard (4s + spinner)
-      2. Click hamburger bằng bounding box
-      3. Đợi sidebar thật sự mở
-      4. Screenshot sidebar_after_click.png + log tất cả links
-      5. Tìm 'Đơn hàng' bằng DOM thật, đọc href, điều hướng
-      6. Retry tối đa 3 lần
-    Raise RuntimeError kèm thông tin debug đầy đủ nếu thất bại.
+    Mở trang Đơn hàng:
+      1. Guard: URL không phải /login
+      2. Mở sidebar nếu chưa mở (bấm hamburger ≡)
+      3. Tìm 'Đơn hàng' bằng nhiều cách, click, xác nhận bằng nội dung
+      4. Retry tối đa 3 lần
+      5. Thất bại → log đầy đủ: URL, title, text menu, sidebar links, href, screenshot
     """
     from playwright.async_api import TimeoutError as PwTimeout
 
     SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── 0. Guard: phiên đăng nhập phải còn sống trước khi làm gì ─────────────
+    # ── 0. Guard: phiên đăng nhập phải còn sống ───────────────────────────────
     _guard_url = page.url
     if any(kw in _guard_url.lower() for kw in _LOGIN_URL_KEYWORDS):
         try:
@@ -1011,157 +1064,102 @@ async def _open_orders_page(page) -> None:
             f"Phiên đăng nhập đã bị mất trước khi mở Đơn hàng — "
             f"URL={_guard_url} | Cookies: {_gnames}"
         )
-    logger.info(f"[SYNC] _open_orders_page: guard OK — URL={_guard_url}")
+    logger.info(f"[SYNC] _open_orders_page start — URL={_guard_url}")
 
-    # ── 1. Dashboard đã sẵn sàng (spinner đã chờ trong loginAndWaitReady) ──────
-    # Chỉ chờ domcontentloaded phòng trường hợp SPA vẫn đang navigate
+    # ── 1. Đảm bảo DOM đã tải ─────────────────────────────────────────────────
     await page.wait_for_load_state("domcontentloaded")
-    logger.info(f"[SYNC] _open_orders_page ready — URL: {page.url} | Title: {await page.title()}")
+    logger.info(f"[SYNC] DOM loaded — URL={page.url} | Title={await page.title()}")
 
-    # ── 2–5. Retry vòng lặp: hamburger → sidebar → Đơn hàng ──────────────────
-    navigated = False
-    last_error_info: dict = {}
+    # ── 2–4. Retry: sidebar → Đơn hàng ────────────────────────────────────────
+    navigated   = False
+    last_links: list = []
+    last_url    = page.url
+    last_title  = ""
 
     for attempt in range(1, 4):
-        logger.info(f"[SYNC] Opening navigation menu (attempt {attempt}/3)")
+        logger.info(f"[SYNC] Attempt {attempt}/3")
 
-        # Click hamburger bằng bounding box
-        clicked = await _click_hamburger_by_position(page)
-        if not clicked:
-            logger.warning(f"[SYNC] Hamburger not found (attempt {attempt})")
+        # Kiểm tra sidebar đã mở chưa (tránh toggle đóng lại nếu đang mở)
+        sidebar_already_open = await _wait_for_sidebar(page)
+        if sidebar_already_open:
+            logger.info(f"[SYNC] Sidebar đã mở sẵn (attempt {attempt})")
+        else:
+            logger.info(f"[SYNC] Sidebar chưa mở — bấm hamburger (attempt {attempt})")
+            await _click_hamburger_by_position(page)
+            # Chờ sidebar xuất hiện tối đa 5s
+            sidebar_open = await _wait_for_sidebar(page)
+            if not sidebar_open:
+                logger.warning(f"[SYNC] Sidebar không mở sau hamburger click (attempt {attempt})")
+                await page.wait_for_timeout(1_000)
 
-        # Đợi sidebar thực sự mở (không chỉ đợi timeout)
-        sidebar_open = await _wait_for_sidebar(page)
-        if not sidebar_open:
-            logger.warning(f"[SYNC] Sidebar did not open after hamburger click (attempt {attempt})")
-            await page.wait_for_timeout(1_000)
-
-        # Chụp screenshot sidebar
-        ss_path = str(SCREENSHOTS_DIR / "sidebar_after_click.png")
+        # Chụp screenshot sau khi sidebar (có thể) đã mở
+        ss_name = f"sidebar_attempt_{attempt}.png"
+        ss_path = str(SCREENSHOTS_DIR / ss_name)
         try:
             await page.screenshot(path=ss_path, full_page=False)
-            logger.info(f"[SYNC] Screenshot saved: {ss_path}")
+            logger.info(f"[SYNC] Screenshot: {ss_path}")
         except Exception as e:
-            logger.warning(f"[SYNC] Screenshot failed: {e}")
+            logger.warning(f"[SYNC] Screenshot thất bại: {e}")
 
-        # Log toàn bộ links
-        links = await _log_all_links(page)
-
-        # Log toàn bộ button
+        # Log toàn bộ links + text menu để debug
+        last_links = await _log_all_links(page)
         try:
-            btns = await page.locator("button").evaluate_all(
-                "items => items.map(b => ({ text: (b.innerText||'').trim(), aria: b.getAttribute('aria-label') }))"
-            )
-            for b in btns[:30]:
-                logger.info(f"[SYNC][btn] text={b.get('text','')!r:25} aria={b.get('aria','')}")
+            all_texts = await page.evaluate("""() => {
+                const els = document.querySelectorAll('a, button, [role=menuitem], [role=option], li');
+                return Array.from(els).map(el => (el.innerText||el.textContent||'').trim()).filter(t=>t).slice(0,60);
+            }""")
+            logger.info(f"[SYNC] Menu texts: {all_texts}")
         except Exception:
             pass
 
-        # Tìm và điều hướng tới Đơn hàng
-        logger.info("[SYNC] Opening Đơn hàng")
+        # Tìm "Đơn hàng" và điều hướng (xác nhận bằng content bên trong)
         navigated = await _find_and_navigate_order_item(page)
         if navigated:
             break
 
-        # Ghi thông tin debug cho lần thất bại
-        last_error_info = {
-            "url":   page.url,
-            "title": await page.title(),
-            "links": links,
-        }
-        logger.warning(f"[SYNC] 'Đơn hàng' not found (attempt {attempt}) — URL={page.url}")
-        await page.wait_for_timeout(1_000)
+        last_url   = page.url
+        last_title = await page.title()
+        logger.warning(f"[SYNC] 'Đơn hàng' không tìm thấy/xác nhận (attempt {attempt}) — URL={last_url}")
+        await page.wait_for_timeout(1_500)
 
-    # ── 6. Thất bại hoàn toàn — log session diagnostics + báo lỗi ────────────
+    # ── 5. Thất bại hoàn toàn — log đầy đủ và raise ───────────────────────────
     if not navigated:
-        fail_ss = str(SCREENSHOTS_DIR / "menu_open_failed.png")
+        fail_ss = str(SCREENSHOTS_DIR / "orders_page_failed.png")
         try:
             await page.screenshot(path=fail_ss, full_page=False)
         except Exception:
             pass
 
-        # ── Session diagnostics (log — không kết luận lý do) ─────────────────
-        session_diag = ""
+        # Thu thập diagnostics đầy đủ
+        diag_url   = page.url
+        diag_title = await page.title()
         try:
-            cookies     = await page.context.cookies()
-            cookie_names = [c["name"] for c in cookies]
-            local_st    = await page.evaluate("() => { try { return JSON.stringify({...localStorage}) } catch(e) { return String(e) } }")
-            session_st  = await page.evaluate("() => { try { return JSON.stringify({...sessionStorage}) } catch(e) { return String(e) } }")
-            logger.error(f"[SYNC][diag] URL hiện tại: {page.url}")
-            logger.error(f"[SYNC][diag] Cookies ({len(cookies)}): {cookie_names[:30]}")
-            logger.error(f"[SYNC][diag] localStorage: {local_st[:800]}")
-            logger.error(f"[SYNC][diag] sessionStorage: {session_st[:800]}")
-            session_diag = (
-                f"\nSession diagnostics:"
-                f"\n  URL: {page.url}"
-                f"\n  Cookies: {', '.join(cookie_names[:20]) or 'NONE'}"
-                f"\n  localStorage keys: {list(dict.fromkeys(__import__('json').loads(local_st or '{}')).keys())[:20]}"
-            )
-        except Exception as diag_ex:
-            logger.warning(f"[SYNC][diag] Diagnostics error: {diag_ex}")
-
-        # Tóm tắt links và buttons
-        links_summary = "; ".join(
-            f"{lk.get('text','')}→{lk.get('href','')}"
-            for lk in (last_error_info.get("links") or [])[:20]
-        )
-        try:
-            btns_raw = await page.locator("button").evaluate_all(
-                "items => items.map(b => (b.innerText||b.getAttribute('aria-label')||'').trim())"
-            )
-            btns_summary = " | ".join(filter(None, btns_raw[:20]))
+            sidebar_texts = await page.evaluate("""() => {
+                const nav = document.querySelector('nav,[role=navigation],[class*=sidebar],[class*=drawer]');
+                if (!nav) return [];
+                return Array.from(nav.querySelectorAll('a,button,li')).map(el=>(el.innerText||el.textContent||'').trim()).filter(t=>t);
+            }""")
         except Exception:
-            btns_summary = ""
+            sidebar_texts = []
+        links_summary = " | ".join(
+            f"{lk.get('text','')!r}→{lk.get('href','')}"
+            for lk in last_links[:25]
+        )
+        cookies_names = []
+        try:
+            cookies_names = [c["name"] for c in await page.context.cookies()]
+        except Exception:
+            pass
 
         raise RuntimeError(
-            f"Không tìm thấy mục 'Đơn hàng' sau 3 lần thử.\n"
-            f"URL: {last_error_info.get('url', page.url)}\n"
-            f"Title: {last_error_info.get('title', '')}\n"
-            f"Links: {links_summary}\n"
-            f"Buttons: {btns_summary}\n"
-            f"Screenshot: menu_open_failed.png"
-            f"{session_diag}"
+            f"Không tìm thấy/xác nhận trang 'Đơn hàng' sau 3 lần thử.\n"
+            f"URL hiện tại  : {diag_url}\n"
+            f"Title         : {diag_title}\n"
+            f"Sidebar texts : {sidebar_texts}\n"
+            f"Tất cả links  : {links_summary}\n"
+            f"Cookies       : {cookies_names}\n"
+            f"Screenshot    : orders_page_failed.png"
         )
-
-    # ── 7. Xác nhận đã vào trang Đơn hàng (SPA — không check URL) ────────────
-    logger.info("[SYNC] Verifying orders page by content")
-    await page.wait_for_timeout(1_500)
-    try:
-        await page.wait_for_load_state("networkidle", timeout=10_000)
-    except PwTimeout:
-        pass
-
-    confirmed = False
-    for sig in [
-        'text=Đơn hàng của bạn',
-        'text=Tất cả đơn hàng',
-        'text=Tải xuống',
-        'th:has-text("MÃ ĐƠN")',
-        'th:has-text("SẢN PHẨM")',
-        'h1:has-text("Đơn hàng")',
-        'h2:has-text("Đơn hàng")',
-    ]:
-        try:
-            el = page.locator(sig).first
-            if await el.count() > 0 and await el.is_visible():
-                logger.info(f"[SYNC] Orders page confirmed by: {sig}")
-                confirmed = True
-                break
-        except Exception:
-            pass
-
-    if not confirmed:
-        try:
-            await page.get_by_text("Đơn hàng của bạn", exact=False).wait_for(
-                state="visible", timeout=20_000
-            )
-            confirmed = True
-            logger.info("[SYNC] Orders page confirmed by heading")
-        except PwTimeout:
-            pass
-
-    if not confirmed:
-        logger.warning("[SYNC] Could not confirm orders page content — proceeding anyway")
 
 
 async def _download_orders_xlsx(page, download_dir: str) -> str:
