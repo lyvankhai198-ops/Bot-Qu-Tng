@@ -669,72 +669,47 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
     await page.locator(pw_sel).first.fill(password)
     _step(f"Điền Mật khẩu [{pw_sel}]", True, "Đã nhập mật khẩu (ẩn)")
 
-    # 5. Click nút đăng nhập
+    # 5. Click nút đăng nhập — bắt network log từ đây
     submit_sel = await _find_visible(page, _SUBMIT_SELECTORS)
     if not submit_sel:
         _step("Tìm nút Đăng nhập", False, f"Không tìm thấy sau {len(_SUBMIT_SELECTORS)} selectors")
         raise RuntimeError(f"Không tìm thấy nút Đăng nhập trên {page.url}")
+
+    # Capture mọi request/response để debug nếu cần
+    network_log: list[str] = []
+    def _on_req(req):
+        network_log.append(f"→ {req.method} {req.url[:180]}")
+    def _on_resp(resp):
+        network_log.append(f"← {resp.status} {resp.url[:180]}")
+    page.on("request",  _on_req)
+    page.on("response", _on_resp)
+
     url_before = page.url
     await page.locator(submit_sel).first.click()
     _step(f"Bấm nút Đăng nhập [{submit_sel}]", True, f"URL trước: {url_before}")
 
-    # 6. Chờ redirect
+    # 6. Chờ TẤT CẢ network requests hoàn tất — KHÔNG dùng URL change làm tín hiệu
+    # networkidle: không còn request nào trong 500ms
     try:
-        await page.wait_for_function(
-            f"() => window.location.href !== {json.dumps(url_before)}",
-            timeout=12_000,
-        )
+        await page.wait_for_load_state("networkidle", timeout=25_000)
+        _log("[login] networkidle đạt được")
     except PwTimeout:
-        _log("[login] URL chưa đổi sau 12s — kiểm tra tín hiệu khác")
-    try:
-        await page.wait_for_load_state("networkidle", timeout=8_000)
-    except PwTimeout:
-        pass
+        _log("[login] networkidle timeout sau 25s — tiếp tục kiểm tra")
+    # Thêm 1.5s để SPA xử lý response và lưu session vào storage
+    await asyncio.sleep(1.5)
+
+    page.remove_listener("request",  _on_req)
+    page.remove_listener("response", _on_resp)
 
     curr_url   = page.url
     curr_title = await page.title()
-    _log(f"[login] URL sau redirect: {curr_url}")
+    _log(f"[login] URL sau khi network hoàn tất: {curr_url}")
     _log(f"[login] Tiêu đề: {curr_title}")
+    _log(f"[login] Network log ({len(network_log)} entries): " +
+         " | ".join(network_log[-20:]) if network_log else "[trống]")
 
-    # 7. Chờ tối đa 15s để session thực sự được lưu
-    _log("[login] Chờ session thực sự được lưu (tối đa 15s)...")
-    _NOISE_COOKIES = {"app_locale", "login_lang"}
-    _TOKEN_HINTS   = ("token", "access", "auth", "jwt", "session", "user")
-    session_confirmed = False
-    for waited in range(1, 16):
-        # Nếu URL quay về /login → dừng ngay, không chờ thêm
-        if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
-            _log(f"[login] ❌ URL quay về login sau {waited}s: {page.url}")
-            break
-        # Kiểm tra cookie xác thực
-        _auth_c: list = []
-        try:
-            _ck = await page.context.cookies()
-            _auth_c = [c["name"] for c in _ck if c["name"] not in _NOISE_COOKIES]
-        except Exception:
-            pass
-        # Kiểm tra localStorage token
-        _auth_ls: list = []
-        try:
-            _ls = await page.evaluate("""() => {
-                const k = [];
-                for (let i = 0; i < localStorage.length; i++) k.push(localStorage.key(i));
-                return k;
-            }""")
-            _auth_ls = [k for k in (_ls or []) if any(h in k.lower() for h in _TOKEN_HINTS)]
-        except Exception:
-            pass
-        # Kiểm tra logout button
-        _logout = await _find_visible(page, _LOGOUT_SELECTORS) is not None
-        if _auth_c or _auth_ls or _logout:
-            _log(f"[login] ✅ Session xác nhận sau {waited}s — cookies={_auth_c}, ls={_auth_ls}, logout={_logout}")
-            session_confirmed = True
-            break
-        _log(f"[login] Giây {waited}: chưa có session — URL={page.url}")
-        await asyncio.sleep(1)
-
-    if not session_confirmed:
-        # Thu thập diagnostics đầy đủ
+    # ── Helper thu thập diagnostics đầy đủ ──────────────────────────────────
+    async def _collect_diag(reason_prefix: str) -> str:
         _dc: list = []
         _dls: dict = {}
         _dss: dict = {}
@@ -764,28 +739,89 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
             }""")
         except Exception:
             pass
-        _curr_now = page.url
-        _err_text = await _get_page_error_text(page)
-        diag = (
-            f"URL: {_curr_now}\n"
-            f"Cookies: {[c['name'] for c in _dc]}\n"
-            f"localStorage: {str(_dls)[:500]}\n"
+        _err = await _get_page_error_text(page)
+        _net = "\n  ".join(network_log[-30:]) if network_log else "(trống)"
+        return (
+            f"{reason_prefix}\n"
+            f"URL hiện tại : {page.url}\n"
+            f"Cookies      : {[c['name'] for c in _dc]}\n"
+            f"localStorage : {str(_dls)[:600]}\n"
             f"sessionStorage: {str(_dss)[:300]}\n"
-            f"Lỗi trang: {_err_text}"
+            f"Lỗi trang    : {_err}\n"
+            f"Network log  :\n  {_net}"
         )
-        _step("Xác minh session", False, diag)
+
+    # 7. Kiểm tra ngay nếu bị redirect về /login sau khi network hoàn tất
+    #    Không dựa vào URL — kiểm tra cụ thể
+    if any(kw in curr_url.lower() for kw in _LOGIN_URL_KEYWORDS):
+        diag = await _collect_diag(
+            "Website yêu cầu đăng nhập lại ngay sau khi click — "
+            "session không được lưu hoặc server từ chối phiên."
+        )
+        _step("Xác minh sau đăng nhập", False, diag[:600])
+        raise RuntimeError(f"Bị redirect về /login sau đăng nhập\n{diag}")
+
+    # 8. Chờ tối đa 15s để session thực sự được ghi vào cookie/localStorage
+    _log("[login] Chờ session được lưu (tối đa 15s)...")
+    _NOISE_COOKIES = {"app_locale", "login_lang"}
+    _TOKEN_HINTS   = ("token", "access", "auth", "jwt", "session", "user")
+    session_confirmed = False
+
+    for waited in range(1, 16):
+        # Kiểm tra URL trước — nếu quay về /login → raise ngay, không chờ thêm
+        if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
+            diag = await _collect_diag(
+                f"Session bị mất sau {waited}s — website redirect về /login. "
+                "Nguyên nhân: server không chấp nhận session hoặc session hết hạn tức thì."
+            )
+            _step("Mất session sau đăng nhập", False, diag[:600])
+            raise RuntimeError(f"Session bị mất sau đăng nhập ({waited}s)\n{diag}")
+
+        # Kiểm tra cookie xác thực
+        _auth_c: list = []
+        try:
+            _ck = await page.context.cookies()
+            _auth_c = [c["name"] for c in _ck if c["name"] not in _NOISE_COOKIES]
+        except Exception:
+            pass
+        # Kiểm tra localStorage token
+        _auth_ls: list = []
+        try:
+            _ls = await page.evaluate("""() => {
+                const k = [];
+                for (let i = 0; i < localStorage.length; i++) k.push(localStorage.key(i));
+                return k;
+            }""")
+            _auth_ls = [k for k in (_ls or []) if any(h in k.lower() for h in _TOKEN_HINTS)]
+        except Exception:
+            pass
+        # Kiểm tra nút đăng xuất/avatar
+        _logout = await _find_visible(page, _LOGOUT_SELECTORS) is not None
+
+        if _auth_c or _auth_ls or _logout:
+            _log(f"[login] ✅ Session xác nhận sau {waited}s — "
+                 f"cookies={_auth_c}, ls={_auth_ls}, logout={_logout}")
+            session_confirmed = True
+            break
+
+        _log(f"[login] Giây {waited}: chưa có session — URL={page.url}")
+        await asyncio.sleep(1)
+
+    if not session_confirmed:
+        diag = await _collect_diag(
+            "Không tìm thấy cookie/token xác thực sau 15s — "
+            "website có thể lưu session theo cách khác hoặc đăng nhập thất bại."
+        )
+        _step("Xác minh session", False, diag[:600])
         raise RuntimeError(f"Đăng nhập thất bại — không có session sau 15s\n{diag}")
 
-    # 8. Xác nhận cuối bằng _is_logged_in
+    # 9. Xác nhận cuối: URL không phải /login + có tín hiệu session
     logged_in, reason = await _is_logged_in(page)
     final_url = page.url
     if not logged_in:
-        err_text = await _get_page_error_text(page)
-        msg = f"Xác minh cuối thất bại — {reason}"
-        if err_text:
-            msg += f" | lỗi trang: {err_text}"
-        _step("Xác minh sau đăng nhập", False, f"URL: {final_url}\n{msg}")
-        raise RuntimeError(msg)
+        diag = await _collect_diag(f"_is_logged_in thất bại — {reason}")
+        _step("Xác minh sau đăng nhập", False, diag[:600])
+        raise RuntimeError(f"Xác minh cuối thất bại\n{diag}")
 
     _step(f"✅ Đăng nhập thành công → {final_url}", True, f"Tiêu đề: {curr_title}\n{reason}")
     return final_url
