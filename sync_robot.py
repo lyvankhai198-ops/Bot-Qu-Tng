@@ -639,47 +639,259 @@ def robot_loop():
 
 # ── CLI: --test-login mode (synchronous, for API endpoint) ────────────────────
 async def do_test_login_only(config: dict) -> dict:
-    """Chỉ đăng nhập, không tải file. Trả JSON kết quả ra stdout."""
-    from playwright.async_api import async_playwright
+    """
+    Kiểm tra đăng nhập với debug chi tiết từng bước.
+    Trả JSON ra stdout — bao gồm steps[], screenshot (base64 JPEG), error_text.
+    """
+    import base64
+    from playwright.async_api import async_playwright, TimeoutError as PwTimeout
 
     site_url  = config.get("site_url", "").rstrip("/")
-    login_url = config.get("login_url", "").rstrip("/") or f"{site_url}/login"
+    login_url = config.get("login_url", "").rstrip("/") or (f"{site_url}/login" if site_url else "")
     email     = config.get("email", "")
     password  = config.get("password", "")
 
     if not site_url or not email or not password:
-        return {"ok": False, "message": "Chưa cấu hình URL / email / mật khẩu"}
+        missing = []
+        if not site_url:  missing.append("URL website")
+        if not email:     missing.append("Email")
+        if not password:  missing.append("Mật khẩu")
+        return {"ok": False, "message": f"Chưa cấu hình: {', '.join(missing)}", "steps": []}
 
     start = time.time()
+    steps = []   # [{step, ok, note, screenshot}]  screenshot = base64 JPEG hoặc None
+
+    def elapsed() -> float:
+        return round(time.time() - start, 2)
+
+    async def snap(page) -> str | None:
+        """Chụp screenshot, trả base64 JPEG (giảm size)."""
+        try:
+            png = await page.screenshot(type="jpeg", quality=55, full_page=False)
+            return base64.b64encode(png).decode()
+        except Exception:
+            return None
+
+    def add_step(label: str, ok: bool, note: str = "", screenshot=None):
+        steps.append({"step": label, "ok": ok, "note": note, "screenshot": screenshot})
+        logger.info(f"[test-login] {'✅' if ok else '❌'} {label}" + (f" — {note}" if note else ""))
+
+    # Selectors thử theo thứ tự ưu tiên
+    EMAIL_SELECTORS = [
+        'input[type="email"]',
+        'input[name="email"]',
+        'input[name="username"]',
+        'input[name="user"]',
+        'input[name="login"]',
+        'input[id="email"]',
+        'input[id="username"]',
+        'input[autocomplete="email"]',
+        'input[placeholder*="mail" i]',
+        'input[placeholder*="Email" i]',
+        'input[placeholder*="tài khoản" i]',
+        'input[placeholder*="user" i]',
+    ]
+    PW_SELECTORS = [
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[name="pass"]',
+        'input[id="password"]',
+        'input[autocomplete="current-password"]',
+    ]
+    SUBMIT_SELECTORS = [
+        'button[type="submit"]',
+        'input[type="submit"]',
+        'button:has-text("Đăng nhập")',
+        'button:has-text("Login")',
+        'button:has-text("Sign in")',
+        'button:has-text("Đăng Nhập")',
+        'button:has-text("LOG IN")',
+        'button:has-text("Signin")',
+        '[data-testid*="login"]',
+        '[data-testid*="submit"]',
+        'form button:visible',
+    ]
+    ERROR_SELECTORS = [
+        '[role="alert"]',
+        '.alert-danger', '.alert-error', '.alert-warning',
+        '[class*="error-message"]', '[class*="error_message"]',
+        '[class*="form-error"]', '.form__error',
+        'p.error', 'span.error', 'div.error',
+        '.notification--error', '.flash--error',
+        '[data-testid*="error"]',
+        '.message.error', '.msg-error',
+        'ul.errorlist li',
+    ]
+
+    async def find_visible(page, selectors: list[str]) -> str | None:
+        for sel in selectors:
+            try:
+                el = page.locator(sel).first
+                cnt = await el.count()
+                if cnt > 0 and await el.is_visible():
+                    return sel
+            except Exception:
+                pass
+        return None
+
+    async def get_error_text(page) -> str:
+        for sel in ERROR_SELECTORS:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0 and await el.is_visible():
+                    t = (await el.inner_text()).strip()
+                    if t:
+                        return t[:400]
+            except Exception:
+                pass
+        return ""
+
+    result: dict = {
+        "ok": False, "message": "", "url": "", "title": "",
+        "error_text": "", "steps": steps, "duration_s": 0,
+    }
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+                  "--disable-extensions", "--window-size=1280,800"],
         )
-        ctx  = await browser.new_context()
+        ctx  = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        )
         page = await ctx.new_page()
+
         try:
-            await page.goto(login_url, timeout=30_000)
-            await page.wait_for_load_state("domcontentloaded")
-            await page.fill(
-                'input[type="email"], input[name="email"], input[name="username"], '
-                'input[placeholder*="mail" i], input[placeholder*="Email" i]',
-                email,
-            )
-            await page.fill('input[type="password"], input[name="password"]', password)
-            await page.click(
-                'button[type="submit"], input[type="submit"], '
-                'button:has-text("Đăng nhập"), button:has-text("Login"), button:has-text("Sign in")',
-            )
-            await page.wait_for_load_state("networkidle", timeout=20_000)
-            curr = page.url
-            if any(kw in curr.lower() for kw in ("login", "signin", "sign-in")):
-                return {"ok": False, "message": f"Đăng nhập thất bại — trình duyệt vẫn ở {curr}", "url": curr, "duration_s": round(time.time()-start, 2)}
-            return {"ok": True, "message": f"✅ Đăng nhập thành công! Redirect đến: {curr}", "url": curr, "duration_s": round(time.time()-start, 2)}
+            # ── Bước 1: Mở trang login ─────────────────────────────────────
+            try:
+                await page.goto(login_url, timeout=30_000, wait_until="domcontentloaded")
+                sc = await snap(page)
+                add_step(f"Mở trang login: {login_url}", True, f"Đang ở: {page.url}", sc)
+            except Exception as ex:
+                sc = await snap(page)
+                add_step(f"Mở trang login", False, f"Lỗi: {ex}", sc)
+                result.update({"message": f"Không mở được trang login: {ex}",
+                               "url": page.url, "duration_s": elapsed()})
+                return result
+
+            # ── Bước 2: Điền email ─────────────────────────────────────────
+            email_sel = await find_visible(page, EMAIL_SELECTORS)
+            if not email_sel:
+                sc = await snap(page)
+                tried = ", ".join(EMAIL_SELECTORS)
+                add_step("Tìm ô Email / Username", False,
+                         f"Không tìm thấy selector email.\nĐã thử: {tried}", sc)
+                result.update({
+                    "message": f"Không tìm thấy ô nhập Email/Username trên trang",
+                    "url": page.url, "title": await page.title(),
+                    "error_text": f"Selectors đã thử:\n{tried}",
+                    "duration_s": elapsed(),
+                })
+                return result
+
+            await page.locator(email_sel).first.fill(email)
+            sc = await snap(page)
+            add_step(f"Điền Email [{email_sel}]", True, f"Đã nhập: {email}", sc)
+
+            # ── Bước 3: Điền mật khẩu ─────────────────────────────────────
+            pw_sel = await find_visible(page, PW_SELECTORS)
+            if not pw_sel:
+                sc = await snap(page)
+                tried = ", ".join(PW_SELECTORS)
+                add_step("Tìm ô Mật khẩu", False,
+                         f"Không tìm thấy ô nhập mật khẩu.\nĐã thử: {tried}", sc)
+                result.update({
+                    "message": "Không tìm thấy ô nhập Mật khẩu trên trang",
+                    "url": page.url, "title": await page.title(),
+                    "error_text": f"Selectors đã thử:\n{tried}",
+                    "duration_s": elapsed(),
+                })
+                return result
+
+            await page.locator(pw_sel).first.fill(password)
+            sc = await snap(page)
+            add_step(f"Điền Mật khẩu [{pw_sel}]", True, "Đã nhập mật khẩu", sc)
+
+            # ── Bước 4: Bấm nút đăng nhập ────────────────────────────────
+            submit_sel = await find_visible(page, SUBMIT_SELECTORS)
+            if not submit_sel:
+                sc = await snap(page)
+                tried = ", ".join(SUBMIT_SELECTORS)
+                add_step("Tìm nút Đăng nhập", False,
+                         f"Không tìm thấy nút submit.\nĐã thử: {tried}", sc)
+                result.update({
+                    "message": "Không tìm thấy nút Đăng nhập trên trang",
+                    "url": page.url, "title": await page.title(),
+                    "error_text": f"Selectors đã thử:\n{tried}",
+                    "duration_s": elapsed(),
+                })
+                return result
+
+            url_before = page.url
+            await page.locator(submit_sel).first.click()
+            sc = await snap(page)
+            add_step(f"Bấm nút Đăng nhập [{submit_sel}]", True, f"URL trước: {url_before}", sc)
+
+            # ── Bước 5: Chờ chuyển trang ──────────────────────────────────
+            try:
+                # Chờ URL thay đổi hoặc network idle
+                await page.wait_for_function(
+                    f"() => window.location.href !== {json.dumps(url_before)}",
+                    timeout=15_000,
+                )
+            except PwTimeout:
+                pass  # URL không đổi — tiếp tục kiểm tra
+
+            try:
+                await page.wait_for_load_state("networkidle", timeout=10_000)
+            except PwTimeout:
+                pass
+
+            curr_url   = page.url
+            curr_title = await page.title()
+            sc         = await snap(page)
+            error_text = await get_error_text(page)
+
+            still_login = any(kw in curr_url.lower()
+                              for kw in ("login", "signin", "sign-in", "auth/login", "/account/login"))
+
+            if still_login:
+                note_parts = [f"URL hiện tại: {curr_url}", f"Tiêu đề: {curr_title}"]
+                if error_text:
+                    note_parts.append(f"Thông báo lỗi: {error_text}")
+                add_step("Kiểm tra sau đăng nhập", False, "\n".join(note_parts), sc)
+                result.update({
+                    "ok": False,
+                    "message": "Đăng nhập thất bại — trình duyệt vẫn ở trang login",
+                    "url": curr_url, "title": curr_title,
+                    "error_text": error_text,
+                    "duration_s": elapsed(),
+                })
+            else:
+                add_step(f"✅ Đăng nhập thành công → {curr_url}", True,
+                         f"Tiêu đề: {curr_title}", sc)
+                result.update({
+                    "ok": True,
+                    "message": f"Đăng nhập thành công! Redirect đến: {curr_url}",
+                    "url": curr_url, "title": curr_title,
+                    "duration_s": elapsed(),
+                })
+
         except Exception as ex:
-            return {"ok": False, "message": f"❌ Lỗi: {ex}", "duration_s": round(time.time()-start, 2)}
+            sc = await snap(page)
+            add_step("Lỗi ngoại lệ", False, str(ex)[:500], sc)
+            result.update({
+                "message": f"Lỗi: {ex}",
+                "url": page.url,
+                "title": "",
+                "duration_s": elapsed(),
+            })
         finally:
             await browser.close()
+
+    return result
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--test-login":

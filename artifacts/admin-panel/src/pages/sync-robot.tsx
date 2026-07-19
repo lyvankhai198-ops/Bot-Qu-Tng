@@ -2,7 +2,7 @@
  * sync-robot.tsx
  *
  * QUAN TRỌNG — tách biệt hoàn toàn:
- *   formData   → dữ liệu người dùng đang nhập (CHỈ load 1 lần lúc mở trang)
+ *   formData    → dữ liệu người dùng đang nhập (CHỈ load 1 lần lúc mở trang)
  *   robotStatus → trạng thái robot đang polling (KHÔNG được ghi đè formData)
  */
 import { useState, useEffect, useRef, useCallback } from "react"
@@ -26,6 +26,12 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   RefreshCw,
   Play,
   Plug,
@@ -35,6 +41,9 @@ import {
   CheckCircle2,
   XCircle,
   Activity,
+  FileText,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react"
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
@@ -55,18 +64,15 @@ async function apiFetch(method: string, path: string, body?: unknown): Promise<a
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/** Dữ liệu form — chỉ do người dùng kiểm soát */
 type FormData = {
   site_url: string
   login_url: string
   orders_url: string
   email: string
-  /** "" = chưa nhập gì (hiển thị placeholder "Đã lưu mật khẩu"), giá trị thật = người dùng đang gõ mới */
   password: string
   interval_s: number
 }
 
-/** Trạng thái robot — chỉ cập nhật từ polling, KHÔNG liên quan form */
 type RobotStatus = {
   enabled: boolean
   running: boolean
@@ -90,7 +96,24 @@ type LastRun = {
   message: string
 }
 
-type LogEntry = LastRun
+type TestStep = {
+  step: string
+  ok: boolean
+  note: string
+  screenshot: string | null   // base64 JPEG
+}
+
+type TestResult = {
+  ok: boolean
+  message: string
+  url?: string
+  title?: string
+  error_text?: string
+  duration_s?: number
+  steps?: TestStep[]
+}
+
+type LogEntry = LastRun & { type?: string }
 
 const INTERVALS = [
   { value: "30",  label: "30 giây" },
@@ -107,72 +130,184 @@ function fmtDate(iso: string | null | undefined): string {
 }
 
 function fmtDuration(s: number): string {
+  if (!s) return "—"
   if (s < 60) return `${s}s`
   const m = Math.floor(s / 60), r = s % 60
   return `${m}m ${r}s`
 }
 
 const FORM_DEFAULT: FormData = {
-  site_url: "",
-  login_url: "",
-  orders_url: "",
-  email: "",
-  password: "",   // "" = server có mật khẩu cũ, placeholder thay thế
-  interval_s: 300,
+  site_url: "", login_url: "", orders_url: "",
+  email: "", password: "", interval_s: 300,
 }
 
 const STATUS_DEFAULT: RobotStatus = {
-  enabled: false,
-  running: false,
-  updated_at: null,
-  next_run_at: null,
-  last_run: null,
+  enabled: false, running: false,
+  updated_at: null, next_run_at: null, last_run: null,
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── TestResultDialog ──────────────────────────────────────────────────────────
+function TestResultDialog({ result, onClose }: { result: TestResult; onClose: () => void }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
+  const steps = result.steps ?? []
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {result.ok
+              ? <CheckCircle2 className="h-5 w-5 text-green-500" />
+              : <XCircle      className="h-5 w-5 text-red-500" />}
+            {result.ok ? "Đăng nhập thành công" : "Đăng nhập thất bại"}
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Tóm tắt */}
+        <div className={`rounded-lg p-3 text-sm leading-relaxed ${
+          result.ok
+            ? "bg-green-50 text-green-800 dark:bg-green-950/40 dark:text-green-200"
+            : "bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200"
+        }`}>
+          <p className="font-medium">{result.message}</p>
+        </div>
+
+        {/* Metadata */}
+        {(result.url || result.title || result.error_text || result.duration_s) && (
+          <div className="space-y-1.5 text-sm">
+            {result.url && (
+              <div className="flex gap-2">
+                <span className="text-muted-foreground shrink-0 w-24">URL:</span>
+                <span className="font-mono text-xs break-all">{result.url}</span>
+              </div>
+            )}
+            {result.title && (
+              <div className="flex gap-2">
+                <span className="text-muted-foreground shrink-0 w-24">Tiêu đề:</span>
+                <span>{result.title}</span>
+              </div>
+            )}
+            {result.error_text && (
+              <div className="flex gap-2">
+                <span className="text-muted-foreground shrink-0 w-24">Lỗi trang:</span>
+                <span className="text-red-600 dark:text-red-400 whitespace-pre-line">{result.error_text}</span>
+              </div>
+            )}
+            {result.duration_s !== undefined && (
+              <div className="flex gap-2">
+                <span className="text-muted-foreground shrink-0 w-24">Thời gian:</span>
+                <span>{fmtDuration(result.duration_s)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Steps */}
+        {steps.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-semibold">Chi tiết từng bước ({steps.length})</h4>
+            <div className="space-y-1.5">
+              {steps.map((s, i) => (
+                <div key={i} className={`rounded-md border text-sm overflow-hidden ${
+                  s.ok ? "border-green-200 dark:border-green-800" : "border-red-200 dark:border-red-800"
+                }`}>
+                  {/* Header row */}
+                  <button
+                    type="button"
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/30 transition-colors ${
+                      s.ok ? "bg-green-50/50 dark:bg-green-950/20" : "bg-red-50/50 dark:bg-red-950/20"
+                    }`}
+                    onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+                  >
+                    {s.ok
+                      ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                      : <XCircle      className="h-4 w-4 text-red-500 shrink-0" />}
+                    <span className="flex-1 font-medium truncate">{s.step}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {(s.note || s.screenshot) && (
+                        expandedIdx === i
+                          ? <ChevronUp className="h-3.5 w-3.5" />
+                          : <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                    </span>
+                  </button>
+
+                  {/* Expanded content */}
+                  {expandedIdx === i && (
+                    <div className="px-3 py-2 space-y-2 border-t border-inherit">
+                      {s.note && (
+                        <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all leading-relaxed">
+                          {s.note}
+                        </pre>
+                      )}
+                      {s.screenshot && (
+                        <img
+                          src={`data:image/jpeg;base64,${s.screenshot}`}
+                          alt={`Screenshot: ${s.step}`}
+                          className="w-full rounded border"
+                          loading="lazy"
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <Button type="button" variant="outline" className="w-full" onClick={onClose}>
+          Đóng
+        </Button>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function SyncRobot() {
   const { toast } = useToast()
 
-  // ── form state — chỉ user cập nhật ────────────────────────────────────────
-  const [formData, setFormData] = useState<FormData>(FORM_DEFAULT)
-  const [isDirty,  setIsDirty]  = useState(false)
-  const [hasServerPassword, setHasServerPassword] = useState(false)
-  const [showPw,  setShowPw]    = useState(false)
+  // form state — CHỈ user cập nhật
+  const [formData, setFormData]             = useState<FormData>(FORM_DEFAULT)
+  const [isDirty,  setIsDirty]              = useState(false)
+  const [hasServerPassword, setHasServerPw] = useState(false)
+  const [showPw,   setShowPw]               = useState(false)
 
-  // ── robot status state — chỉ polling cập nhật ─────────────────────────────
-  const [status,  setStatus]    = useState<RobotStatus>(STATUS_DEFAULT)
-  const [logs,    setLogs]      = useState<LogEntry[]>([])
+  // robot status state — CHỈ polling cập nhật
+  const [status, setStatus]  = useState<RobotStatus>(STATUS_DEFAULT)
+  const [logs,   setLogs]    = useState<LogEntry[]>([])
 
-  // ── UI state ───────────────────────────────────────────────────────────────
-  const [configLoaded, setConfigLoaded] = useState(false)
-  const [saving,  setSaving]    = useState(false)
-  const [testing, setTesting]   = useState(false)
-  const [syncing, setSyncing]   = useState(false)
+  // UI state
+  const [configLoaded,  setConfigLoaded]  = useState(false)
+  const [saving,   setSaving]   = useState(false)
+  const [testing,  setTesting]  = useState(false)
+  const [syncing,  setSyncing]  = useState(false)
+  const [testResult, setTestResult] = useState<TestResult | null>(null)
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // ── Load config — CHỈ 1 LẦN khi mount ────────────────────────────────────
+  // ── Load config — CHỈ 1 LẦN khi mount ─────────────────────────────────────
   const loadConfig = useCallback(async () => {
     try {
       const cfg = await apiFetch("GET", "/bot/sync-robot/config")
-      // Nếu server trả "***" thì password cũ đang tồn tại — KHÔNG gán vào formData
-      const serverHasPw = cfg.password === "***" || (cfg.password && cfg.password !== "")
-      setHasServerPassword(serverHasPw)
+      const serverHasPw = !!(cfg.password)
+      setHasServerPw(serverHasPw)
       setFormData({
         site_url:   cfg.site_url   ?? "",
         login_url:  cfg.login_url  ?? "",
         orders_url: cfg.orders_url ?? "",
         email:      cfg.email      ?? "",
-        password:   "",           // luôn để trống, placeholder chỉ thông báo đã có pw
+        password:   "",
         interval_s: cfg.interval_s ?? 300,
       })
       setConfigLoaded(true)
     } catch (e: any) {
       toast({ title: "Lỗi tải cấu hình", description: e.message, variant: "destructive" })
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, []) // eslint-disable-line
 
-  // ── Poll status + logs — KHÔNG đụng formData ──────────────────────────────
+  // ── Poll status + logs — KHÔNG đụng formData ───────────────────────────────
   const pollStatus = useCallback(async () => {
     try {
       const [st, lg] = await Promise.all([
@@ -180,19 +315,18 @@ export default function SyncRobot() {
         apiFetch("GET", "/bot/sync-robot/logs"),
       ])
       setStatus({
-        enabled:    st.enabled    ?? false,
-        running:    st.running    ?? false,
-        updated_at: st.updated_at ?? null,
+        enabled:    st.enabled     ?? false,
+        running:    st.running     ?? false,
+        updated_at: st.updated_at  ?? null,
         next_run_at: st.next_run_at ?? null,
-        last_run:   st.last_run   ?? null,
+        last_run:   st.last_run    ?? null,
       })
       setLogs(Array.isArray(lg) ? [...lg].reverse() : [])
     } catch {
-      // polling failure — im lặng, không toast
+      // polling failure — im lặng
     }
   }, [])
 
-  // ── Mount: load config 1 lần, bắt đầu poll status ─────────────────────────
   useEffect(() => {
     loadConfig()
     pollStatus()
@@ -200,26 +334,20 @@ export default function SyncRobot() {
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [loadConfig, pollStatus])
 
-  // ── Form field updater — đánh dấu dirty ───────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
   function setField<K extends keyof FormData>(key: K, value: FormData[K]) {
     setFormData(prev => ({ ...prev, [key]: value }))
     setIsDirty(true)
   }
 
-  // ── Build body gửi lên server ──────────────────────────────────────────────
-  function buildConfigBody(extraEnabled?: boolean) {
+  function buildBody(extraEnabled?: boolean) {
     const body: any = {
-      site_url:   formData.site_url,
-      login_url:  formData.login_url,
-      orders_url: formData.orders_url,
-      email:      formData.email,
+      site_url: formData.site_url, login_url: formData.login_url,
+      orders_url: formData.orders_url, email: formData.email,
       interval_s: formData.interval_s,
     }
     if (extraEnabled !== undefined) body.enabled = extraEnabled
-    // Chỉ gửi password nếu người dùng thật sự gõ mới (không phải "" hay "***")
-    if (formData.password && formData.password !== "***") {
-      body.password = formData.password
-    }
+    if (formData.password && formData.password !== "***") body.password = formData.password
     return body
   }
 
@@ -228,17 +356,13 @@ export default function SyncRobot() {
     e?.preventDefault()
     setSaving(true)
     try {
-      const saved = await apiFetch("PUT", "/bot/sync-robot/config", buildConfigBody())
+      const saved = await apiFetch("PUT", "/bot/sync-robot/config", buildBody())
       setIsDirty(false)
-      // Nếu user vừa lưu password mới, cập nhật trạng thái
       if (formData.password && formData.password !== "***") {
-        setHasServerPassword(true)
+        setHasServerPw(true)
         setFormData(prev => ({ ...prev, password: "" }))
       }
-      // Cập nhật enabled từ response (nếu server trả về)
-      if (saved?.enabled !== undefined) {
-        setStatus(prev => ({ ...prev, enabled: saved.enabled }))
-      }
+      if (saved?.enabled !== undefined) setStatus(prev => ({ ...prev, enabled: saved.enabled }))
       toast({ title: "✅ Đã lưu cấu hình" })
     } catch (e: any) {
       toast({ title: "Lỗi lưu cấu hình", description: e.message, variant: "destructive" })
@@ -250,7 +374,7 @@ export default function SyncRobot() {
   // ── Toggle bật/tắt ─────────────────────────────────────────────────────────
   async function handleToggle(enabled: boolean) {
     try {
-      await apiFetch("PUT", "/bot/sync-robot/config", buildConfigBody(enabled))
+      await apiFetch("PUT", "/bot/sync-robot/config", buildBody(enabled))
       setStatus(prev => ({ ...prev, enabled }))
       toast({ title: enabled ? "✅ Robot đã bật" : "⏹ Robot đã tắt" })
     } catch (e: any) {
@@ -258,17 +382,21 @@ export default function SyncRobot() {
     }
   }
 
-  // ── Test login ─────────────────────────────────────────────────────────────
+  // ── Test login — gọi API, hiển thị kết quả chi tiết ───────────────────────
   async function handleTest() {
     setTesting(true)
+    toast({ title: "🔍 Đang kiểm tra...", description: "Playwright đang mở trình duyệt, chờ tối đa 2 phút" })
     try {
-      const result = await apiFetch("POST", "/bot/sync-robot/test-login", buildConfigBody())
+      const result: TestResult = await apiFetch("POST", "/bot/sync-robot/test-login", buildBody())
+      setTestResult(result)
+      // Toast nhanh theo kết quả
       if (result.ok) {
         toast({ title: "✅ Đăng nhập thành công!", description: result.message })
       } else {
         toast({ title: "❌ Đăng nhập thất bại", description: result.message, variant: "destructive" })
       }
     } catch (e: any) {
+      setTestResult({ ok: false, message: `Lỗi kết nối tới robot: ${e.message}`, steps: [] })
       toast({ title: "❌ Lỗi kết nối", description: e.message, variant: "destructive" })
     } finally {
       setTesting(false)
@@ -290,13 +418,11 @@ export default function SyncRobot() {
     }
   }
 
-  // ── Reload manual (nút Làm mới) ────────────────────────────────────────────
   async function handleManualRefresh() {
     await Promise.all([loadConfig(), pollStatus()])
     setIsDirty(false)
   }
 
-  // ── Step icon ──────────────────────────────────────────────────────────────
   function StepIcon({ ok }: { ok: boolean }) {
     return ok
       ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
@@ -316,6 +442,11 @@ export default function SyncRobot() {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
+      {/* Dialog chi tiết test-login */}
+      {testResult && (
+        <TestResultDialog result={testResult} onClose={() => setTestResult(null)} />
+      )}
+
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
@@ -324,7 +455,7 @@ export default function SyncRobot() {
             Tự động tải XLSX từ website bán hàng và import đơn hàng theo chu kỳ
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {isDirty && (
             <Badge variant="outline" className="text-yellow-600 border-yellow-400 gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-yellow-500" />
@@ -337,8 +468,7 @@ export default function SyncRobot() {
           >
             <span className={`h-2 w-2 rounded-full ${
               status.running  ? "bg-green-400 animate-pulse" :
-              status.enabled  ? "bg-yellow-400"              :
-                                "bg-gray-400"
+              status.enabled  ? "bg-yellow-400" : "bg-gray-400"
             }`} />
             {status.running ? "Đang chạy" : status.enabled ? "Chờ chu kỳ" : "Tắt"}
           </Badge>
@@ -362,7 +492,6 @@ export default function SyncRobot() {
             <CardDescription>Thông tin đăng nhập website bán hàng</CardDescription>
           </CardHeader>
           <CardContent>
-            {/* form với preventDefault để không reload trang */}
             <form onSubmit={handleSave} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
@@ -426,27 +555,26 @@ export default function SyncRobot() {
                     <Input
                       id="password"
                       type={showPw ? "text" : "password"}
-                      placeholder={hasServerPassword && !formData.password ? "Đã lưu mật khẩu — để trống để giữ nguyên" : "Nhập mật khẩu mới"}
+                      placeholder={
+                        hasServerPassword && !formData.password
+                          ? "Đã lưu mật khẩu — để trống để giữ nguyên"
+                          : "Nhập mật khẩu mới"
+                      }
                       value={formData.password}
-                      onChange={(e) => {
-                        // setField tự đánh dấu dirty
-                        setField("password", e.target.value)
-                      }}
+                      onChange={(e) => setField("password", e.target.value)}
                       className="pr-10"
                       autoComplete="new-password"
                     />
                     <button
                       type="button"
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1"
-                      onClick={() => setShowPw((v) => !v)}
+                      onClick={() => setShowPw(v => !v)}
                     >
                       {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
                   {hasServerPassword && !formData.password && (
-                    <p className="text-xs text-muted-foreground">
-                      Mật khẩu đã lưu — nhập mới để thay đổi.
-                    </p>
+                    <p className="text-xs text-muted-foreground">Mật khẩu đã lưu — nhập mới để thay đổi.</p>
                   )}
                 </div>
 
@@ -456,11 +584,9 @@ export default function SyncRobot() {
                     value={String(formData.interval_s)}
                     onValueChange={(v) => setField("interval_s", Number(v))}
                   >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {INTERVALS.map((i) => (
+                      {INTERVALS.map(i => (
                         <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
                       ))}
                     </SelectContent>
@@ -470,20 +596,62 @@ export default function SyncRobot() {
 
               {/* Buttons */}
               <div className="flex flex-wrap gap-2 pt-2">
-                {/* Nút Lưu là submit thật — có preventDefault qua onSubmit */}
                 <Button type="submit" disabled={saving}>
                   <Save className="h-4 w-4 mr-2" />
                   {saving ? "Đang lưu..." : "Lưu cấu hình"}
                 </Button>
+
                 <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
                   <Plug className="h-4 w-4 mr-2" />
                   {testing ? "Đang kiểm tra..." : "Kiểm tra đăng nhập"}
                 </Button>
-                <Button type="button" variant="secondary" onClick={handleSyncNow} disabled={syncing || status.running}>
+
+                {/* Nút Mở Log — chỉ hiện khi có kết quả test */}
+                {testResult && (
+                  <Button type="button" variant="secondary" onClick={() => setTestResult(testResult)}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Mở Log
+                  </Button>
+                )}
+
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleSyncNow}
+                  disabled={syncing || status.running}
+                >
                   <Play className="h-4 w-4 mr-2" />
                   {syncing ? "Đã kích hoạt..." : "Đồng bộ ngay"}
                 </Button>
               </div>
+
+              {/* Tóm tắt kết quả test nhanh (không cần mở dialog) */}
+              {testResult && !testing && (
+                <div
+                  className={`mt-2 rounded-md p-3 text-sm cursor-pointer hover:opacity-80 transition-opacity ${
+                    testResult.ok
+                      ? "bg-green-50 text-green-800 dark:bg-green-950/40 dark:text-green-200 border border-green-200 dark:border-green-800"
+                      : "bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200 border border-red-200 dark:border-red-800"
+                  }`}
+                  onClick={() => setTestResult({ ...testResult })}
+                  title="Bấm để xem chi tiết"
+                >
+                  <div className="flex items-center gap-2">
+                    {testResult.ok
+                      ? <CheckCircle2 className="h-4 w-4 shrink-0" />
+                      : <XCircle      className="h-4 w-4 shrink-0" />}
+                    <span className="font-medium">{testResult.message}</span>
+                  </div>
+                  {testResult.error_text && (
+                    <p className="mt-1 text-xs opacity-80 line-clamp-2">{testResult.error_text}</p>
+                  )}
+                  {(testResult.steps?.length ?? 0) > 0 && (
+                    <p className="mt-1 text-xs opacity-60">
+                      {testResult.steps!.length} bước — bấm để xem screenshot chi tiết
+                    </p>
+                  )}
+                </div>
+              )}
             </form>
           </CardContent>
         </Card>
@@ -513,26 +681,20 @@ export default function SyncRobot() {
                     <span className="text-muted-foreground">Thời gian chạy</span>
                     <span>{fmtDuration(lastRun.duration_s)}</span>
                   </div>
-
                   <hr className="border-border" />
-
-                  {/* Step progress */}
                   <div className="space-y-1.5">
                     {([
                       { label: "Đăng nhập",       ok: lastRun.login_ok    },
                       { label: "Tải file XLSX",    ok: lastRun.download_ok },
                       { label: "Import đơn hàng", ok: lastRun.import_ok   },
-                    ] as const).map((s) => (
+                    ] as const).map(s => (
                       <div key={s.label} className="flex items-center gap-2 text-xs">
                         <StepIcon ok={s.ok} />
                         <span className={s.ok ? "" : "text-muted-foreground"}>{s.label}</span>
                       </div>
                     ))}
                   </div>
-
                   <hr className="border-border" />
-
-                  {/* Stats */}
                   <div className="grid grid-cols-3 text-center gap-1">
                     <div>
                       <div className="text-lg font-bold text-green-600">{lastRun.new_orders}</div>
@@ -547,8 +709,6 @@ export default function SyncRobot() {
                       <div className="text-xs text-muted-foreground">Bỏ qua</div>
                     </div>
                   </div>
-
-                  {/* Result message */}
                   <p className={`text-xs rounded-md p-2 leading-relaxed ${
                     lastRun.success
                       ? "bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-300"
@@ -563,7 +723,6 @@ export default function SyncRobot() {
             </CardContent>
           </Card>
 
-          {/* Làm mới thủ công — load lại cả config lẫn status */}
           <Button type="button" variant="outline" size="sm" className="w-full" onClick={handleManualRefresh}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Làm mới
@@ -575,7 +734,7 @@ export default function SyncRobot() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Lịch sử đồng bộ</CardTitle>
-          <CardDescription>Tối đa 200 lần gần nhất, mới nhất trước</CardDescription>
+          <CardDescription>Bao gồm cả kết quả Kiểm tra đăng nhập</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {logs.length === 0 ? (
@@ -586,6 +745,7 @@ export default function SyncRobot() {
                 <thead>
                   <tr className="border-b bg-muted/50 text-muted-foreground text-xs">
                     <th className="text-left px-4 py-2 font-medium whitespace-nowrap">Thời gian</th>
+                    <th className="text-left px-4 py-2 font-medium">Loại</th>
                     <th className="text-left px-4 py-2 font-medium">Kết quả</th>
                     <th className="text-right px-4 py-2 font-medium">Mới</th>
                     <th className="text-right px-4 py-2 font-medium">Bỏ qua</th>
@@ -601,6 +761,11 @@ export default function SyncRobot() {
                         {fmtDate(log.started_at)}
                       </td>
                       <td className="px-4 py-2">
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {log.type === "test_login" ? "🔍 Test" : "🔄 Sync"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-2">
                         <Badge
                           variant={log.success ? "outline" : "destructive"}
                           className="gap-1 text-xs"
@@ -611,8 +776,8 @@ export default function SyncRobot() {
                           {log.success ? "OK" : "Lỗi"}
                         </Badge>
                       </td>
-                      <td className="px-4 py-2 text-right font-medium text-green-600">{log.new_orders}</td>
-                      <td className="px-4 py-2 text-right text-muted-foreground">{log.skipped_orders}</td>
+                      <td className="px-4 py-2 text-right font-medium text-green-600">{log.new_orders || "—"}</td>
+                      <td className="px-4 py-2 text-right text-muted-foreground">{log.skipped_orders || "—"}</td>
                       <td className="px-4 py-2 text-right text-red-500">{log.errors || 0}</td>
                       <td className="px-4 py-2 text-right text-muted-foreground text-xs">{fmtDuration(log.duration_s)}</td>
                       <td className="px-4 py-2 text-xs text-muted-foreground max-w-xs truncate">{log.message}</td>
