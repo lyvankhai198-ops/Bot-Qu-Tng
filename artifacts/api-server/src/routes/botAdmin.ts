@@ -1278,6 +1278,72 @@ router.put("/bot/required-channels", requireAuth, (req: any, res: any) => {
   res.json(channels);
 });
 
+// ── GET /bot/rate-violations ──────────────────────────────────────────────────
+router.get("/bot/rate-violations", requireAuth, (req: any, res: any) => {
+  const violations: any[] = readJson("rate_violations", []) ?? [];
+  const { user_id, action, from, to, is_locked } = req.query;
+  let result = [...violations].reverse(); // newest first
+  if (user_id)   result = result.filter((r: any) => String(r.user_id) === String(user_id));
+  if (action)    result = result.filter((r: any) => r.action === String(action));
+  if (from)      result = result.filter((r: any) => r.timestamp >= String(from));
+  if (to)        result = result.filter((r: any) => r.timestamp <= String(to) + "T23:59:59");
+  if (is_locked === "true") result = result.filter((r: any) => r.is_locked === true);
+
+  // Summary stats
+  const summary = {
+    total: result.length,
+    by_action: {} as Record<string, number>,
+    locked_count: result.filter((r: any) => r.is_locked).length,
+    unique_users: new Set(result.map((r: any) => r.user_id)).size,
+  };
+  for (const r of result) {
+    summary.by_action[r.action] = (summary.by_action[r.action] || 0) + 1;
+  }
+
+  res.json({ summary, items: result.slice(0, 500) });
+});
+
+// ── GET /bot/rate-limits/user/:userId ────────────────────────────────────────
+router.get("/bot/rate-limits/user/:userId", requireAuth, (req: any, res: any) => {
+  const { userId } = req.params;
+  const data: any = readJson("rate_limits", {}) ?? {};
+  const now = Date.now() / 1000;
+  const userState = data[String(userId)] ?? {};
+  const result: any = {};
+  for (const [action, state] of Object.entries(userState) as [string, any][]) {
+    const lockUntil     = state.lock_until ?? null;
+    const cooldownUntil = state.cooldown_until ?? null;
+    result[action] = {
+      violation_count:        state.violation_count ?? 0,
+      is_locked:              !!(lockUntil && now < lockUntil),
+      lock_remaining_s:       lockUntil && now < lockUntil ? Math.max(0, Math.round(lockUntil - now)) : 0,
+      is_on_cooldown:         !!(cooldownUntil && now < cooldownUntil),
+      cooldown_remaining_s:   cooldownUntil && now < cooldownUntil ? Math.max(0, Math.round(cooldownUntil - now)) : 0,
+      last_violation_at:      state.last_violation_at ?? null,
+    };
+  }
+  res.json({ user_id: userId, status: result });
+});
+
+// ── DELETE /bot/rate-limits/user/:userId ─────────────────────────────────────
+// Admin can manually clear a user's rate limit state (e.g. false positive)
+router.delete("/bot/rate-limits/user/:userId", requireAuth, (req: any, res: any) => {
+  const { userId } = req.params;
+  const { action } = req.query;
+  const data: any = readJson("rate_limits", {}) ?? {};
+  const uid = String(userId);
+  if (!data[uid]) { res.json({ ok: true, message: "Không tìm thấy dữ liệu cho user này" }); return; }
+  if (action) {
+    delete data[uid][String(action)];
+    addLog("RATE_LIMIT_CLEARED", `user ${uid} action=${action}`, "web-admin");
+  } else {
+    delete data[uid];
+    addLog("RATE_LIMIT_CLEARED", `user ${uid} all actions`, "web-admin");
+  }
+  writeJson("rate_limits", data);
+  res.json({ ok: true, message: "Đã xóa rate limit" });
+});
+
 // ── GET /bot/refund-history ───────────────────────────────────────────────────
 router.get("/bot/refund-history", requireAuth, (req: any, res: any) => {
   const history: any[] = readJson("refund_history", []) ?? [];
