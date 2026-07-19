@@ -799,23 +799,63 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
         _logout = await _find_visible(page, _LOGOUT_SELECTORS) is not None
 
         if _auth_c or _auth_ls or _logout:
-            _log(f"[login] ✅ Session xác nhận sau {waited}s — "
+            _log(f"[login] Tín hiệu session sau {waited}s — "
                  f"cookies={_auth_c}, ls={_auth_ls}, logout={_logout}")
-            session_confirmed = True
-            break
+            # ── Stability check: chờ 4s để xác nhận session không flash rồi mất ──
+            _log("[login] Chờ 4s kiểm tra session ổn định (không phải flash tạm thời)...")
+            await asyncio.sleep(4)
 
-        _log(f"[login] Giây {waited}: chưa có session — URL={page.url}")
+            # Nếu URL đã quay về /login → đây chỉ là dashboard flash
+            if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
+                diag = await _collect_diag(
+                    f"Dashboard chỉ xuất hiện tạm thời — website redirect về /login sau {waited + 4}s. "
+                    "Session không được server chấp nhận hoặc bị invalidate ngay lập tức."
+                )
+                _step("Session không ổn định (dashboard flash)", False, diag[:600])
+                raise RuntimeError(
+                    f"Session giả — dashboard flash rồi mất sau {waited + 4}s\n{diag}"
+                )
+
+            # Kiểm tra lại signal sau stability wait (phải vẫn còn)
+            _stable_c: list = []
+            _stable_ls: list = []
+            _stable_logout = False
+            try:
+                _ck2 = await page.context.cookies()
+                _stable_c = [c["name"] for c in _ck2 if c["name"] not in _NOISE_COOKIES]
+            except Exception:
+                pass
+            try:
+                _ls2 = await page.evaluate("""() => {
+                    const k = [];
+                    for (let i = 0; i < localStorage.length; i++) k.push(localStorage.key(i));
+                    return k;
+                }""")
+                _stable_ls = [k for k in (_ls2 or []) if any(h in k.lower() for h in _TOKEN_HINTS)]
+            except Exception:
+                pass
+            _stable_logout = await _find_visible(page, _LOGOUT_SELECTORS) is not None
+
+            if _stable_c or _stable_ls or _stable_logout:
+                _log(f"[login] ✅ Session ổn định — "
+                     f"cookies={_stable_c}, ls={_stable_ls}, logout={_stable_logout}")
+                session_confirmed = True
+                break
+            else:
+                _log("[login] Tín hiệu session biến mất sau stability wait — tiếp tục chờ")
+
+        _log(f"[login] Giây {waited}: chưa có session ổn định — URL={page.url}")
         await asyncio.sleep(1)
 
     if not session_confirmed:
         diag = await _collect_diag(
-            "Không tìm thấy cookie/token xác thực sau 15s — "
+            "Không tìm thấy cookie/token xác thực ổn định sau 15s — "
             "website có thể lưu session theo cách khác hoặc đăng nhập thất bại."
         )
         _step("Xác minh session", False, diag[:600])
         raise RuntimeError(f"Đăng nhập thất bại — không có session sau 15s\n{diag}")
 
-    # 9. Xác nhận cuối: URL không phải /login + có tín hiệu session
+    # 9. Xác nhận cuối: URL không phải /login + signal còn tồn tại
     logged_in, reason = await _is_logged_in(page)
     final_url = page.url
     if not logged_in:
