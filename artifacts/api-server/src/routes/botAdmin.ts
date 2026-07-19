@@ -1588,6 +1588,69 @@ router.get("/bot/check-channel/:channelId", requireAuth, async (req: any, res: a
   } catch (e: any) { res.json({ ok: false, canAccess: false, error: e?.message ?? "Network error" }); }
 });
 
+// ── GET /bot/shop-channels ────────────────────────────────────────────────────
+router.get("/bot/shop-channels", requireAuth, (_req: any, res: any) => {
+  const channels: any[] = (readJson("shop_channels", []) ?? []);
+  channels.sort((a: any, b: any) => (a.order ?? 999) - (b.order ?? 999));
+  res.json(channels);
+});
+
+// ── POST /bot/shop-channels ───────────────────────────────────────────────────
+router.post("/bot/shop-channels", requireAuth, (req: any, res: any) => {
+  const channels: any[] = readJson("shop_channels", []) ?? [];
+  const { name, username, link, icon, enabled } = req.body ?? {};
+  if (!name?.trim() || !link?.trim()) return res.status(400).json({ error: "name và link là bắt buộc" });
+  const maxOrder = channels.reduce((m: number, c: any) => Math.max(m, c.order ?? 0), 0);
+  const ch = {
+    id: Date.now().toString(),
+    name: name.trim(),
+    username: username?.trim() ?? "",
+    link: link.trim(),
+    icon: icon?.trim() || "🛒",
+    order: maxOrder + 1,
+    enabled: enabled !== false,
+  };
+  channels.push(ch);
+  writeJson("shop_channels", channels);
+  addLog("SHOP_CHANNEL_ADD", ch.name, "web-admin");
+  res.json(ch);
+});
+
+// ── PUT /bot/shop-channels/reorder ────────────────────────────────────────────
+router.put("/bot/shop-channels/reorder", requireAuth, (req: any, res: any) => {
+  const { ids } = req.body ?? {};
+  if (!Array.isArray(ids)) return res.status(400).json({ error: "ids array required" });
+  const channels: any[] = readJson("shop_channels", []) ?? [];
+  const ordered = ids.map((id: string, idx: number) => {
+    const ch = channels.find((c: any) => c.id === id);
+    return ch ? { ...ch, order: idx + 1 } : null;
+  }).filter(Boolean);
+  writeJson("shop_channels", ordered);
+  res.json(ordered);
+});
+
+// ── PUT /bot/shop-channels/:id ────────────────────────────────────────────────
+router.put("/bot/shop-channels/:id", requireAuth, (req: any, res: any) => {
+  const channels: any[] = readJson("shop_channels", []) ?? [];
+  const idx = channels.findIndex((c: any) => c.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Không tìm thấy kênh" });
+  channels[idx] = { ...channels[idx], ...req.body, id: req.params.id };
+  writeJson("shop_channels", channels);
+  addLog("SHOP_CHANNEL_UPDATE", channels[idx].name, "web-admin");
+  res.json(channels[idx]);
+});
+
+// ── DELETE /bot/shop-channels/:id ─────────────────────────────────────────────
+router.delete("/bot/shop-channels/:id", requireAuth, (req: any, res: any) => {
+  const channels: any[] = readJson("shop_channels", []) ?? [];
+  const ch = channels.find((c: any) => c.id === req.params.id);
+  if (!ch) return res.status(404).json({ error: "Không tìm thấy kênh" });
+  const updated = channels.filter((c: any) => c.id !== req.params.id);
+  writeJson("shop_channels", updated);
+  addLog("SHOP_CHANNEL_DELETE", ch.name, "web-admin");
+  res.json({ ok: true });
+});
+
 // ── GET /bot/backup ──────────────────────────────────────────────────────────
 router.get("/bot/backup", requireAuth, (_req: any, res: any) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];

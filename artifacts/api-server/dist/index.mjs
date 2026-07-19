@@ -51387,6 +51387,59 @@ router2.get("/bot/check-channel/:channelId", requireAuth, async (req, res) => {
     res.json({ ok: false, canAccess: false, error: e?.message ?? "Network error" });
   }
 });
+router2.get("/bot/shop-channels", requireAuth, (_req, res) => {
+  const channels = readJson("shop_channels", []) ?? [];
+  channels.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+  res.json(channels);
+});
+router2.post("/bot/shop-channels", requireAuth, (req, res) => {
+  const channels = readJson("shop_channels", []) ?? [];
+  const { name, username, link, icon, enabled } = req.body ?? {};
+  if (!name?.trim() || !link?.trim()) return res.status(400).json({ error: "name v\xE0 link l\xE0 b\u1EAFt bu\u1ED9c" });
+  const maxOrder = channels.reduce((m, c) => Math.max(m, c.order ?? 0), 0);
+  const ch = {
+    id: Date.now().toString(),
+    name: name.trim(),
+    username: username?.trim() ?? "",
+    link: link.trim(),
+    icon: icon?.trim() || "\u{1F6D2}",
+    order: maxOrder + 1,
+    enabled: enabled !== false
+  };
+  channels.push(ch);
+  writeJson("shop_channels", channels);
+  addLog("SHOP_CHANNEL_ADD", ch.name, "web-admin");
+  res.json(ch);
+});
+router2.put("/bot/shop-channels/reorder", requireAuth, (req, res) => {
+  const { ids } = req.body ?? {};
+  if (!Array.isArray(ids)) return res.status(400).json({ error: "ids array required" });
+  const channels = readJson("shop_channels", []) ?? [];
+  const ordered = ids.map((id, idx) => {
+    const ch = channels.find((c) => c.id === id);
+    return ch ? { ...ch, order: idx + 1 } : null;
+  }).filter(Boolean);
+  writeJson("shop_channels", ordered);
+  res.json(ordered);
+});
+router2.put("/bot/shop-channels/:id", requireAuth, (req, res) => {
+  const channels = readJson("shop_channels", []) ?? [];
+  const idx = channels.findIndex((c) => c.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y k\xEAnh" });
+  channels[idx] = { ...channels[idx], ...req.body, id: req.params.id };
+  writeJson("shop_channels", channels);
+  addLog("SHOP_CHANNEL_UPDATE", channels[idx].name, "web-admin");
+  res.json(channels[idx]);
+});
+router2.delete("/bot/shop-channels/:id", requireAuth, (req, res) => {
+  const channels = readJson("shop_channels", []) ?? [];
+  const ch = channels.find((c) => c.id === req.params.id);
+  if (!ch) return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y k\xEAnh" });
+  const updated = channels.filter((c) => c.id !== req.params.id);
+  writeJson("shop_channels", updated);
+  addLog("SHOP_CHANNEL_DELETE", ch.name, "web-admin");
+  res.json({ ok: true });
+});
 router2.get("/bot/backup", requireAuth, (_req, res) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
   const backup = { exportedAt: now() };

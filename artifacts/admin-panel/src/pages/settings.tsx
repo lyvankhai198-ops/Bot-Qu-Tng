@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link, Wifi, WifiOff, Loader2 } from "lucide-react"
+import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link, Wifi, WifiOff, Loader2, ShoppingBag, ChevronUp, ChevronDown, Pencil, Check, X } from "lucide-react"
 import type { BotSettings, NotificationSettings } from "@workspace/api-client-react"
 
 interface RequiredChannel {
@@ -41,6 +41,58 @@ async function saveChannels(channels: RequiredChannel[]): Promise<RequiredChanne
     method: "PUT",
     headers: { ...authHeader(), "Content-Type": "application/json" },
     body: JSON.stringify(channels),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+// ── Shop channels helpers ─────────────────────────────────────────────────────
+interface ShopChannel {
+  id: string
+  name: string
+  username: string
+  link: string
+  icon: string
+  order: number
+  enabled: boolean
+}
+
+async function fetchShopChannels(): Promise<ShopChannel[]> {
+  const res = await fetch("/api/bot/shop-channels", { headers: authHeader() })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+async function apiAddShopChannel(data: Omit<ShopChannel, "id" | "order">): Promise<ShopChannel> {
+  const res = await fetch("/api/bot/shop-channels", {
+    method: "POST",
+    headers: { ...authHeader(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+async function apiUpdateShopChannel(id: string, data: Partial<ShopChannel>): Promise<ShopChannel> {
+  const res = await fetch(`/api/bot/shop-channels/${id}`, {
+    method: "PUT",
+    headers: { ...authHeader(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+async function apiDeleteShopChannel(id: string): Promise<void> {
+  const res = await fetch(`/api/bot/shop-channels/${id}`, { method: "DELETE", headers: authHeader() })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+async function apiReorderShopChannels(ids: string[]): Promise<ShopChannel[]> {
+  const res = await fetch("/api/bot/shop-channels/reorder", {
+    method: "PUT",
+    headers: { ...authHeader(), "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
@@ -97,6 +149,13 @@ export default function Settings() {
   const [channelTests, setChannelTests] = useState<Record<string, { loading?: boolean; ok?: boolean; title?: string; botStatus?: string; isAdmin?: boolean; error?: string }>>({})
   const [fetchingInfo, setFetchingInfo] = useState(false)
   const [fetchResult, setFetchResult] = useState<{ ok: boolean; chatId?: string; title?: string; username?: string; isAdmin?: boolean; botStatus?: string; error?: string } | null>(null)
+
+  // ── Shop channels state ──────────────────────────────────────────────────
+  const [shopChannels, setShopChannels] = useState<ShopChannel[]>([])
+  const [shopSaving, setShopSaving] = useState(false)
+  const [newShopCh, setNewShopCh] = useState({ name: "", username: "", link: "", icon: "🛒" })
+  const [editingShopId, setEditingShopId] = useState<string | null>(null)
+  const [editShopCh, setEditShopCh] = useState<Partial<ShopChannel>>({})
 
   const handleFetchChannelInfo = async () => {
     // Accept username (@handle), link (t.me/...), or numeric chatId
@@ -269,6 +328,72 @@ export default function Settings() {
     setChannels(updated)
     try { await saveChannels(updated) }
     catch (e: any) { toast({ title: "Lỗi xóa kênh", description: e.message, variant: "destructive" }) }
+  }
+
+  // ── Shop channel handlers ─────────────────────────────────────────────────
+  const loadShopChannels = useCallback(async () => {
+    try { setShopChannels(await fetchShopChannels()) } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { loadShopChannels() }, [loadShopChannels])
+
+  const handleAddShopChannel = async () => {
+    const { name, username, link, icon } = newShopCh
+    if (!name.trim() || !link.trim()) {
+      toast({ title: "Lỗi", description: "Tên và Link là bắt buộc", variant: "destructive" }); return
+    }
+    setShopSaving(true)
+    try {
+      const ch = await apiAddShopChannel({ name: name.trim(), username: username.trim(), link: link.trim(), icon: icon.trim() || "🛒", enabled: true })
+      setShopChannels(prev => [...prev, ch])
+      setNewShopCh({ name: "", username: "", link: "", icon: "🛒" })
+      toast({ title: "Đã thêm kênh bán hàng", description: ch.name })
+    } catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    } finally { setShopSaving(false) }
+  }
+
+  const handleToggleShopChannel = async (id: string, enabled: boolean) => {
+    setShopChannels(prev => prev.map(c => c.id === id ? { ...c, enabled } : c))
+    try { await apiUpdateShopChannel(id, { enabled }) }
+    catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" }); loadShopChannels() }
+  }
+
+  const handleDeleteShopChannel = async (id: string) => {
+    const ch = shopChannels.find(c => c.id === id)
+    setShopChannels(prev => prev.filter(c => c.id !== id))
+    try { await apiDeleteShopChannel(id); toast({ title: "Đã xoá", description: ch?.name }) }
+    catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" }); loadShopChannels() }
+  }
+
+  const handleStartEditShop = (ch: ShopChannel) => {
+    setEditingShopId(ch.id)
+    setEditShopCh({ name: ch.name, username: ch.username, link: ch.link, icon: ch.icon })
+  }
+
+  const handleSaveEditShop = async (id: string) => {
+    if (!editShopCh.name?.trim() || !editShopCh.link?.trim()) {
+      toast({ title: "Lỗi", description: "Tên và Link là bắt buộc", variant: "destructive" }); return
+    }
+    try {
+      const updated = await apiUpdateShopChannel(id, editShopCh)
+      setShopChannels(prev => prev.map(c => c.id === id ? updated : c))
+      setEditingShopId(null)
+      toast({ title: "Đã lưu", description: updated.name })
+    } catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" }) }
+  }
+
+  const handleMoveShop = async (id: string, direction: "up" | "down") => {
+    const sorted = [...shopChannels].sort((a, b) => a.order - b.order)
+    const idx = sorted.findIndex(c => c.id === id)
+    if (direction === "up" && idx === 0) return
+    if (direction === "down" && idx === sorted.length - 1) return
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1
+    const newArr = [...sorted]
+    ;[newArr[idx], newArr[swapIdx]] = [newArr[swapIdx], newArr[idx]]
+    const newOrder = newArr.map((c, i) => ({ ...c, order: i + 1 }))
+    setShopChannels(newOrder)
+    try { await apiReorderShopChannels(newOrder.map(c => c.id)) }
+    catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" }); loadShopChannels() }
   }
 
   if (isLoading) {
@@ -660,6 +785,132 @@ export default function Settings() {
           {updateSettings.isPending ? "Đang lưu..." : <><Save className="w-4 h-4 mr-2" /> Lưu cài đặt kênh</>}
         </Button>
       </div>
+
+      {/* ── Kênh bán hàng ────────────────────────────────────────────────────── */}
+      <div>
+        <h2 className="text-lg md:text-xl font-semibold tracking-tight flex items-center gap-2 mt-2 mb-1">
+          <ShoppingBag className="w-5 h-5 text-purple-500" /> Kênh bán hàng
+        </h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Khi bấm 🛍️ <b>Kênh Bán Hàng</b>: nếu chỉ có 1 kênh bật → mở trực tiếp. Nếu có nhiều kênh → bot hiện danh sách chọn.
+        </p>
+      </div>
+
+      {/* Shop channel list */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Danh sách kênh bán hàng</CardTitle>
+          <CardDescription>Thứ tự hiển thị trong bot dùng các nút ↑ ↓</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+
+          {/* Channel list */}
+          {shopChannels.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground text-sm">
+              <ShoppingBag className="h-6 w-6 mx-auto mb-2 opacity-30" />
+              Chưa có kênh bán hàng nào
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {[...shopChannels].sort((a, b) => a.order - b.order).map((ch, idx, arr) => (
+                <div key={ch.id} className={`rounded-lg border transition-colors ${ch.enabled ? "bg-background border-border" : "bg-muted/30 border-border/40 opacity-60"}`}>
+                  {editingShopId === ch.id ? (
+                    /* ── Edit row ── */
+                    <div className="p-3 space-y-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Icon</Label>
+                          <Input value={editShopCh.icon ?? ""} onChange={e => setEditShopCh(v => ({ ...v, icon: e.target.value }))} placeholder="🛒" className="min-h-[40px] text-center text-lg" maxLength={4} />
+                        </div>
+                        <div className="space-y-1 sm:col-span-3">
+                          <Label className="text-xs">Tên hiển thị *</Label>
+                          <Input value={editShopCh.name ?? ""} onChange={e => setEditShopCh(v => ({ ...v, name: e.target.value }))} placeholder="Shop AI Chính" className="min-h-[40px]" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Username</Label>
+                          <Input value={editShopCh.username ?? ""} onChange={e => setEditShopCh(v => ({ ...v, username: e.target.value }))} placeholder="@shoptaikhoan" className="min-h-[40px]" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Link Telegram *</Label>
+                          <Input value={editShopCh.link ?? ""} onChange={e => setEditShopCh(v => ({ ...v, link: e.target.value }))} placeholder="https://t.me/..." className="min-h-[40px]" />
+                        </div>
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <Button size="sm" variant="outline" onClick={() => setEditingShopId(null)} className="gap-1"><X className="w-3 h-3" />Huỷ</Button>
+                        <Button size="sm" onClick={() => handleSaveEditShop(ch.id)} className="gap-1"><Check className="w-3 h-3" />Lưu</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ── Display row ── */
+                    <div className="flex items-center gap-3 p-3">
+                      <span className="text-xl shrink-0">{ch.icon || "🛒"}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-sm">{ch.name}</span>
+                          {ch.username && <Badge variant="secondary" className="font-mono text-xs">{ch.username}</Badge>}
+                        </div>
+                        {ch.link && (
+                          <a href={ch.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-600 text-xs flex items-center gap-0.5 mt-0.5 truncate max-w-[200px]">
+                            <ExternalLink className="w-3 h-3 shrink-0" />{ch.link}
+                          </a>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {/* Reorder */}
+                        <button onClick={() => handleMoveShop(ch.id, "up")} disabled={idx === 0} className="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors" title="Lên">
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleMoveShop(ch.id, "down")} disabled={idx === arr.length - 1} className="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors" title="Xuống">
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                        {/* Edit */}
+                        <button onClick={() => handleStartEditShop(ch)} className="p-1 text-muted-foreground hover:text-blue-500 transition-colors" title="Chỉnh sửa">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        {/* Toggle */}
+                        <Switch checked={ch.enabled} onCheckedChange={v => handleToggleShopChannel(ch.id, v)} />
+                        {/* Delete */}
+                        <button onClick={() => handleDeleteShopChannel(ch.id)} className="p-1 text-muted-foreground hover:text-destructive transition-colors" title="Xoá">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add new shop channel */}
+          <div className="border border-dashed border-border/70 rounded-lg p-4 space-y-3 bg-muted/20">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Thêm kênh mới</p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Icon</Label>
+                <Input value={newShopCh.icon} onChange={e => setNewShopCh(n => ({ ...n, icon: e.target.value }))} placeholder="🛒" className="min-h-[44px] text-center text-lg" maxLength={4} />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <Label className="text-xs">Tên hiển thị *</Label>
+                <Input value={newShopCh.name} onChange={e => setNewShopCh(n => ({ ...n, name: e.target.value }))} placeholder="Shop AI Chính" className="min-h-[44px]" />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <Label className="text-xs">Username</Label>
+                <Input value={newShopCh.username} onChange={e => setNewShopCh(n => ({ ...n, username: e.target.value }))} placeholder="@shoptaikhoan" className="min-h-[44px]" />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Link Telegram *</Label>
+              <Input value={newShopCh.link} onChange={e => setNewShopCh(n => ({ ...n, link: e.target.value }))} placeholder="https://t.me/shoptaikhoan hoặc https://t.me/+xxxxx" className="min-h-[44px]" />
+            </div>
+            <Button onClick={handleAddShopChannel} disabled={shopSaving || !newShopCh.name.trim() || !newShopCh.link.trim()} className="min-h-[44px]">
+              <Plus className="w-4 h-4 mr-1" /> Thêm kênh bán hàng
+            </Button>
+          </div>
+
+        </CardContent>
+      </Card>
 
       {/* ── Notification settings ───────────────────────────────────────────── */}
       <div>
