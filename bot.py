@@ -61,8 +61,34 @@ def lang_inline() -> InlineKeyboardMarkup:
 
 def shop_inline(L: str, settings: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton(t(L, "btn_open_shop"), url=settings["shop_link"])
+        InlineKeyboardButton(t(L, "btn_open_shop"), url=settings.get("shop_link", ""))
     ]])
+
+def get_active_shop_channels() -> list:
+    """Load enabled shop channels from data/shop_channels.json, sorted by order."""
+    try:
+        path = os.path.join(os.path.dirname(__file__), "data", "shop_channels.json")
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                channels = _json.load(f)
+            active = [ch for ch in channels if ch.get("enabled", True)]
+            active.sort(key=lambda x: x.get("order", 999))
+            return active
+    except Exception:
+        pass
+    return []
+
+def shop_channels_inline(L: str, channels: list) -> InlineKeyboardMarkup:
+    """Inline keyboard with one button per active shop channel + back button."""
+    rows = []
+    for ch in channels:
+        icon = ch.get("icon", "🛒")
+        name = ch.get("name", "Shop")
+        link = ch.get("link", "")
+        if link:
+            rows.append([InlineKeyboardButton(f"{icon} {name}", url=link)])
+    rows.append([InlineKeyboardButton("⬅️ Quay lại", callback_data="back_main")])
+    return InlineKeyboardMarkup(rows)
 
 def order_inline(L: str, order_id: str, can_report: bool = True) -> InlineKeyboardMarkup:
     """Single-account order keyboard. Hides report button when warranty expired."""
@@ -1480,10 +1506,36 @@ async def handle_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = update.effective_user
     L = lang(user.id)
     settings = db.get_settings()
-    await update.message.reply_text(
-        f"🛍 {settings['shop_username']}",
-        reply_markup=shop_inline(L, settings),
-    )
+
+    channels = get_active_shop_channels()
+
+    if len(channels) == 0:
+        # No shop_channels.json or all disabled → fallback to legacy single-link
+        url = settings.get("shop_link", "")
+        if not url:
+            await update.message.reply_text("🛍 Kênh bán hàng chưa được cấu hình.")
+            return
+        await update.message.reply_text(
+            f"🛍 {settings.get('shop_username', '')}",
+            reply_markup=shop_inline(L, settings),
+        )
+    elif len(channels) == 1:
+        # Single channel → mở trực tiếp (không hiện menu chọn)
+        ch = channels[0]
+        icon = ch.get("icon", "🛒")
+        disp = ch.get("username") or ch.get("name", "")
+        await update.message.reply_text(
+            f"🛍 {icon} {disp}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(t(L, "btn_open_shop"), url=ch["link"])
+            ]]),
+        )
+    else:
+        # Nhiều kênh → hiện danh sách chọn
+        await update.message.reply_text(
+            "🛍️ Chọn kênh muốn truy cập:",
+            reply_markup=shop_channels_inline(L, channels),
+        )
 
 # ─── 📋 Giới Thiệu ───────────────────────────────────────────────────────────
 
