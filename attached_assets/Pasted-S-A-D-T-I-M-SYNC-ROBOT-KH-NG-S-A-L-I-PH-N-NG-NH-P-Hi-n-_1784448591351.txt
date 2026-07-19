@@ -1,0 +1,71 @@
+SỬA DỨT ĐIỂM SYNC ROBOT – KHÔNG SỬA LẠI PHẦN ĐĂNG NHẬP
+
+Hiện tại nút “Kiểm tra đăng nhập” đã hoạt động đúng:
+- Robot mở https://canboso.com/
+- Phát hiện phiên đăng nhập sẵn
+- Xác nhận đăng nhập thành công
+
+Không được tiếp tục sửa selector đăng nhập hoặc tự đăng xuất phiên hiện tại.
+
+Vấn đề cần sửa là bước sau đăng nhập: tìm trang Đơn hàng và tải XLSX.
+
+Website này không có URL cố định /orders. Không được tự ghép:
+https://canboso.com/orders
+
+Luồng đúng:
+
+1. Sau khi xác nhận đang ở Dashboard:
+   - Chờ dashboard tải hoàn tất.
+   - Chờ sidebar/menu xuất hiện.
+   - Nếu sidebar đang đóng, bấm nút hamburger.
+
+2. Tìm mục “Đơn hàng” bằng nhiều cách:
+   - text chính xác “Đơn hàng”
+   - text có chứa “Đơn hàng”
+   - role=link hoặc role=button có tên “Đơn hàng”
+   - kiểm tra cả thẻ a, button, div có thể click
+   - tìm trong toàn bộ DOM, không chỉ phần tử đang hiển thị ban đầu
+
+3. Khi tìm thấy mục “Đơn hàng”:
+   - Lấy href thật của phần tử đó.
+   - Nếu href tồn tại thì mở đúng href thật.
+   - Nếu không có href thì click trực tiếp.
+   - Không tự suy đoán đường dẫn.
+   - Không sử dụng mặc định /orders.
+
+4. Sau khi click:
+   - Chờ trang đơn hàng tải hoàn tất.
+   - Xác nhận bằng tiêu đề “Đơn hàng của bạn”, bảng đơn hàng hoặc nút “Tải xuống”.
+   - Sau đó mới bấm “Tải xuống”.
+
+5. Nếu click menu làm thay đổi nội dung nhưng URL vẫn là https://canboso.com/ thì vẫn coi là hợp lệ vì website có thể là SPA.
+   - Không yêu cầu URL phải đổi.
+   - Xác nhận bằng nội dung trang.
+
+6. Tải file:
+   - Bắt sự kiện download trước khi bấm nút.
+   - Tìm nút theo text “Tải xuống”.
+   - Chờ file tải xong.
+   - Kiểm tra file là .xlsx.
+   - Sau đó mới import đơn hàng.
+
+7. Nếu thất bại, log phải hiển thị:
+   - URL hiện tại
+   - title
+   - toàn bộ text menu tìm thấy
+   - danh sách link/button trong sidebar
+   - href thật của mục Đơn hàng
+   - screenshot trước và sau khi click
+   - lý do chính xác không tải được file
+
+8. Nút “Đồng bộ ngay” chỉ được bật khi:
+   - Đã lưu cấu hình
+   - Kiểm tra đăng nhập thành công
+
+9. Không reset database.
+10. Không xóa dữ liệu đơn hàng hiện tại.
+11. Không thay đổi các chức năng khác.
+12. Sửa lỗi hiển thị thời gian chạy dạng:
+    “1m 4.090000000000003s”
+    thành:
+    “1 phút 4.09 giây”.
