@@ -1,9 +1,8 @@
 /**
  * sync-robot.tsx
- *
- * QUAN TRỌNG — tách biệt hoàn toàn:
- *   formData    → dữ liệu người dùng đang nhập (CHỈ load 1 lần lúc mở trang)
- *   robotStatus → trạng thái robot đang polling (KHÔNG được ghi đè formData)
+ * - formData  → user input only, load once on mount
+ * - robotStatus → polling only, never overwrites formData
+ * - Screenshots served via /api/bot/sync-robot/screenshot/:file (auth header)
  */
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useToast } from "@/hooks/use-toast"
@@ -12,38 +11,18 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card"
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  RefreshCw,
-  Play,
-  Plug,
-  Save,
-  Eye,
-  EyeOff,
-  CheckCircle2,
-  XCircle,
-  Activity,
-  FileText,
-  ChevronDown,
-  ChevronUp,
+  RefreshCw, Play, Plug, Save, Eye, EyeOff,
+  CheckCircle2, XCircle, Activity, FileText,
+  ChevronDown, ChevronUp, Lightbulb,
 } from "lucide-react"
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
@@ -62,78 +41,82 @@ async function apiFetch(method: string, path: string, body?: unknown): Promise<a
   return res.json()
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── AuthImage — load screenshot qua fetch (có auth) ──────────────────────────
+function AuthImage({ filename, alt }: { filename: string; alt: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  const [err, setErr] = useState(false)
 
+  useEffect(() => {
+    let objectUrl = ""
+    fetch(`/api/bot/sync-robot/screenshot/${encodeURIComponent(filename)}`, {
+      headers: authHeader(),
+    })
+      .then(r => { if (!r.ok) throw new Error("not found"); return r.blob() })
+      .then(b => { objectUrl = URL.createObjectURL(b); setSrc(objectUrl) })
+      .catch(() => setErr(true))
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [filename])
+
+  if (err)  return <div className="text-xs text-muted-foreground py-2">Không tải được ảnh</div>
+  if (!src) return <div className="w-full h-24 bg-muted/40 rounded animate-pulse" />
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="w-full rounded border border-border mt-1"
+      loading="lazy"
+    />
+  )
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 type FormData = {
-  site_url: string
-  login_url: string
-  orders_url: string
-  email: string
-  password: string
-  interval_s: number
+  site_url: string; login_url: string; orders_url: string
+  email: string; password: string; interval_s: number
 }
 
 type RobotStatus = {
-  enabled: boolean
-  running: boolean
-  updated_at: string | null
-  next_run_at: string | null
-  last_run: LastRun | null
+  enabled: boolean; running: boolean
+  updated_at: string | null; next_run_at: string | null; last_run: LastRun | null
 }
 
 type LastRun = {
-  started_at: string
-  ended_at: string
-  duration_s: number
-  success: boolean
-  login_ok: boolean
-  download_ok: boolean
-  import_ok: boolean
-  new_orders: number
-  updated_orders: number
-  skipped_orders: number
-  errors: number
-  message: string
+  started_at: string; ended_at: string; duration_s: number; success: boolean
+  login_ok: boolean; download_ok: boolean; import_ok: boolean
+  new_orders: number; updated_orders: number; skipped_orders: number
+  errors: number; message: string
 }
 
 type TestStep = {
-  step: string
-  ok: boolean
-  note: string
-  screenshot: string | null   // base64 JPEG
+  step: string; ok: boolean; note: string
+  screenshot_file: string | null  // filename only — load via /api/bot/sync-robot/screenshot/
 }
 
 type TestResult = {
-  ok: boolean
-  message: string
-  url?: string
-  title?: string
-  error_text?: string
-  duration_s?: number
-  steps?: TestStep[]
+  ok: boolean; message: string
+  url?: string; title?: string; error_text?: string
+  reason?: string; suggestion?: string
+  duration_s?: number; steps?: TestStep[]
 }
 
 type LogEntry = LastRun & { type?: string }
 
 const INTERVALS = [
-  { value: "30",  label: "30 giây" },
-  { value: "60",  label: "1 phút"  },
-  { value: "120", label: "2 phút"  },
-  { value: "300", label: "5 phút"  },
+  { value: "30", label: "30 giây" }, { value: "60", label: "1 phút" },
+  { value: "120", label: "2 phút" }, { value: "300", label: "5 phút" },
   { value: "600", label: "10 phút" },
 ]
 
-function fmtDate(iso: string | null | undefined): string {
+function fmtDate(iso?: string | null) {
   if (!iso) return "—"
   try { return new Date(iso).toLocaleString("vi-VN", { hour12: false }) }
   catch { return iso }
 }
 
-function fmtDuration(s: number): string {
+function fmtDuration(s: number) {
   if (!s) return "—"
   if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60), r = s % 60
-  return `${m}m ${r}s`
+  return `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
 const FORM_DEFAULT: FormData = {
@@ -148,119 +131,137 @@ const STATUS_DEFAULT: RobotStatus = {
 
 // ── TestResultDialog ──────────────────────────────────────────────────────────
 function TestResultDialog({ result, onClose }: { result: TestResult; onClose: () => void }) {
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(
+    // Auto-expand bước lỗi cuối
+    result.steps ? result.steps.findLastIndex(s => !s.ok) : null
+  )
   const steps = result.steps ?? []
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+      <DialogContent className="w-full max-w-xl mx-auto max-h-[85dvh] flex flex-col gap-0 p-0">
+        {/* Header — luôn hiển thị, không cuộn */}
+        <DialogHeader className="px-4 pt-4 pb-3 border-b shrink-0">
+          <DialogTitle className="flex items-center gap-2 text-base">
             {result.ok
-              ? <CheckCircle2 className="h-5 w-5 text-green-500" />
-              : <XCircle      className="h-5 w-5 text-red-500" />}
+              ? <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />
+              : <XCircle      className="h-5 w-5 text-red-500 shrink-0" />}
             {result.ok ? "Đăng nhập thành công" : "Đăng nhập thất bại"}
           </DialogTitle>
         </DialogHeader>
 
-        {/* Tóm tắt */}
-        <div className={`rounded-lg p-3 text-sm leading-relaxed ${
-          result.ok
-            ? "bg-green-50 text-green-800 dark:bg-green-950/40 dark:text-green-200"
-            : "bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200"
-        }`}>
-          <p className="font-medium">{result.message}</p>
-        </div>
+        {/* Nội dung có cuộn */}
+        <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">
 
-        {/* Metadata */}
-        {(result.url || result.title || result.error_text || result.duration_s) && (
-          <div className="space-y-1.5 text-sm">
-            {result.url && (
-              <div className="flex gap-2">
-                <span className="text-muted-foreground shrink-0 w-24">URL:</span>
-                <span className="font-mono text-xs break-all">{result.url}</span>
-              </div>
-            )}
-            {result.title && (
-              <div className="flex gap-2">
-                <span className="text-muted-foreground shrink-0 w-24">Tiêu đề:</span>
-                <span>{result.title}</span>
-              </div>
-            )}
-            {result.error_text && (
-              <div className="flex gap-2">
-                <span className="text-muted-foreground shrink-0 w-24">Lỗi trang:</span>
-                <span className="text-red-600 dark:text-red-400 whitespace-pre-line">{result.error_text}</span>
-              </div>
-            )}
-            {result.duration_s !== undefined && (
-              <div className="flex gap-2">
-                <span className="text-muted-foreground shrink-0 w-24">Thời gian:</span>
-                <span>{fmtDuration(result.duration_s)}</span>
-              </div>
-            )}
+          {/* Tóm tắt */}
+          <div className={`rounded-lg p-3 text-sm leading-relaxed ${
+            result.ok
+              ? "bg-green-50 text-green-800 dark:bg-green-950/40 dark:text-green-200"
+              : "bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200"
+          }`}>
+            <p className="font-medium">{result.message}</p>
           </div>
-        )}
 
-        {/* Steps */}
-        {steps.length > 0 && (
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold">Chi tiết từng bước ({steps.length})</h4>
+          {/* Metadata */}
+          {(result.url || result.title || result.reason || result.error_text || result.suggestion) && (
+            <div className="space-y-1.5 text-sm">
+              {result.url && (
+                <Row label="URL">
+                  <span className="font-mono text-xs break-all">{result.url}</span>
+                </Row>
+              )}
+              {result.title && <Row label="Tiêu đề">{result.title}</Row>}
+              {result.error_text && (
+                <Row label="Lỗi trang">
+                  <span className="text-red-600 dark:text-red-400 whitespace-pre-line break-words">
+                    {result.error_text}
+                  </span>
+                </Row>
+              )}
+              {result.reason && (
+                <Row label="Nguyên nhân">
+                  <span className="font-medium">{result.reason}</span>
+                </Row>
+              )}
+              {result.suggestion && (
+                <div className="flex gap-2 items-start rounded-md bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 p-2 text-xs text-yellow-800 dark:text-yellow-200">
+                  <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{result.suggestion}</span>
+                </div>
+              )}
+              {result.duration_s !== undefined && (
+                <Row label="Thời gian">{fmtDuration(result.duration_s)}</Row>
+              )}
+            </div>
+          )}
+
+          {/* Steps */}
+          {steps.length > 0 && (
             <div className="space-y-1.5">
+              <h4 className="text-sm font-semibold text-muted-foreground">
+                Chi tiết {steps.length} bước
+              </h4>
               {steps.map((s, i) => (
                 <div key={i} className={`rounded-md border text-sm overflow-hidden ${
-                  s.ok ? "border-green-200 dark:border-green-800" : "border-red-200 dark:border-red-800"
+                  s.ok
+                    ? "border-green-200 dark:border-green-800"
+                    : "border-red-200 dark:border-red-800"
                 }`}>
-                  {/* Header row */}
                   <button
                     type="button"
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/30 transition-colors ${
-                      s.ok ? "bg-green-50/50 dark:bg-green-950/20" : "bg-red-50/50 dark:bg-red-950/20"
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${
+                      s.ok
+                        ? "bg-green-50/50 dark:bg-green-950/20 hover:bg-green-50 dark:hover:bg-green-950/30"
+                        : "bg-red-50/50 dark:bg-red-950/20 hover:bg-red-50 dark:hover:bg-red-950/30"
                     }`}
                     onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
                   >
                     {s.ok
                       ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
                       : <XCircle      className="h-4 w-4 text-red-500 shrink-0" />}
-                    <span className="flex-1 font-medium truncate">{s.step}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {(s.note || s.screenshot) && (
-                        expandedIdx === i
-                          ? <ChevronUp className="h-3.5 w-3.5" />
-                          : <ChevronDown className="h-3.5 w-3.5" />
-                      )}
-                    </span>
+                    <span className="flex-1 font-medium text-xs leading-tight">{s.step}</span>
+                    {(s.note || s.screenshot_file) && (
+                      expandedIdx === i
+                        ? <ChevronUp   className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    )}
                   </button>
 
-                  {/* Expanded content */}
                   {expandedIdx === i && (
                     <div className="px-3 py-2 space-y-2 border-t border-inherit">
                       {s.note && (
-                        <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all leading-relaxed">
+                        <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
                           {s.note}
                         </pre>
                       )}
-                      {s.screenshot && (
-                        <img
-                          src={`data:image/jpeg;base64,${s.screenshot}`}
-                          alt={`Screenshot: ${s.step}`}
-                          className="w-full rounded border"
-                          loading="lazy"
-                        />
+                      {s.screenshot_file && (
+                        <AuthImage filename={s.screenshot_file} alt={s.step} />
                       )}
                     </div>
                   )}
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        <Button type="button" variant="outline" className="w-full" onClick={onClose}>
-          Đóng
-        </Button>
+        {/* Footer — luôn hiển thị */}
+        <div className="px-4 pb-4 pt-3 border-t shrink-0">
+          <Button type="button" variant="outline" className="w-full" onClick={onClose}>
+            Đóng
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-2">
+      <span className="text-muted-foreground shrink-0 w-24 text-xs pt-0.5">{label}:</span>
+      <span className="text-xs flex-1 break-words">{children}</span>
+    </div>
   )
 }
 
@@ -269,17 +270,17 @@ export default function SyncRobot() {
   const { toast } = useToast()
 
   // form state — CHỈ user cập nhật
-  const [formData, setFormData]             = useState<FormData>(FORM_DEFAULT)
-  const [isDirty,  setIsDirty]              = useState(false)
-  const [hasServerPassword, setHasServerPw] = useState(false)
-  const [showPw,   setShowPw]               = useState(false)
+  const [formData, setFormData]   = useState<FormData>(FORM_DEFAULT)
+  const [isDirty,  setIsDirty]    = useState(false)
+  const [hasServerPw, setHasPw]   = useState(false)
+  const [showPw,   setShowPw]     = useState(false)
 
-  // robot status state — CHỈ polling cập nhật
-  const [status, setStatus]  = useState<RobotStatus>(STATUS_DEFAULT)
-  const [logs,   setLogs]    = useState<LogEntry[]>([])
+  // robot status — CHỈ polling cập nhật, không đụng formData
+  const [status, setStatus] = useState<RobotStatus>(STATUS_DEFAULT)
+  const [logs,   setLogs]   = useState<LogEntry[]>([])
 
   // UI state
-  const [configLoaded,  setConfigLoaded]  = useState(false)
+  const [configLoaded, setConfigLoaded] = useState(false)
   const [saving,   setSaving]   = useState(false)
   const [testing,  setTesting]  = useState(false)
   const [syncing,  setSyncing]  = useState(false)
@@ -287,12 +288,11 @@ export default function SyncRobot() {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // ── Load config — CHỈ 1 LẦN khi mount ─────────────────────────────────────
+  // ── Load config — CHỈ 1 LẦN ────────────────────────────────────────────────
   const loadConfig = useCallback(async () => {
     try {
       const cfg = await apiFetch("GET", "/bot/sync-robot/config")
-      const serverHasPw = !!(cfg.password)
-      setHasServerPw(serverHasPw)
+      setHasPw(!!(cfg.password))
       setFormData({
         site_url:   cfg.site_url   ?? "",
         login_url:  cfg.login_url  ?? "",
@@ -315,16 +315,12 @@ export default function SyncRobot() {
         apiFetch("GET", "/bot/sync-robot/logs"),
       ])
       setStatus({
-        enabled:    st.enabled     ?? false,
-        running:    st.running     ?? false,
-        updated_at: st.updated_at  ?? null,
-        next_run_at: st.next_run_at ?? null,
-        last_run:   st.last_run    ?? null,
+        enabled: st.enabled ?? false, running: st.running ?? false,
+        updated_at: st.updated_at ?? null, next_run_at: st.next_run_at ?? null,
+        last_run: st.last_run ?? null,
       })
       setLogs(Array.isArray(lg) ? [...lg].reverse() : [])
-    } catch {
-      // polling failure — im lặng
-    }
+    } catch { /* im lặng */ }
   }, [])
 
   useEffect(() => {
@@ -334,7 +330,6 @@ export default function SyncRobot() {
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [loadConfig, pollStatus])
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   function setField<K extends keyof FormData>(key: K, value: FormData[K]) {
     setFormData(prev => ({ ...prev, [key]: value }))
     setIsDirty(true)
@@ -351,7 +346,6 @@ export default function SyncRobot() {
     return body
   }
 
-  // ── Save ───────────────────────────────────────────────────────────────────
   async function handleSave(e?: React.FormEvent) {
     e?.preventDefault()
     setSaving(true)
@@ -359,7 +353,7 @@ export default function SyncRobot() {
       const saved = await apiFetch("PUT", "/bot/sync-robot/config", buildBody())
       setIsDirty(false)
       if (formData.password && formData.password !== "***") {
-        setHasServerPw(true)
+        setHasPw(true)
         setFormData(prev => ({ ...prev, password: "" }))
       }
       if (saved?.enabled !== undefined) setStatus(prev => ({ ...prev, enabled: saved.enabled }))
@@ -371,7 +365,6 @@ export default function SyncRobot() {
     }
   }
 
-  // ── Toggle bật/tắt ─────────────────────────────────────────────────────────
   async function handleToggle(enabled: boolean) {
     try {
       await apiFetch("PUT", "/bot/sync-robot/config", buildBody(enabled))
@@ -382,29 +375,26 @@ export default function SyncRobot() {
     }
   }
 
-  // ── Test login — gọi API, hiển thị kết quả chi tiết ───────────────────────
+  // ── Test login — chỉ mở modal, không toast lỗi thêm ───────────────────────
   async function handleTest() {
     setTesting(true)
-    toast({ title: "🔍 Đang kiểm tra...", description: "Playwright đang mở trình duyệt, chờ tối đa 2 phút" })
+    const { dismiss } = toast({
+      title: "🔍 Đang kiểm tra...",
+      description: "Playwright đang mở trình duyệt, tối đa 2 phút",
+    })
     try {
       const result: TestResult = await apiFetch("POST", "/bot/sync-robot/test-login", buildBody())
-      setTestResult(result)
-      // Toast nhanh theo kết quả
-      if (result.ok) {
-        toast({ title: "✅ Đăng nhập thành công!", description: result.message })
-      } else {
-        toast({ title: "❌ Đăng nhập thất bại", description: result.message, variant: "destructive" })
-      }
+      dismiss()
+      setTestResult(result)   // mở dialog — KHÔNG toast thêm
     } catch (e: any) {
+      dismiss()
       setTestResult({ ok: false, message: `Lỗi kết nối tới robot: ${e.message}`, steps: [] })
-      toast({ title: "❌ Lỗi kết nối", description: e.message, variant: "destructive" })
     } finally {
       setTesting(false)
       pollStatus()
     }
   }
 
-  // ── Sync now ───────────────────────────────────────────────────────────────
   async function handleSyncNow() {
     setSyncing(true)
     try {
@@ -442,12 +432,11 @@ export default function SyncRobot() {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
-      {/* Dialog chi tiết test-login */}
       {testResult && (
         <TestResultDialog result={testResult} onClose={() => setTestResult(null)} />
       )}
 
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-xl md:text-2xl font-bold tracking-tight">Robot Đồng Bộ</h1>
@@ -455,7 +444,7 @@ export default function SyncRobot() {
             Tự động tải XLSX từ website bán hàng và import đơn hàng theo chu kỳ
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           {isDirty && (
             <Badge variant="outline" className="text-yellow-600 border-yellow-400 gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-yellow-500" />
@@ -467,14 +456,12 @@ export default function SyncRobot() {
             className="gap-1.5"
           >
             <span className={`h-2 w-2 rounded-full ${
-              status.running  ? "bg-green-400 animate-pulse" :
-              status.enabled  ? "bg-yellow-400" : "bg-gray-400"
+              status.running ? "bg-green-400 animate-pulse" :
+              status.enabled ? "bg-yellow-400" : "bg-gray-400"
             }`} />
             {status.running ? "Đang chạy" : status.enabled ? "Chờ chu kỳ" : "Tắt"}
           </Badge>
-          <Button
-            type="button"
-            size="sm"
+          <Button type="button" size="sm"
             variant={status.enabled ? "destructive" : "default"}
             onClick={() => handleToggle(!status.enabled)}
           >
@@ -485,7 +472,7 @@ export default function SyncRobot() {
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
-        {/* ── Config form ─────────────────────────────────────────────────── */}
+        {/* Config form */}
         <Card className="lg:col-span-3">
           <CardHeader>
             <CardTitle className="text-base">Cấu hình</CardTitle>
@@ -497,93 +484,75 @@ export default function SyncRobot() {
 
                 <div className="sm:col-span-2 space-y-1.5">
                   <Label htmlFor="site_url">URL website</Label>
-                  <Input
-                    id="site_url"
-                    type="url"
-                    placeholder="https://shop.example.com"
+                  <Input id="site_url" placeholder="https://shop.example.com"
                     value={formData.site_url}
-                    onChange={(e) => setField("site_url", e.target.value)}
-                    autoComplete="off"
-                  />
+                    onChange={e => setField("site_url", e.target.value)}
+                    autoComplete="off" />
                 </div>
 
                 <div className="space-y-1.5">
                   <Label htmlFor="login_url">
-                    URL đăng nhập{" "}
-                    <span className="text-xs text-muted-foreground">(để trống = tự dò)</span>
+                    URL đăng nhập
+                    <span className="ml-1 text-xs text-muted-foreground">(để trống = tự dò)</span>
                   </Label>
-                  <Input
-                    id="login_url"
-                    type="url"
-                    placeholder="https://shop.example.com/login"
+                  <Input id="login_url" placeholder="https://shop.example.com/login"
                     value={formData.login_url}
-                    onChange={(e) => setField("login_url", e.target.value)}
-                    autoComplete="off"
-                  />
+                    onChange={e => setField("login_url", e.target.value)}
+                    autoComplete="off" />
                 </div>
 
                 <div className="space-y-1.5">
                   <Label htmlFor="orders_url">
-                    URL trang đơn hàng{" "}
-                    <span className="text-xs text-muted-foreground">(để trống = tự dò)</span>
+                    URL trang đơn hàng
+                    <span className="ml-1 text-xs text-muted-foreground">(để trống = tự dò)</span>
                   </Label>
-                  <Input
-                    id="orders_url"
-                    type="url"
-                    placeholder="https://shop.example.com/orders"
+                  <Input id="orders_url" placeholder="https://shop.example.com/orders"
                     value={formData.orders_url}
-                    onChange={(e) => setField("orders_url", e.target.value)}
-                    autoComplete="off"
-                  />
+                    onChange={e => setField("orders_url", e.target.value)}
+                    autoComplete="off" />
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="email">Email đăng nhập</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="admin@shop.example.com"
+                  {/* Label đổi: hỗ trợ email, username, số điện thoại */}
+                  <Label htmlFor="account">Tài khoản / Email</Label>
+                  <Input id="account"
+                    placeholder="username, email hoặc số điện thoại"
                     value={formData.email}
-                    onChange={(e) => setField("email", e.target.value)}
-                    autoComplete="email"
-                  />
+                    onChange={e => setField("email", e.target.value)}
+                    autoComplete="username" />
                 </div>
 
                 <div className="space-y-1.5">
                   <Label htmlFor="password">Mật khẩu</Label>
                   <div className="relative">
-                    <Input
-                      id="password"
+                    <Input id="password"
                       type={showPw ? "text" : "password"}
                       placeholder={
-                        hasServerPassword && !formData.password
-                          ? "Đã lưu mật khẩu — để trống để giữ nguyên"
+                        hasServerPw && !formData.password
+                          ? "Đã lưu — để trống để giữ nguyên"
                           : "Nhập mật khẩu mới"
                       }
                       value={formData.password}
-                      onChange={(e) => setField("password", e.target.value)}
+                      onChange={e => setField("password", e.target.value)}
                       className="pr-10"
                       autoComplete="new-password"
                     />
-                    <button
-                      type="button"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1"
+                    <button type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
                       onClick={() => setShowPw(v => !v)}
                     >
                       {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
-                  {hasServerPassword && !formData.password && (
-                    <p className="text-xs text-muted-foreground">Mật khẩu đã lưu — nhập mới để thay đổi.</p>
+                  {hasServerPw && !formData.password && (
+                    <p className="text-xs text-muted-foreground">Mật khẩu đã lưu — nhập mới để thay đổi</p>
                   )}
                 </div>
 
                 <div className="sm:col-span-2 space-y-1.5">
                   <Label>Chu kỳ đồng bộ</Label>
-                  <Select
-                    value={String(formData.interval_s)}
-                    onValueChange={(v) => setField("interval_s", Number(v))}
-                  >
+                  <Select value={String(formData.interval_s)}
+                    onValueChange={v => setField("interval_s", Number(v))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {INTERVALS.map(i => (
@@ -594,47 +563,39 @@ export default function SyncRobot() {
                 </div>
               </div>
 
-              {/* Buttons */}
+              {/* Action buttons */}
               <div className="flex flex-wrap gap-2 pt-2">
                 <Button type="submit" disabled={saving}>
                   <Save className="h-4 w-4 mr-2" />
                   {saving ? "Đang lưu..." : "Lưu cấu hình"}
                 </Button>
-
                 <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
                   <Plug className="h-4 w-4 mr-2" />
                   {testing ? "Đang kiểm tra..." : "Kiểm tra đăng nhập"}
                 </Button>
-
-                {/* Nút Mở Log — chỉ hiện khi có kết quả test */}
                 {testResult && (
-                  <Button type="button" variant="secondary" onClick={() => setTestResult(testResult)}>
+                  <Button type="button" variant="ghost" onClick={() => setTestResult({ ...testResult })}>
                     <FileText className="h-4 w-4 mr-2" />
                     Mở Log
                   </Button>
                 )}
-
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={handleSyncNow}
-                  disabled={syncing || status.running}
-                >
+                <Button type="button" variant="secondary"
+                  onClick={handleSyncNow} disabled={syncing || status.running}>
                   <Play className="h-4 w-4 mr-2" />
                   {syncing ? "Đã kích hoạt..." : "Đồng bộ ngay"}
                 </Button>
               </div>
 
-              {/* Tóm tắt kết quả test nhanh (không cần mở dialog) */}
+              {/* Kết quả test nhanh — bấm để mở dialog */}
               {testResult && !testing && (
-                <div
-                  className={`mt-2 rounded-md p-3 text-sm cursor-pointer hover:opacity-80 transition-opacity ${
+                <button
+                  type="button"
+                  className={`mt-1 w-full text-left rounded-md px-3 py-2.5 text-sm border transition-opacity hover:opacity-75 ${
                     testResult.ok
-                      ? "bg-green-50 text-green-800 dark:bg-green-950/40 dark:text-green-200 border border-green-200 dark:border-green-800"
-                      : "bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200 border border-red-200 dark:border-red-800"
+                      ? "bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200"
+                      : "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200"
                   }`}
                   onClick={() => setTestResult({ ...testResult })}
-                  title="Bấm để xem chi tiết"
                 >
                   <div className="flex items-center gap-2">
                     {testResult.ok
@@ -642,21 +603,21 @@ export default function SyncRobot() {
                       : <XCircle      className="h-4 w-4 shrink-0" />}
                     <span className="font-medium">{testResult.message}</span>
                   </div>
-                  {testResult.error_text && (
-                    <p className="mt-1 text-xs opacity-80 line-clamp-2">{testResult.error_text}</p>
+                  {testResult.reason && (
+                    <p className="mt-0.5 text-xs opacity-80 pl-6">{testResult.reason}</p>
                   )}
                   {(testResult.steps?.length ?? 0) > 0 && (
-                    <p className="mt-1 text-xs opacity-60">
-                      {testResult.steps!.length} bước — bấm để xem screenshot chi tiết
+                    <p className="mt-0.5 text-xs opacity-60 pl-6">
+                      {testResult.steps!.length} bước · bấm để xem screenshot chi tiết
                     </p>
                   )}
-                </div>
+                </button>
               )}
             </form>
           </CardContent>
         </Card>
 
-        {/* ── Status panel ─────────────────────────────────────────────────── */}
+        {/* Status panel */}
         <div className="lg:col-span-2 space-y-4">
           <Card>
             <CardHeader className="pb-3">
@@ -730,7 +691,7 @@ export default function SyncRobot() {
         </div>
       </div>
 
-      {/* ── Log table ──────────────────────────────────────────────────────── */}
+      {/* Log table */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Lịch sử đồng bộ</CardTitle>
@@ -749,7 +710,6 @@ export default function SyncRobot() {
                     <th className="text-left px-4 py-2 font-medium">Kết quả</th>
                     <th className="text-right px-4 py-2 font-medium">Mới</th>
                     <th className="text-right px-4 py-2 font-medium">Bỏ qua</th>
-                    <th className="text-right px-4 py-2 font-medium">Lỗi</th>
                     <th className="text-right px-4 py-2 font-medium">Thời gian</th>
                     <th className="text-left px-4 py-2 font-medium">Thông báo</th>
                   </tr>
@@ -766,21 +726,25 @@ export default function SyncRobot() {
                         </Badge>
                       </td>
                       <td className="px-4 py-2">
-                        <Badge
-                          variant={log.success ? "outline" : "destructive"}
-                          className="gap-1 text-xs"
-                        >
+                        <Badge variant={log.success ? "outline" : "destructive"} className="gap-1 text-xs">
                           {log.success
                             ? <CheckCircle2 className="h-3 w-3" />
                             : <XCircle      className="h-3 w-3" />}
                           {log.success ? "OK" : "Lỗi"}
                         </Badge>
                       </td>
-                      <td className="px-4 py-2 text-right font-medium text-green-600">{log.new_orders || "—"}</td>
-                      <td className="px-4 py-2 text-right text-muted-foreground">{log.skipped_orders || "—"}</td>
-                      <td className="px-4 py-2 text-right text-red-500">{log.errors || 0}</td>
-                      <td className="px-4 py-2 text-right text-muted-foreground text-xs">{fmtDuration(log.duration_s)}</td>
-                      <td className="px-4 py-2 text-xs text-muted-foreground max-w-xs truncate">{log.message}</td>
+                      <td className="px-4 py-2 text-right font-medium text-green-600">
+                        {log.type === "test_login" ? "—" : log.new_orders}
+                      </td>
+                      <td className="px-4 py-2 text-right text-muted-foreground">
+                        {log.type === "test_login" ? "—" : log.skipped_orders}
+                      </td>
+                      <td className="px-4 py-2 text-right text-muted-foreground text-xs">
+                        {fmtDuration(log.duration_s)}
+                      </td>
+                      <td className="px-4 py-2 text-xs text-muted-foreground max-w-xs truncate">
+                        {log.message}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

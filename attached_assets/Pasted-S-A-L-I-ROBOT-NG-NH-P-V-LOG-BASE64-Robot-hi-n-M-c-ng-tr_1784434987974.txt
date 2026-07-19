@@ -1,0 +1,134 @@
+SỬA LỖI ROBOT ĐĂNG NHẬP VÀ LOG BASE64
+
+Robot hiện đã:
+- Mở được đúng trang đăng nhập.
+- Tìm và bấm được nút “Đăng nhập”.
+- Nhưng sau đó bị báo “Đăng nhập thất bại”.
+- Thông báo lỗi đang chứa chuỗi ảnh Base64 rất dài bắt đầu bằng:
+  /9j/4AAQSk...
+  làm popup bị tràn và che mất nguyên nhân thật.
+
+YÊU CẦU SỬA:
+
+1. KHÔNG HIỂN THỊ BASE64 TRONG LOG
+
+Tìm toàn bộ nơi ghi log, trả lỗi hoặc hiển thị screenshot.
+
+Tuyệt đối không:
+- JSON.stringify toàn bộ object có trường screenshot/base64.
+- Ghi chuỗi ảnh Base64 vào database.
+- Trả chuỗi Base64 về frontend.
+- Hiển thị screenshot Base64 trong toast, modal hoặc popup lỗi.
+
+Khi ghi log, phải loại bỏ các trường:
+- screenshot
+- screenshotBase64
+- image
+- imageBase64
+- buffer
+- pageContent
+- html
+
+Nếu cần lưu ảnh debug:
+- Lưu thành file riêng trong thư mục logs/screenshots.
+- Log chỉ ghi đường dẫn hoặc tên file.
+- Tự động xóa ảnh debug cũ sau 24 giờ.
+
+Giới hạn mỗi nội dung log hiển thị tối đa 1.000 ký tự.
+Nếu vượt quá thì cắt bớt và thêm “…”.
+
+2. KIỂM TRA KẾT QUẢ SAU KHI BẤM ĐĂNG NHẬP
+
+Sau khi bấm nút Đăng nhập:
+- Chờ navigation hoặc network idle.
+- Chờ thêm tối đa 15 giây để trang xử lý.
+- Không kết luận thành công chỉ vì nút đã được bấm.
+- Không kết luận thất bại chỉ vì URL chưa đổi ngay.
+
+Xác định đăng nhập thành công bằng một hoặc nhiều dấu hiệu:
+- URL chuyển khỏi trang đăng nhập.
+- Xuất hiện dashboard/trang quản trị.
+- Xuất hiện nút đăng xuất, avatar hoặc menu tài khoản.
+- Cookie/session đăng nhập được tạo.
+- Không còn form đăng nhập.
+
+Xác định đăng nhập thất bại bằng:
+- Thông báo sai tài khoản hoặc mật khẩu.
+- Captcha/xác minh bảo mật.
+- Form đăng nhập vẫn còn sau thời gian chờ.
+- Website trả lỗi máy chủ hoặc chặn tự động hóa.
+
+3. TRẢ VỀ LỖI NGẮN GỌN, ĐÚNG NGUYÊN NHÂN
+
+Thông báo cho admin theo định dạng:
+
+Đăng nhập thất bại
+Bước lỗi: Xác minh sau đăng nhập
+URL hiện tại: ...
+Nguyên nhân: ...
+Gợi ý xử lý: ...
+
+Ví dụ:
+- Sai tài khoản hoặc mật khẩu.
+- Website yêu cầu captcha.
+- Website yêu cầu OTP/xác minh thiết bị.
+- Không tìm thấy trang quản trị sau đăng nhập.
+- Website chặn trình duyệt tự động.
+- Hết thời gian chờ phản hồi.
+
+Không đưa stack trace, HTML, ảnh Base64 hoặc object kỹ thuật vào popup.
+
+4. BỔ SUNG CHẾ ĐỘ KIỂM TRA ĐĂNG NHẬP
+
+Nút “Kiểm tra đăng nhập” phải trả về:
+- Mở trang: thành công/thất bại.
+- Điền tài khoản: thành công/thất bại.
+- Điền mật khẩu: thành công/thất bại.
+- Bấm đăng nhập: thành công/thất bại.
+- URL sau đăng nhập.
+- Kết quả cuối cùng.
+- Nguyên nhân cụ thể nếu thất bại.
+
+5. KIỂM TRA CẤU HÌNH TÀI KHOẢN
+
+Trường trên giao diện đang ghi “Email đăng nhập” nhưng dữ liệu có thể là username.
+
+Cho phép đăng nhập bằng:
+- Email.
+- Username.
+- Số điện thoại nếu website hỗ trợ.
+
+Không tự kiểm tra bắt buộc định dạng email nếu giá trị thực tế là username.
+
+6. SỬA GIAO DIỆN MOBILE
+
+- Popup lỗi phải vừa màn hình điện thoại.
+- Nội dung dài phải tự xuống dòng.
+- Không tràn ngang.
+- Có vùng cuộn riêng.
+- Nút đóng luôn hiển thị.
+- Không hiển thị đồng thời cả toast đỏ và modal cho cùng một lỗi.
+- Chỉ sử dụng một modal lỗi chi tiết.
+
+7. BẢO MẬT
+
+- Không ghi mật khẩu vào log.
+- Không trả mật khẩu về frontend.
+- Che thông tin đăng nhập trong log.
+- Không lưu ảnh chứa mật khẩu sau khi debug xong.
+
+8. SAU KHI SỬA PHẢI TEST THỰC TẾ
+
+Thực hiện test và báo rõ:
+- Robot có đăng nhập được không.
+- URL sau khi bấm đăng nhập.
+- Website có captcha/OTP hay không.
+- Selector nào được dùng cho username, password và nút đăng nhập.
+- Nội dung lỗi thực tế nếu đăng nhập không thành công.
+
+QUAN TRỌNG:
+- Không reset database.
+- Không xóa đơn hàng.
+- Không xóa cấu hình robot hiện tại.
+- Không làm lại toàn bộ website.
+- Chỉ sửa robot đăng nhập, xử lý log và giao diện thông báo lỗi.
