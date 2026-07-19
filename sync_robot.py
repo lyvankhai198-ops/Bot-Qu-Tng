@@ -682,6 +682,41 @@ async def login_to_website(page, config: dict, log_fn=None, source: str = "sync"
     return curr_url
 
 # ── Playwright helpers: navigate + download ────────────────────────────────────
+async def _try_click_order_menu_item(page) -> bool:
+    """
+    Tìm và click mục 'Đơn hàng' trong menu. Trả True nếu click được.
+    Không mở hamburger — chỉ click nếu đã có trong DOM và visible.
+    """
+    order_selectors = [
+        'a:has-text("Đơn hàng")',
+        'button:has-text("Đơn hàng")',
+        '[role="menuitem"]:has-text("Đơn hàng")',
+        '[role="link"]:has-text("Đơn hàng")',
+        'li:has-text("Đơn hàng")',
+        'span:has-text("Đơn hàng")',
+        'text=Đơn hàng',
+    ]
+    for sel in order_selectors:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0 and await el.is_visible():
+                await el.click()
+                logger.info(f"[SYNC] Clicked Đơn hàng via [{sel}]")
+                return True
+        except Exception:
+            pass
+    # Fallback get_by_text
+    try:
+        el = page.get_by_text("Đơn hàng", exact=True).first
+        if await el.count() > 0 and await el.is_visible():
+            await el.click()
+            logger.info("[SYNC] Clicked Đơn hàng via get_by_text(exact=True)")
+            return True
+    except Exception:
+        pass
+    return False
+
+
 async def _open_orders_page(page) -> None:
     """
     Điều hướng đến trang Đơn hàng bằng cách bấm menu — KHÔNG dùng goto('/orders').
@@ -689,97 +724,116 @@ async def _open_orders_page(page) -> None:
     """
     from playwright.async_api import TimeoutError as PwTimeout
 
-    # 1. Chờ dashboard tải xong
+    # ── 1. Chờ dashboard tải xong ─────────────────────────────────────────────
     logger.info("[SYNC] Waiting for dashboard initialization")
     await page.wait_for_load_state("domcontentloaded")
     try:
         await page.wait_for_load_state("networkidle", timeout=15_000)
     except PwTimeout:
         pass
-    # Chờ màn hình "Đang khởi tạo dashboard" biến mất (nếu có)
     try:
         await page.get_by_text("Đang khởi tạo dashboard").wait_for(state="hidden", timeout=30_000)
     except PwTimeout:
         pass
     logger.info("[SYNC] Dashboard ready")
 
-    # 2. Mở menu bên trái nếu chưa mở
-    logger.info("[SYNC] Opening navigation menu")
-    # Kiểm tra menu item đã hiển thị chưa — nếu rồi không cần click nút hamburger
-    order_item = page.get_by_text("Đơn hàng", exact=True).first
-    already_visible = False
-    try:
-        already_visible = await order_item.is_visible()
-    except Exception:
-        pass
+    # ── 2. Thử click "Đơn hàng" ngay (desktop mode — sidebar đã mở sẵn) ──────
+    logger.info("[SYNC] Checking if orders menu item is already visible (desktop mode)")
+    if await _try_click_order_menu_item(page):
+        logger.info("[SYNC] Orders menu item was visible without opening hamburger")
+    else:
+        # ── 3. Sidebar đang thu gọn (mobile) — cần mở hamburger trước ─────────
+        logger.info("[SYNC] Opening navigation menu (mobile/collapsed sidebar)")
 
-    if not already_visible:
-        # Tìm nút hamburger / toggle menu
-        menu_btn_selectors = [
+        # Danh sách selector hamburger theo thứ tự ưu tiên
+        hamburger_selectors = [
             'button[aria-label*="menu" i]',
-            '[data-testid*="menu" i]',
-            'button[class*="menu" i]',
-            'button[class*="hamburger" i]',
-            'button[class*="toggle" i]',
-            'button[class*="sidebar" i]',
             'button[aria-label*="sidebar" i]',
             'button[aria-controls*="sidebar" i]',
             'button[aria-controls*="menu" i]',
+            '[data-testid*="menu" i]',
+            '[data-testid*="hamburger" i]',
+            'button[class*="hamburger" i]',
+            'button[class*="sidebar" i]',
+            'button[class*="toggle" i]',
+            'button[class*="menu" i]',
             'header button:first-child',
             'nav button:first-child',
         ]
-        menu_btn = await _find_visible(page, menu_btn_selectors)
-        if menu_btn:
-            logger.info(f"[SYNC] Clicking hamburger menu [{menu_btn}]")
-            await page.locator(menu_btn).first.click()
-            await page.wait_for_timeout(800)
+
+        # Tìm hamburger qua selector cụ thể
+        hamburger_sel = await _find_visible(page, hamburger_selectors)
+
+        if hamburger_sel:
+            logger.info(f"[SYNC] Clicking hamburger [{hamburger_sel}]")
+            await page.locator(hamburger_sel).first.click()
+            await page.wait_for_timeout(500)
         else:
-            # Thử click nút có svg ở góc trái trên
+            # Fallback: button đầu tiên có <svg> hoặc <i>
+            clicked_hamburger = False
+            for fallback in [
+                "button:has(svg)",
+                "button:has(i)",
+                "button:has(.menu)",
+                "button:has(.hamburger)",
+            ]:
+                try:
+                    el = page.locator(fallback).first
+                    if await el.count() > 0 and await el.is_visible():
+                        logger.info(f"[SYNC] Clicking fallback hamburger [{fallback}]")
+                        await el.click()
+                        await page.wait_for_timeout(500)
+                        clicked_hamburger = True
+                        break
+                except Exception:
+                    pass
+
+            if not clicked_hamburger:
+                logger.warning("[SYNC] No hamburger button found — will try finding Đơn hàng anyway")
+
+        # ── 4. Chờ animation sidebar mở ──────────────────────────────────────
+        await page.wait_for_timeout(500)
+
+        # ── 5. Thử click "Đơn hàng" sau khi mở hamburger ─────────────────────
+        logger.info("[SYNC] Clicking menu item: Đơn hàng")
+        clicked = await _try_click_order_menu_item(page)
+
+        if not clicked:
+            # ── Debug: chụp ảnh + log text trong sidebar ──────────────────────
+            debug_path = str(SCREENSHOTS_DIR / "menu_open_failed.png")
+            SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
             try:
-                btn = page.locator("button").filter(has=page.locator("svg")).first
-                if await btn.count() > 0:
-                    logger.info("[SYNC] Clicking first svg button as menu toggle")
-                    await btn.click()
-                    await page.wait_for_timeout(800)
+                await page.screenshot(path=debug_path, full_page=False)
+                logger.error(f"[SYNC] Screenshot saved: {debug_path}")
+            except Exception as e:
+                logger.error(f"[SYNC] Screenshot failed: {e}")
+
+            # Log toàn bộ text có trong sidebar/nav để debug
+            sidebar_selectors = ["nav", "aside", "[role='navigation']",
+                                  "[class*='sidebar' i]", "[class*='menu' i]"]
+            for sel in sidebar_selectors:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        text = (await el.inner_text()).strip()[:500]
+                        logger.error(f"[SYNC] Sidebar text ({sel}): {text}")
+                        break
+                except Exception:
+                    pass
+
+            # Log toàn bộ text visible trên page để debug
+            try:
+                body_text = (await page.locator("body").inner_text()).strip()[:800]
+                logger.error(f"[SYNC] Page body text: {body_text}")
             except Exception:
                 pass
 
-    # 3. Bấm mục "Đơn hàng"
-    logger.info("[SYNC] Clicking menu item: Đơn hàng")
-    order_selectors = [
-        'text=Đơn hàng',
-        'a:has-text("Đơn hàng")',
-        'button:has-text("Đơn hàng")',
-        '[role="menuitem"]:has-text("Đơn hàng")',
-        '[role="link"]:has-text("Đơn hàng")',
-        'li:has-text("Đơn hàng")',
-        'span:has-text("Đơn hàng")',
-    ]
-    clicked = False
-    for sel in order_selectors:
-        try:
-            el = page.locator(sel).first
-            if await el.count() > 0 and await el.is_visible():
-                await el.click()
-                clicked = True
-                logger.info(f"[SYNC] Clicked [{sel}]")
-                break
-        except Exception:
-            pass
+            raise RuntimeError(
+                "Không tìm thấy mục 'Đơn hàng' trong menu sau khi đã mở hamburger. "
+                "Screenshot: menu_open_failed.png — kiểm tra log để xem text sidebar."
+            )
 
-    if not clicked:
-        # Fallback: get_by_text exact
-        try:
-            await page.get_by_text("Đơn hàng", exact=True).first.click()
-            clicked = True
-            logger.info("[SYNC] Clicked via get_by_text exact")
-        except Exception:
-            pass
-
-    if not clicked:
-        raise RuntimeError("Không tìm thấy mục 'Đơn hàng' trong menu — kiểm tra screenshot để debug")
-
-    # 4. Xác nhận bằng nội dung (không dựa vào URL — SPA)
+    # ── 6. Xác nhận đã vào trang Đơn hàng bằng nội dung (SPA — không check URL) ─
     logger.info("[SYNC] Verifying orders page by content")
     await page.wait_for_timeout(1_500)
     try:
@@ -806,17 +860,21 @@ async def _open_orders_page(page) -> None:
         except Exception:
             pass
 
-    # Fallback: wait for heading containing "đơn hàng"
     if not confirmed:
         try:
-            await page.get_by_text("Đơn hàng của bạn", exact=False).wait_for(state="visible", timeout=20_000)
+            await page.get_by_text("Đơn hàng của bạn", exact=False).wait_for(
+                state="visible", timeout=20_000
+            )
             confirmed = True
             logger.info("[SYNC] Orders page detected by heading: Đơn hàng của bạn")
         except PwTimeout:
             pass
 
     if not confirmed:
-        raise RuntimeError("Đã click 'Đơn hàng' nhưng không xác nhận được trang — không thấy tiêu đề hay bảng dự kiến")
+        raise RuntimeError(
+            "Đã click 'Đơn hàng' nhưng không xác nhận được trang — "
+            "không thấy tiêu đề hay bảng dự kiến"
+        )
 
 
 async def _download_orders_xlsx(page, download_dir: str) -> str:
