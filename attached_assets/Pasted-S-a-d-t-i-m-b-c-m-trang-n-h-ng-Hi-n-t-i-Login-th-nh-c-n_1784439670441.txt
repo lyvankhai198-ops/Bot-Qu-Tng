@@ -1,0 +1,150 @@
+Sửa dứt điểm bước mở trang Đơn hàng.
+
+Hiện tại:
+- Login thành công.
+- https://canboso.com/orders trả 404.
+- Không được dùng URL /orders nữa.
+- Trên website thật, mục "Đơn hàng" nằm trong sidebar sau khi bấm nút menu ☰.
+- Link Đơn hàng có thể là route SPA hoặc href khác, không được tự đoán.
+
+Yêu cầu sửa:
+
+1. Sau khi đăng nhập thành công
+
+Đợi dashboard tải xong:
+
+await page.waitForLoadState("domcontentloaded");
+await page.waitForTimeout(4000);
+
+Nếu còn spinner hoặc text:
+- Đang khởi tạo dashboard
+- Loading
+- Đang tải
+
+thì tiếp tục chờ tối đa 20 giây.
+
+2. Không tìm nút hamburger bằng selector chung như button:has(svg)
+
+Selector này dễ bấm nhầm.
+
+Hãy tìm nút menu ở góc trên bên trái bằng vị trí:
+
+const buttons = page.locator("button");
+Duyệt các button đang visible.
+Lấy boundingBox.
+Chỉ click button có:
+- x < 180
+- y < 250
+- width < 150
+- height < 150
+
+Ưu tiên button có:
+- aria-label chứa menu
+- title chứa menu
+- data-testid chứa menu
+- icon 3 gạch ngang
+- text rỗng
+
+3. Sau khi click nút menu
+
+Đợi sidebar thực sự xuất hiện.
+
+Kiểm tra bằng một trong các dấu hiệu:
+
+- text "Cấu hình bot"
+- text "Đổi mật khẩu"
+- text "Sản phẩm"
+- text "Chợ"
+- text "Đơn hàng"
+- phần tử drawer/sidebar có width lớn hơn 250px
+
+Không được chỉ click rồi lập tức tìm "Đơn hàng".
+
+4. Chụp screenshot sau khi mở sidebar:
+
+sidebar_after_click.png
+
+5. Ghi log toàn bộ các link trong trang:
+
+const links = await page.locator("a").evaluateAll(items =>
+  items.map(a => ({
+    text: (a.innerText || "").trim(),
+    href: a.href,
+    aria: a.getAttribute("aria-label")
+  }))
+);
+
+Ghi links vào log.
+
+6. Tìm mục Đơn hàng bằng DOM thật:
+
+const orderLink = page.locator("a").filter({
+  hasText: /^Đơn hàng$/i
+}).first();
+
+Nếu không thấy thì thử:
+
+page.getByText("Đơn hàng", { exact: true });
+
+Sau đó lấy phần tử cha gần nhất có thể click:
+
+locator("a, button, [role='link'], [role='button']")
+
+7. Không được tự tạo route /orders.
+
+Phải đọc href thật của mục "Đơn hàng":
+
+const href = await orderLink.getAttribute("href");
+
+Ghi log:
+
+Đã tìm thấy link Đơn hàng: <href>
+
+Sau đó click trực tiếp vào mục đó.
+
+Nếu click không chuyển trang thì dùng:
+
+await page.goto(new URL(href, page.url()).href);
+
+8. Nếu text có khoảng trắng hoặc ký tự ẩn
+
+Chuẩn hóa text trước khi so sánh:
+
+text
+.normalize("NFC")
+.replace(/\s+/g, " ")
+.trim()
+
+So sánh với "Đơn hàng".
+
+9. Website có thể dùng sidebar render trong portal
+
+Vì vậy phải tìm trên toàn bộ document, không giới hạn trong main content.
+
+10. Sau khi vào trang Đơn hàng
+
+Không tìm nút tải ngay lập tức.
+
+Đợi thấy một trong các nội dung:
+
+- "Đơn hàng của bạn"
+- "Tất cả đơn hàng"
+- "Tải xuống"
+- bảng có cột "MÃ ĐƠN"
+
+Sau đó mới bấm nút "Tải xuống".
+
+11. Nếu vẫn thất bại
+
+Thông báo lỗi phải bao gồm:
+- URL hiện tại
+- title trang
+- danh sách tất cả link text + href
+- danh sách button text + aria-label
+- screenshot trước click
+- screenshot sau click
+
+Không sửa phần login.
+Không reset database.
+Không xóa cấu hình đã lưu.
+Không thay đổi tính năng khác.
