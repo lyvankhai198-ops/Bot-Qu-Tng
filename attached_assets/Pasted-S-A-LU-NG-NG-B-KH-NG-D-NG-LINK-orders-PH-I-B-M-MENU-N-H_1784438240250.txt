@@ -1,0 +1,226 @@
+SỬA LUỒNG ĐỒNG BỘ: KHÔNG DÙNG LINK /orders, PHẢI BẤM MENU “ĐƠN HÀNG”
+
+Hiện tại robot đăng nhập thành công vào:
+
+https://canboso.com/
+
+Website này KHÔNG có URL đơn hàng cố định để nhập thủ công.
+Không được tự ghép:
+
+https://canboso.com/orders
+
+Sau khi đăng nhập, robot phải thao tác giống người dùng:
+
+1. Chờ dashboard tải xong hoàn toàn
+
+await page.waitForLoadState('domcontentloaded');
+await page.waitForLoadState('networkidle').catch(() => {});
+
+Chờ màn hình “Đang khởi tạo dashboard” biến mất:
+
+await page.getByText('Đang khởi tạo dashboard')
+  .waitFor({ state: 'hidden', timeout: 30000 })
+  .catch(() => {});
+
+2. Mở menu bên trái
+
+Tìm nút menu bằng nhiều cách:
+
+const menuButton = page.locator([
+  'button[aria-label*="menu" i]',
+  'button:has(svg)',
+  '[data-testid*="menu" i]',
+  'button'
+].join(',')).filter({
+  has: page.locator('svg')
+}).first();
+
+Ưu tiên tìm nút hamburger ở góc trái trên.
+
+Nếu menu chưa mở thì click nút hamburger.
+
+3. Bấm đúng mục “Đơn hàng”
+
+Ưu tiên selector theo chữ hiển thị:
+
+const orderMenu = page.getByText('Đơn hàng', {
+  exact: true
+});
+
+await orderMenu.waitFor({
+  state: 'visible',
+  timeout: 20000
+});
+
+await orderMenu.click();
+
+Có thể dùng thêm fallback:
+
+- text=Đơn hàng
+- a:has-text("Đơn hàng")
+- button:has-text("Đơn hàng")
+- [role="menuitem"]:has-text("Đơn hàng")
+
+4. Không được dựa vào URL sau khi click
+
+Trang web có thể là SPA nên URL vẫn giữ:
+
+https://canboso.com/
+
+Việc URL không đổi KHÔNG có nghĩa là chưa mở trang Đơn hàng.
+
+Xác nhận đã vào đúng trang bằng nội dung:
+
+- tiêu đề “Đơn hàng”
+- tiêu đề lớn “Đơn hàng của bạn”
+- nút “Tải xuống”
+- bảng có cột “MÃ ĐƠN”
+- bảng có cột “SẢN PHẨM”
+
+Ví dụ:
+
+await page.getByText('Đơn hàng của bạn', {
+  exact: false
+}).waitFor({
+  state: 'visible',
+  timeout: 20000
+});
+
+5. Sau khi vào trang Đơn hàng mới bấm “Tải xuống”
+
+const downloadButton = page.getByRole('button', {
+  name: /Tải xuống/i
+});
+
+Nếu không thấy bằng role thì dùng:
+
+page.getByText('Tải xuống', { exact: true })
+
+6. Xử lý tải file XLSX
+
+const downloadPromise = page.waitForEvent('download', {
+  timeout: 30000
+});
+
+await downloadButton.click();
+
+const download = await downloadPromise;
+
+const suggestedFilename = download.suggestedFilename();
+
+await download.saveAs(xlsxPath);
+
+Sau đó mới chạy import đơn hàng.
+
+7. Nếu nút “Tải xuống” mở menu lựa chọn
+
+Sau khi click, kiểm tra có hiện:
+
+- XLSX
+- Excel
+- Xuất Excel
+- Tải XLSX
+
+Nếu có thì click lựa chọn XLSX rồi mới chờ download.
+
+8. Dùng chung session đăng nhập
+
+Sau khi login thành công:
+
+- Không đóng page.
+- Không tạo page mới.
+- Không tạo browser context mới.
+- Không làm mất cookie đăng nhập.
+
+Phải dùng chính page đã đăng nhập để:
+
+mở menu
+→ bấm Đơn hàng
+→ bấm Tải xuống
+→ tải XLSX
+
+9. Thêm hàm riêng
+
+Tạo hàm:
+
+async function openOrdersPage(page) {
+  // chờ dashboard
+  // mở menu
+  // click Đơn hàng
+  // xác nhận bằng tiêu đề và bảng
+}
+
+Tạo hàm:
+
+async function downloadOrdersXlsx(page) {
+  // tìm nút Tải xuống
+  // tải file
+  // trả về đường dẫn file
+}
+
+Luồng chuẩn:
+
+const loginResult = await loginToSalesWebsite(page, config);
+
+if (!loginResult.ok) {
+  throw new Error('Đăng nhập thất bại');
+}
+
+await openOrdersPage(page);
+
+const xlsxPath = await downloadOrdersXlsx(page);
+
+await importOrdersFromXlsx(xlsxPath);
+
+10. Log đúng từng bước
+
+[SYNC] Login successful
+[SYNC] Waiting for dashboard initialization
+[SYNC] Dashboard ready
+[SYNC] Opening navigation menu
+[SYNC] Clicking menu item: Đơn hàng
+[SYNC] Orders page detected by heading: Đơn hàng của bạn
+[SYNC] Download button found
+[SYNC] XLSX downloaded successfully
+[SYNC] Starting order import
+
+11. Khi lỗi phải chụp ảnh đúng bước
+
+Nếu không thấy mục Đơn hàng:
+- chụp screenshot menu
+- lưu HTML
+- báo “Không tìm thấy mục Đơn hàng”
+
+Nếu không thấy nút Tải xuống:
+- chụp screenshot trang đơn hàng
+- báo “Đã mở trang Đơn hàng nhưng không tìm thấy nút Tải xuống”
+
+Không được báo lại là lỗi đăng nhập.
+
+12. Trạng thái hiển thị
+
+Nếu login thành công nhưng không mở được Đơn hàng:
+
+✅ Đăng nhập
+❌ Mở trang Đơn hàng
+⏭ Tải file XLSX
+⏭ Import đơn hàng
+
+Nếu mở được Đơn hàng nhưng tải lỗi:
+
+✅ Đăng nhập
+✅ Mở trang Đơn hàng
+❌ Tải file XLSX
+⏭ Import đơn hàng
+
+13. QUAN TRỌNG
+
+- Không sử dụng URL mặc định `/orders`.
+- Không yêu cầu admin nhập URL trang đơn hàng.
+- Website dùng giao diện SPA nên URL có thể không đổi.
+- Phải bấm menu “Đơn hàng” bằng giao diện.
+- Không reset database.
+- Không xóa cấu hình.
+- Không xóa đơn hàng cũ.
+- Không làm lại chức năng đăng nhập vì đăng nhập hiện đã đúng.
+- Chỉ sửa bước mở trang Đơn hàng và tải XLSX.

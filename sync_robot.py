@@ -648,18 +648,244 @@ async def login_to_website(page, config: dict, log_fn=None) -> str:
     _log(f"[login] ✅ Thành công — {reason}")
     return curr_url
 
-# ── Playwright: login + download ───────────────────────────────────────────────
+# ── Playwright helpers: navigate + download ────────────────────────────────────
+async def _open_orders_page(page) -> None:
+    """
+    Điều hướng đến trang Đơn hàng bằng cách bấm menu — KHÔNG dùng goto('/orders').
+    Raise RuntimeError nếu không vào được.
+    """
+    from playwright.async_api import TimeoutError as PwTimeout
+
+    # 1. Chờ dashboard tải xong
+    logger.info("[SYNC] Waiting for dashboard initialization")
+    await page.wait_for_load_state("domcontentloaded")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=15_000)
+    except PwTimeout:
+        pass
+    # Chờ màn hình "Đang khởi tạo dashboard" biến mất (nếu có)
+    try:
+        await page.get_by_text("Đang khởi tạo dashboard").wait_for(state="hidden", timeout=30_000)
+    except PwTimeout:
+        pass
+    logger.info("[SYNC] Dashboard ready")
+
+    # 2. Mở menu bên trái nếu chưa mở
+    logger.info("[SYNC] Opening navigation menu")
+    # Kiểm tra menu item đã hiển thị chưa — nếu rồi không cần click nút hamburger
+    order_item = page.get_by_text("Đơn hàng", exact=True).first
+    already_visible = False
+    try:
+        already_visible = await order_item.is_visible()
+    except Exception:
+        pass
+
+    if not already_visible:
+        # Tìm nút hamburger / toggle menu
+        menu_btn_selectors = [
+            'button[aria-label*="menu" i]',
+            '[data-testid*="menu" i]',
+            'button[class*="menu" i]',
+            'button[class*="hamburger" i]',
+            'button[class*="toggle" i]',
+            'button[class*="sidebar" i]',
+            'button[aria-label*="sidebar" i]',
+            'button[aria-controls*="sidebar" i]',
+            'button[aria-controls*="menu" i]',
+            'header button:first-child',
+            'nav button:first-child',
+        ]
+        menu_btn = await _find_visible(page, menu_btn_selectors)
+        if menu_btn:
+            logger.info(f"[SYNC] Clicking hamburger menu [{menu_btn}]")
+            await page.locator(menu_btn).first.click()
+            await page.wait_for_timeout(800)
+        else:
+            # Thử click nút có svg ở góc trái trên
+            try:
+                btn = page.locator("button").filter(has=page.locator("svg")).first
+                if await btn.count() > 0:
+                    logger.info("[SYNC] Clicking first svg button as menu toggle")
+                    await btn.click()
+                    await page.wait_for_timeout(800)
+            except Exception:
+                pass
+
+    # 3. Bấm mục "Đơn hàng"
+    logger.info("[SYNC] Clicking menu item: Đơn hàng")
+    order_selectors = [
+        'text=Đơn hàng',
+        'a:has-text("Đơn hàng")',
+        'button:has-text("Đơn hàng")',
+        '[role="menuitem"]:has-text("Đơn hàng")',
+        '[role="link"]:has-text("Đơn hàng")',
+        'li:has-text("Đơn hàng")',
+        'span:has-text("Đơn hàng")',
+    ]
+    clicked = False
+    for sel in order_selectors:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0 and await el.is_visible():
+                await el.click()
+                clicked = True
+                logger.info(f"[SYNC] Clicked [{sel}]")
+                break
+        except Exception:
+            pass
+
+    if not clicked:
+        # Fallback: get_by_text exact
+        try:
+            await page.get_by_text("Đơn hàng", exact=True).first.click()
+            clicked = True
+            logger.info("[SYNC] Clicked via get_by_text exact")
+        except Exception:
+            pass
+
+    if not clicked:
+        raise RuntimeError("Không tìm thấy mục 'Đơn hàng' trong menu — kiểm tra screenshot để debug")
+
+    # 4. Xác nhận bằng nội dung (không dựa vào URL — SPA)
+    logger.info("[SYNC] Verifying orders page by content")
+    await page.wait_for_timeout(1_500)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=10_000)
+    except PwTimeout:
+        pass
+
+    confirmed = False
+    content_signals = [
+        'text=Đơn hàng của bạn',
+        'th:has-text("MÃ ĐƠN")',
+        'th:has-text("SẢN PHẨM")',
+        'h1:has-text("Đơn hàng")',
+        'h2:has-text("Đơn hàng")',
+        '[class*="order" i] table',
+    ]
+    for sig in content_signals:
+        try:
+            el = page.locator(sig).first
+            if await el.count() > 0 and await el.is_visible():
+                logger.info(f"[SYNC] Orders page detected by: {sig}")
+                confirmed = True
+                break
+        except Exception:
+            pass
+
+    # Fallback: wait for heading containing "đơn hàng"
+    if not confirmed:
+        try:
+            await page.get_by_text("Đơn hàng của bạn", exact=False).wait_for(state="visible", timeout=20_000)
+            confirmed = True
+            logger.info("[SYNC] Orders page detected by heading: Đơn hàng của bạn")
+        except PwTimeout:
+            pass
+
+    if not confirmed:
+        raise RuntimeError("Đã click 'Đơn hàng' nhưng không xác nhận được trang — không thấy tiêu đề hay bảng dự kiến")
+
+
+async def _download_orders_xlsx(page, download_dir: str) -> str:
+    """
+    Tìm nút 'Tải xuống' và tải file XLSX.
+    Xử lý cả trường hợp nút mở dropdown chứa XLSX.
+    Trả đường dẫn file đã lưu. Raise RuntimeError nếu thất bại.
+    """
+    from playwright.async_api import TimeoutError as PwTimeout
+
+    logger.info("[SYNC] Download button found")
+
+    # Selectors theo thứ tự ưu tiên
+    btn_selectors = [
+        'button:has-text("Tải xuống")',
+        'button:has-text("Tải Xuống")',
+        'a:has-text("Tải xuống")',
+        'button[aria-label*="download" i]',
+        'button:has-text("Download")',
+        'button:has-text("Export")',
+        'button:has-text("Xuất")',
+        'a[download]',
+    ]
+
+    dl_btn = await _find_visible(page, btn_selectors)
+    if not dl_btn:
+        raise RuntimeError("Đã mở trang Đơn hàng nhưng không tìm thấy nút Tải xuống")
+
+    logger.info(f"[SYNC] Clicking download button [{dl_btn}]")
+
+    # Thử tải trực tiếp trước
+    out_path = os.path.join(download_dir, "orders.xlsx")
+    try:
+        async with page.expect_download(timeout=5_000) as dl_info:
+            await page.locator(dl_btn).first.click()
+        dl = await dl_info.value
+        await dl.save_as(out_path)
+        size = os.path.getsize(out_path)
+        if size >= 100:
+            logger.info(f"[SYNC] XLSX downloaded successfully → {out_path} ({size} bytes)")
+            return out_path
+    except PwTimeout:
+        # Nút mở dropdown thay vì tải trực tiếp
+        pass
+    except Exception as ex:
+        logger.warning(f"[SYNC] Direct download failed: {ex} — checking for dropdown")
+
+    # Kiểm tra có dropdown XLSX/Excel không
+    await page.wait_for_timeout(500)
+    xlsx_option_selectors = [
+        'text=XLSX',
+        'text=Excel',
+        'text=Xuất Excel',
+        'text=Tải XLSX',
+        '*:has-text("XLSX")',
+        '*:has-text("Excel")',
+        'a:has-text("XLSX")',
+        '[role="menuitem"]:has-text("XLSX")',
+        '[role="option"]:has-text("XLSX")',
+    ]
+    xlsx_opt = await _find_visible(page, xlsx_option_selectors)
+    if xlsx_opt:
+        logger.info(f"[SYNC] Dropdown detected, clicking XLSX option [{xlsx_opt}]")
+        try:
+            async with page.expect_download(timeout=30_000) as dl_info:
+                await page.locator(xlsx_opt).first.click()
+            dl = await dl_info.value
+            await dl.save_as(out_path)
+            size = os.path.getsize(out_path)
+            if size >= 100:
+                logger.info(f"[SYNC] XLSX downloaded successfully via dropdown → {out_path} ({size} bytes)")
+                return out_path
+            raise RuntimeError(f"File tải xuống quá nhỏ ({size} bytes)")
+        except Exception as ex:
+            raise RuntimeError(f"Tải XLSX qua dropdown thất bại: {ex}")
+
+    # Thử lại lần 2 với timeout dài hơn (nút click lần trước có thể cần kích hoạt thêm)
+    try:
+        async with page.expect_download(timeout=30_000) as dl_info:
+            await page.locator(dl_btn).first.click()
+        dl = await dl_info.value
+        await dl.save_as(out_path)
+        size = os.path.getsize(out_path)
+        if size >= 100:
+            logger.info(f"[SYNC] XLSX downloaded on retry → {out_path} ({size} bytes)")
+            return out_path
+        raise RuntimeError(f"File tải xuống quá nhỏ ({size} bytes)")
+    except Exception as ex:
+        raise RuntimeError(f"Không tải được file XLSX: {ex}")
+
+
+# ── Playwright: login + navigate + download ────────────────────────────────────
 async def do_playwright_sync(config: dict) -> dict:
     """
-    Đăng nhập và tải XLSX. Trả dict với các flag login_ok, download_ok.
-    Không raise — lỗi được trả qua field 'error'.
+    Đăng nhập → bấm menu Đơn hàng → tải XLSX.
+    Trả dict với các flag login_ok, download_ok. Không raise.
     """
     from playwright.async_api import async_playwright
 
-    site_url   = config.get("site_url", "").rstrip("/")
-    orders_url = config.get("orders_url", "").rstrip("/") or f"{site_url}/orders"
-    account    = config.get("email", "")
-    password   = config.get("password", "")
+    site_url = config.get("site_url", "").rstrip("/")
+    account  = config.get("email", "")
+    password = config.get("password", "")
 
     if not site_url or not account or not password:
         missing = []
@@ -670,7 +896,6 @@ async def do_playwright_sync(config: dict) -> dict:
                 "error": f"Chưa cấu hình: {', '.join(missing)}"}
 
     download_dir = tempfile.mkdtemp(prefix="sync_robot_")
-    out_path: str | None = None
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
@@ -678,7 +903,6 @@ async def do_playwright_sync(config: dict) -> dict:
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
                   "--window-size=1280,800"],
         )
-        # Context mới cho mỗi lần sync — không tái sử dụng cookie cũ
         ctx = await browser.new_context(
             accept_downloads=True,
             viewport={"width": 1280, "height": 800},
@@ -688,46 +912,35 @@ async def do_playwright_sync(config: dict) -> dict:
 
         try:
             # ── Bước 1: Đăng nhập (dùng hàm chung với test-login) ──────────
+            logger.info("[SYNC] Login successful" if False else "[SYNC] Bắt đầu đăng nhập...")
             try:
                 await login_to_website(page, config)
+                logger.info("[SYNC] Login successful")
             except Exception as ex:
                 return {"login_ok": False, "download_ok": False, "path": None, "dir": download_dir,
                         "error": str(ex)}
 
-            # ── Bước 2: Mở trang đơn hàng ──────────────────────────────────
-            logger.info(f"[robot] Mở trang đơn hàng → {orders_url}")
-            await page.goto(orders_url, timeout=30_000)
+            # ── Bước 2: Mở trang Đơn hàng qua menu (KHÔNG goto /orders) ────
             try:
-                await page.wait_for_load_state("networkidle", timeout=20_000)
-            except Exception:
-                pass
-
-            # ── Bước 3: Bấm nút tải xuống ──────────────────────────────────
-            logger.info("[robot] Tìm nút Tải xuống...")
-            dl_selectors = (
-                'button:has-text("Tải xuống"), button:has-text("Tải Xuống"), '
-                'button:has-text("Download"), button:has-text("Export"), '
-                'button:has-text("Xuất"), a[download], '
-                'a:has-text("Tải xuống"), button[aria-label*="download" i]'
-            )
-            try:
-                async with page.expect_download(timeout=60_000) as dl_info:
-                    await page.click(dl_selectors)
-                dl = await dl_info.value
-                out_path = os.path.join(download_dir, "orders.xlsx")
-                await dl.save_as(out_path)
-                size = os.path.getsize(out_path)
-                logger.info(f"[robot] Tải xong → {out_path} ({size} bytes)")
-                if size < 100:
-                    return {"login_ok": True, "download_ok": False, "path": None, "dir": download_dir,
-                            "error": f"File tải xuống quá nhỏ ({size} bytes)"}
+                await _open_orders_page(page)
             except Exception as ex:
+                logger.error(f"[SYNC] Lỗi mở trang đơn hàng: {ex}")
                 return {"login_ok": True, "download_ok": False, "path": None, "dir": download_dir,
-                        "error": f"Không tải được file XLSX: {ex}"}
+                        "error": str(ex)}
+
+            # ── Bước 3: Tải XLSX ────────────────────────────────────────────
+            logger.info("[SYNC] Starting order download")
+            try:
+                out_path = await _download_orders_xlsx(page, download_dir)
+            except Exception as ex:
+                logger.error(f"[SYNC] Lỗi tải XLSX: {ex}")
+                return {"login_ok": True, "download_ok": False, "path": None, "dir": download_dir,
+                        "error": str(ex)}
 
         finally:
             await browser.close()
 
+    logger.info("[SYNC] Starting order import")
     return {"login_ok": True, "download_ok": True, "path": out_path, "dir": download_dir, "error": ""}
 
 # ── One sync cycle ─────────────────────────────────────────────────────────────
