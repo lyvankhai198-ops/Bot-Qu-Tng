@@ -5,3 +5,4 @@
 - [Channel membership cache](channel-membership-cache.md) — user_channel_memberships.json, 6h TTL, chatId required for getChatMember; callback_check_join always calls fresh API
 - [VPS Auto-Deploy Workflow](vps-deploy.md) — sau mỗi lần cập nhật PHẢI tự push GitHub + deploy VPS qua scripts/deploy.sh
 - [OCR image import](ocr-image-import.md) — OpenAI vision integration for order creation from screenshots; uses gpt-5.6-luna, endpoint POST /bot/orders/ocr-extract, body limit 20mb
+- [Admin panel fetch pattern](admin-panel-fetch-pattern.md) — pages dùng raw fetch() + authHeader(), KHÔNG dùng apiClient.get/put/post
