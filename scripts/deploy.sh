@@ -50,7 +50,40 @@ sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" "
     sed -i '/Environment=NODE_ENV=production/a Environment=DATA_DIR=${DEPLOY_PATH}/data' /etc/systemd/system/bot-api.service
     systemctl daemon-reload
   fi
-  systemctl restart bot-api gift-bot
-  systemctl is-active bot-api gift-bot
+  # ── Cài openpyxl nếu chưa có (cho sync robot) ──────────────────────────────
+  pip3 install -q openpyxl 2>/dev/null || true
+
+  # ── Cài Playwright + Chromium nếu chưa có ───────────────────────────────────
+  pip3 install -q playwright 2>/dev/null || true
+  python3 -m playwright install chromium --with-deps 2>/dev/null || true
+
+  # ── Tạo systemd service cho sync-robot nếu chưa có ──────────────────────────
+  if [ ! -f /etc/systemd/system/sync-robot.service ]; then
+    cat > /etc/systemd/system/sync-robot.service << 'UNIT'
+[Unit]
+Description=Bot Sync Robot
+After=network.target bot-api.service
+Requires=bot-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/Bot-Qu-Tng
+Environment=DATA_DIR=/root/Bot-Qu-Tng/data
+Environment=API_BASE_URL=http://localhost:8080
+ExecStart=/usr/bin/python3 /root/Bot-Qu-Tng/sync_robot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload
+    systemctl enable sync-robot
+  fi
+
+  systemctl restart bot-api gift-bot sync-robot
+  systemctl is-active bot-api gift-bot sync-robot
 "
 echo "✅ Deploy complete → http://${VPS_HOST:-103.180.138.203}/admin-panel/"

@@ -1897,6 +1897,109 @@ router.delete("/bot/gift-shop-channels/:id", requireAuth, (req: any, res: any) =
   res.json({ ok: true });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SYNC ROBOT API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── GET /bot/sync-robot/config ────────────────────────────────────────────────
+router.get("/bot/sync-robot/config", requireAuth, (_req: any, res: any) => {
+  const cfg: any = readJson("sync_robot_config", {}) ?? {};
+  // Never return plaintext password
+  res.json({
+    enabled:    cfg.enabled    ?? false,
+    site_url:   cfg.site_url   ?? "",
+    login_url:  cfg.login_url  ?? "",
+    orders_url: cfg.orders_url ?? "",
+    email:      cfg.email      ?? "",
+    password:   cfg.password   ? "***" : "",
+    interval_s: cfg.interval_s ?? 300,
+  });
+});
+
+// ── PUT /bot/sync-robot/config ────────────────────────────────────────────────
+router.put("/bot/sync-robot/config", requireAuth, (req: any, res: any) => {
+  const body = req.body ?? {};
+  const current: any = readJson("sync_robot_config", {}) ?? {};
+  const updated: any = {
+    ...current,
+    enabled:    body.enabled    !== undefined ? !!body.enabled : (current.enabled ?? false),
+    site_url:   body.site_url   !== undefined ? String(body.site_url).trim()   : (current.site_url   ?? ""),
+    login_url:  body.login_url  !== undefined ? String(body.login_url).trim()  : (current.login_url  ?? ""),
+    orders_url: body.orders_url !== undefined ? String(body.orders_url).trim() : (current.orders_url ?? ""),
+    email:      body.email      !== undefined ? String(body.email).trim()      : (current.email      ?? ""),
+    interval_s: body.interval_s !== undefined ? Number(body.interval_s)        : (current.interval_s ?? 300),
+  };
+  // Only update password if provided and not the masked sentinel "***"
+  if (body.password && body.password !== "***") {
+    updated.password = String(body.password);
+  }
+  writeJson("sync_robot_config", updated);
+  addLog("SYNC_ROBOT_CONFIG", `enabled=${updated.enabled} interval=${updated.interval_s}s`, "web-admin");
+  res.json({ ok: true, message: "Đã lưu cấu hình robot" });
+});
+
+// ── GET /bot/sync-robot/status ────────────────────────────────────────────────
+router.get("/bot/sync-robot/status", requireAuth, (_req: any, res: any) => {
+  res.json(readJson("sync_robot_status", { running: false, last_run: null, next_run_at: null }) ?? {});
+});
+
+// ── GET /bot/sync-robot/logs ──────────────────────────────────────────────────
+router.get("/bot/sync-robot/logs", requireAuth, (req: any, res: any) => {
+  const logs: any[] = readJson("sync_robot_logs", []) ?? [];
+  const limit = Math.min(Number(req.query.limit ?? 200), 500);
+  res.json(logs.slice(-limit));
+});
+
+// ── POST /bot/sync-robot/trigger ──────────────────────────────────────────────
+// Signal the robot to run a sync immediately
+router.post("/bot/sync-robot/trigger", requireAuth, (_req: any, res: any) => {
+  writeJson("sync_robot_trigger", { trigger: true, triggered_at: now(), triggered_by: "web-admin" });
+  addLog("SYNC_ROBOT_TRIGGER", "manual trigger via admin panel", "web-admin");
+  res.json({ ok: true, message: "Đã kích hoạt đồng bộ ngay" });
+});
+
+// ── POST /bot/sync-robot/test-login ──────────────────────────────────────────
+// Write a special trigger for robot to do a login-only test; respond immediately
+// (actual test is async in the robot process; result visible in status/logs)
+router.post("/bot/sync-robot/test-login", requireAuth, (req: any, res: any) => {
+  const body = req.body ?? {};
+  // Persist any config updates from the form before testing
+  const current: any = readJson("sync_robot_config", {}) ?? {};
+  const cfg: any = {
+    ...current,
+    site_url:   body.site_url   ?? current.site_url   ?? "",
+    login_url:  body.login_url  ?? current.login_url  ?? "",
+    orders_url: body.orders_url ?? current.orders_url ?? "",
+    email:      body.email      ?? current.email      ?? "",
+  };
+  if (body.password && body.password !== "***") {
+    cfg.password = body.password;
+  }
+  writeJson("sync_robot_config", cfg);
+  writeJson("sync_robot_trigger", { trigger: true, test_only: true, triggered_at: now(), triggered_by: "web-admin" });
+  addLog("SYNC_ROBOT_TEST_LOGIN", `email=${cfg.email}`, "web-admin");
+  res.json({ ok: true, message: "Đã gửi lệnh kiểm tra đăng nhập — xem kết quả trong log" });
+});
+
+// ── GET /bot/sync-robot/existing-sets ────────────────────────────────────────
+// Called by the robot process to get current order IDs + item emails for dedup
+router.get("/bot/sync-robot/existing-sets", requireAuth, (_req: any, res: any) => {
+  const orders:     any = readJson("orders", {})      ?? {};
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  const orderIds = Object.keys(orders);
+  const itemEmails: string[] = [];
+  for (const items of Object.values(orderItems) as any[][]) {
+    if (!Array.isArray(items)) continue;
+    for (const it of items) {
+      const orig = (it.original_account || it.email || "").toLowerCase();
+      const curr = (it.current_account  || "").toLowerCase();
+      if (orig) itemEmails.push(orig);
+      if (curr && curr !== orig) itemEmails.push(curr);
+    }
+  }
+  res.json({ orderIds, itemEmails: [...new Set(itemEmails)] });
+});
+
 // ── GET /bot/backup ──────────────────────────────────────────────────────────
 router.get("/bot/backup", requireAuth, (_req: any, res: any) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
