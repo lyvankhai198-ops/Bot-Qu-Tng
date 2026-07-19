@@ -1,0 +1,307 @@
+SỬA LỖI: KIỂM TRA ĐĂNG NHẬP THÀNH CÔNG NHƯNG BẤM “ĐỒNG BỘ” LẠI BÁO ĐĂNG NHẬP THẤT BẠI
+
+Hiện trạng:
+
+1. Nút “Kiểm tra đăng nhập” đã hoạt động đúng:
+- Đăng nhập thành công
+- Redirect đến: https://canboso.com/
+- Tiêu đề: Quản lý bán hàng Telegram
+
+2. Nhưng khi bấm “Đồng bộ”, hệ thống lại báo:
+“Không đăng nhập được: Đăng nhập thất bại — trình duyệt vẫn ở trang login”
+
+Các bước:
+- Đăng nhập: lỗi
+- Tải file XLSX: lỗi
+- Import đơn hàng: lỗi
+
+Như vậy luồng Test Login và luồng Sync đang dùng 2 logic khác nhau.
+
+YÊU CẦU SỬA:
+
+1. DÙNG CHUNG MỘT HÀM ĐĂNG NHẬP
+
+Tạo một hàm duy nhất, ví dụ:
+
+async function loginToSalesWebsite(page, config)
+
+Cả hai chức năng sau bắt buộc dùng chung hàm này:
+- Kiểm tra đăng nhập
+- Đồng bộ đơn hàng
+
+Không được để:
+- test-login dùng selector mới
+- sync dùng selector cũ
+- test-login nhận URL thành công
+- sync chỉ kiểm tra URL `/login`
+- mỗi chức năng khởi tạo trình duyệt khác logic nhau
+
+2. CHUẨN HÓA URL
+
+Trước khi mở trang login:
+
+const baseUrl = config.websiteUrl.replace(/\/+$/, '');
+
+const loginUrl = baseUrl.endsWith('/login')
+  ? baseUrl
+  : `${baseUrl}/login`;
+
+Ví dụ:
+
+websiteUrl:
+https://canboso.com/
+
+loginUrl phải là:
+https://canboso.com/login
+
+Không được tạo:
+- https://canboso.com//login
+- https://canboso.com/login/login
+
+3. DÙNG ĐÚNG SELECTOR ĐÃ TEST THÀNH CÔNG
+
+Tài khoản:
+
+input[name="username"]
+
+Mật khẩu:
+
+input[type="password"]
+
+Nút đăng nhập:
+
+button:has-text("Đăng nhập")
+
+Luồng Sync phải dùng đúng các selector này.
+
+Không được tiếp tục dùng selector cũ như:
+- input[type="email"]
+- input[name="email"]
+- #email
+- button[type="submit"] nếu không đúng
+- selector khác với luồng test-login
+
+4. CHỜ REDIRECT ĐÚNG CÁCH
+
+Khi bấm đăng nhập, không kiểm tra URL ngay lập tức.
+
+Dùng:
+
+await Promise.all([
+  page.waitForLoadState('networkidle').catch(() => {}),
+  page.locator('button:has-text("Đăng nhập")').click()
+]);
+
+Sau đó chờ thêm tín hiệu đăng nhập:
+
+await page.waitForFunction(() => {
+  return !window.location.pathname.startsWith('/login');
+}, { timeout: 15000 });
+
+Hoặc kiểm tra phần tử chỉ có sau đăng nhập.
+
+Không được bấm xong rồi ngay lập tức chạy:
+
+if (page.url().includes('/login')) {
+  throw new Error(...)
+}
+
+vì trang có thể chưa redirect xong.
+
+5. KIỂM TRA ĐĂNG NHẬP BẰNG NHIỀU TÍN HIỆU
+
+Đăng nhập thành công nếu có ít nhất một tín hiệu đáng tin cậy:
+
+- URL không còn ở `/login`
+- Tiêu đề chứa “Quản lý bán hàng Telegram”
+- Có menu hoặc nội dung dashboard
+- Có nút đăng xuất
+- Có trang quản lý đơn hàng
+
+Ví dụ:
+
+const currentUrl = page.url();
+const title = await page.title();
+
+const stillOnLogin =
+  new URL(currentUrl).pathname.startsWith('/login');
+
+const titleSuccess =
+  title.includes('Quản lý bán hàng Telegram');
+
+const loggedIn = !stillOnLogin || titleSuccess;
+
+if (!loggedIn) {
+  throw new Error('Đăng nhập thất bại');
+}
+
+Lưu ý:
+https://canboso.com/
+là URL đăng nhập thành công.
+
+6. KHÔNG TÁI SỬ DỤNG PAGE LỖI
+
+Khi bắt đầu mỗi lần đồng bộ:
+
+- Tạo browser context mới
+- Tạo page mới
+- Không dùng lại page từ lần Sync trước
+- Không dùng page đang đứng ở `/login`
+- Không dùng cookie/session lỗi cũ
+
+Ví dụ:
+
+const context = await browser.newContext();
+const page = await context.newPage();
+
+try {
+  await loginToSalesWebsite(page, config);
+  await downloadXlsx(page, config);
+  await importOrders(...);
+} finally {
+  await context.close();
+}
+
+7. KIỂM TRA CẤU HÌNH ĐƯỢC LƯU THẬT
+
+Luồng Sync phải đọc đúng cấu hình đã lưu trong database:
+
+- URL website
+- Tài khoản
+- Mật khẩu
+- URL trang đơn hàng hoặc URL tải XLSX
+- Chu kỳ đồng bộ
+- Trạng thái bật robot
+
+Không được lấy dữ liệu cũ từ:
+- biến môi trường cũ
+- cache frontend
+- giá trị mặc định
+- record cấu hình trước khi cập nhật
+
+Sau khi bấm Lưu, Sync phải đọc lại cấu hình mới nhất từ database.
+
+8. TRÁNH LỖI DO TÊN TRƯỜNG KHÁC NHAU
+
+Kiểm tra xem Test Login đang dùng:
+
+config.username
+config.password
+config.websiteUrl
+
+nhưng Sync lại dùng:
+
+config.email
+config.loginPassword
+config.loginUrl
+
+Nếu có, hãy chuẩn hóa về một cấu trúc duy nhất:
+
+{
+  websiteUrl,
+  username,
+  password,
+  ordersUrl
+}
+
+Cả test-login và sync dùng đúng cùng các field này.
+
+9. GHI LOG RÕ RÀNG CHO SYNC
+
+Log Sync phải hiển thị:
+
+- URL login thực tế
+- Selector tài khoản tìm thấy hay không
+- Selector mật khẩu tìm thấy hay không
+- Nút đăng nhập tìm thấy hay không
+- URL trước khi click
+- URL sau khi click
+- Tiêu đề sau khi click
+- Thời gian chờ redirect
+- Lý do xác định thành công hoặc thất bại
+
+Không ghi mật khẩu vào log.
+
+10. CHỈ CHẠY BƯỚC SAU KHI ĐĂNG NHẬP THÀNH CÔNG
+
+Luồng đúng:
+
+Đăng nhập
+→ Xác nhận đăng nhập thành công
+→ Mở trang đơn hàng
+→ Tải XLSX
+→ Kiểm tra file tồn tại
+→ Import đơn hàng
+
+Nếu bước đăng nhập lỗi thì dừng.
+
+Nếu đăng nhập thành công mà tải file lỗi thì phải ghi:
+
+- Đăng nhập: thành công
+- Tải XLSX: lỗi
+- Import đơn hàng: chưa chạy
+
+Không được đánh dấu cả 3 bước là cùng một lỗi đăng nhập.
+
+11. SỬA TRẠNG THÁI TỪNG BƯỚC
+
+Mỗi bước có trạng thái riêng:
+
+{
+  login: {
+    status: "success" | "error" | "pending" | "skipped",
+    message: ""
+  },
+  download: {
+    status: "success" | "error" | "pending" | "skipped",
+    message: ""
+  },
+  import: {
+    status: "success" | "error" | "pending" | "skipped",
+    message: ""
+  }
+}
+
+Nếu đăng nhập lỗi:
+
+- Đăng nhập: lỗi
+- Tải XLSX: bỏ qua
+- Import đơn hàng: bỏ qua
+
+Không hiển thị dấu X đỏ cho các bước chưa được chạy.
+
+12. TEST BẮT BUỘC SAU KHI SỬA
+
+Test 1:
+Bấm “Kiểm tra đăng nhập”
+
+Kết quả:
+- Thành công
+- URL: https://canboso.com/
+- Trang: Quản lý bán hàng Telegram
+
+Test 2:
+Ngay sau đó bấm “Đồng bộ”
+
+Kết quả bước đăng nhập phải là:
+- Đăng nhập: thành công
+
+Không được báo:
+“trình duyệt vẫn ở trang login”
+
+Sau đó tiếp tục kiểm tra bước tải XLSX.
+
+Test 3:
+Chạy Đồng bộ trực tiếp mà không bấm Test trước.
+
+Kết quả đăng nhập vẫn phải thành công.
+
+QUAN TRỌNG:
+
+- Không reset database.
+- Không xóa đơn hàng.
+- Không xóa lịch sử đồng bộ.
+- Không thay đổi tài khoản hoặc mật khẩu.
+- Không sửa robot đăng nhập đang hoạt động đúng.
+- Chỉ hợp nhất logic đăng nhập của Test Login và Sync.
+- Sau khi sửa phải tự chạy thử luồng Sync hoàn chỉnh.
