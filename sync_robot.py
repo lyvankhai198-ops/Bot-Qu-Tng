@@ -669,13 +669,13 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
     await page.locator(pw_sel).first.fill(password)
     _step(f"Điền Mật khẩu [{pw_sel}]", True, "Đã nhập mật khẩu (ẩn)")
 
-    # 5. Click nút đăng nhập — bắt network log từ đây
+    # 5. Click nút đăng nhập
     submit_sel = await _find_visible(page, _SUBMIT_SELECTORS)
     if not submit_sel:
         _step("Tìm nút Đăng nhập", False, f"Không tìm thấy sau {len(_SUBMIT_SELECTORS)} selectors")
         raise RuntimeError(f"Không tìm thấy nút Đăng nhập trên {page.url}")
 
-    # Capture mọi request/response để debug nếu cần
+    # Bắt network log để debug
     network_log: list[str] = []
     def _on_req(req):
         network_log.append(f"→ {req.method} {req.url[:180]}")
@@ -688,27 +688,7 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
     await page.locator(submit_sel).first.click()
     _step(f"Bấm nút Đăng nhập [{submit_sel}]", True, f"URL trước: {url_before}")
 
-    # 6. Chờ TẤT CẢ network requests hoàn tất — KHÔNG dùng URL change làm tín hiệu
-    # networkidle: không còn request nào trong 500ms
-    try:
-        await page.wait_for_load_state("networkidle", timeout=25_000)
-        _log("[login] networkidle đạt được")
-    except PwTimeout:
-        _log("[login] networkidle timeout sau 25s — tiếp tục kiểm tra")
-    # Thêm 1.5s để SPA xử lý response và lưu session vào storage
-    await asyncio.sleep(1.5)
-
-    page.remove_listener("request",  _on_req)
-    page.remove_listener("response", _on_resp)
-
-    curr_url   = page.url
-    curr_title = await page.title()
-    _log(f"[login] URL sau khi network hoàn tất: {curr_url}")
-    _log(f"[login] Tiêu đề: {curr_title}")
-    _log(f"[login] Network log ({len(network_log)} entries): " +
-         " | ".join(network_log[-20:]) if network_log else "[trống]")
-
-    # ── Helper thu thập diagnostics đầy đủ ──────────────────────────────────
+    # ── Helper diagnostics ───────────────────────────────────────────────────
     async def _collect_diag(reason_prefix: str) -> str:
         _dc: list = []
         _dls: dict = {}
@@ -751,119 +731,71 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
             f"Network log  :\n  {_net}"
         )
 
-    # 7. Kiểm tra ngay nếu bị redirect về /login sau khi network hoàn tất
-    #    Không dựa vào URL — kiểm tra cụ thể
-    if any(kw in curr_url.lower() for kw in _LOGIN_URL_KEYWORDS):
-        diag = await _collect_diag(
-            "Website yêu cầu đăng nhập lại ngay sau khi click — "
-            "session không được lưu hoặc server từ chối phiên."
+    # 6. Chờ networkidle sau submit
+    try:
+        await page.wait_for_load_state("networkidle", timeout=20_000)
+        _log("[login] networkidle đạt được")
+    except PwTimeout:
+        _log("[login] networkidle timeout 20s — tiếp tục")
+
+    page.remove_listener("request",  _on_req)
+    page.remove_listener("response", _on_resp)
+    _log(f"[login] Network ({len(network_log)} entries): " + " | ".join(network_log[-12:]))
+
+    # 7. Nếu vẫn ở /login ngay sau networkidle → thất bại rõ ràng
+    if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
+        diag = await _collect_diag("Server từ chối đăng nhập — URL vẫn ở /login sau submit.")
+        _step("Đăng nhập thất bại", False, diag[:600])
+        raise RuntimeError(f"Đăng nhập thất bại — URL vẫn /login\n{diag}")
+
+    _log(f"[login] URL sau submit: {page.url}")
+
+    # 8. Chờ spinner "Đang khởi tạo dashboard"
+    #    Spinner này CHỈ xuất hiện khi đã xác thực thành công với server.
+    #    Đây là tín hiệu đáng tin cậy nhất — không thể có ở trang /login.
+    _log("[login] Chờ spinner 'Đang khởi tạo dashboard'...")
+    spinner_appeared = False
+    try:
+        await page.get_by_text("Đang khởi tạo dashboard").first.wait_for(
+            state="visible", timeout=20_000
         )
-        _step("Xác minh sau đăng nhập", False, diag[:600])
-        raise RuntimeError(f"Bị redirect về /login sau đăng nhập\n{diag}")
+        spinner_appeared = True
+        _log("[login] ✅ Spinner xuất hiện — đã xác thực thành công với server")
+        _step("Dashboard đang khởi tạo", True, "Spinner xác nhận phiên đăng nhập thật")
+    except PwTimeout:
+        _log("[login] Spinner không xuất hiện trong 20s")
 
-    # 8. Chờ tối đa 15s để session thực sự được ghi vào cookie/localStorage
-    _log("[login] Chờ session được lưu (tối đa 15s)...")
-    _NOISE_COOKIES = {"app_locale", "login_lang"}
-    _TOKEN_HINTS   = ("token", "access", "auth", "jwt", "session", "user")
-    session_confirmed = False
+    if spinner_appeared:
+        # Chờ spinner biến mất = dashboard load xong
+        try:
+            await page.get_by_text("Đang khởi tạo dashboard").first.wait_for(
+                state="hidden", timeout=60_000
+            )
+            _log("[login] Spinner biến mất — dashboard sẵn sàng")
+        except PwTimeout:
+            _log("[login] Spinner chưa biến mất sau 60s — tiếp tục")
 
-    for waited in range(1, 16):
-        # Kiểm tra URL trước — nếu quay về /login → raise ngay, không chờ thêm
+        # Kiểm tra sau spinner: nếu quay về /login → server reject session
         if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
             diag = await _collect_diag(
-                f"Session bị mất sau {waited}s — website redirect về /login. "
-                "Nguyên nhân: server không chấp nhận session hoặc session hết hạn tức thì."
+                "Session bị server từ chối sau khi dashboard khởi tạo — "
+                "redirect về /login dù spinner đã hiện."
             )
-            _step("Mất session sau đăng nhập", False, diag[:600])
-            raise RuntimeError(f"Session bị mất sau đăng nhập ({waited}s)\n{diag}")
+            _step("Session bị reject sau init", False, diag[:600])
+            raise RuntimeError(f"Session bị reject sau dashboard init\n{diag}")
+    else:
+        # Spinner không xuất hiện — có thể dashboard đã cached hoặc load nhanh
+        if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
+            diag = await _collect_diag(
+                "Spinner không xuất hiện và URL về /login — đăng nhập thất bại."
+            )
+            _step("Không có spinner + URL về /login", False, diag[:600])
+            raise RuntimeError(f"Đăng nhập thất bại — không spinner, URL /login\n{diag}")
+        _log(f"[login] Không có spinner nhưng URL hợp lệ: {page.url} — OK")
 
-        # Kiểm tra cookie xác thực
-        _auth_c: list = []
-        try:
-            _ck = await page.context.cookies()
-            _auth_c = [c["name"] for c in _ck if c["name"] not in _NOISE_COOKIES]
-        except Exception:
-            pass
-        # Kiểm tra localStorage token
-        _auth_ls: list = []
-        try:
-            _ls = await page.evaluate("""() => {
-                const k = [];
-                for (let i = 0; i < localStorage.length; i++) k.push(localStorage.key(i));
-                return k;
-            }""")
-            _auth_ls = [k for k in (_ls or []) if any(h in k.lower() for h in _TOKEN_HINTS)]
-        except Exception:
-            pass
-        # Kiểm tra nút đăng xuất/avatar
-        _logout = await _find_visible(page, _LOGOUT_SELECTORS) is not None
-
-        if _auth_c or _auth_ls or _logout:
-            _log(f"[login] Tín hiệu session sau {waited}s — "
-                 f"cookies={_auth_c}, ls={_auth_ls}, logout={_logout}")
-            # ── Stability check: chờ 4s để xác nhận session không flash rồi mất ──
-            _log("[login] Chờ 4s kiểm tra session ổn định (không phải flash tạm thời)...")
-            await asyncio.sleep(4)
-
-            # Nếu URL đã quay về /login → đây chỉ là dashboard flash
-            if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
-                diag = await _collect_diag(
-                    f"Dashboard chỉ xuất hiện tạm thời — website redirect về /login sau {waited + 4}s. "
-                    "Session không được server chấp nhận hoặc bị invalidate ngay lập tức."
-                )
-                _step("Session không ổn định (dashboard flash)", False, diag[:600])
-                raise RuntimeError(
-                    f"Session giả — dashboard flash rồi mất sau {waited + 4}s\n{diag}"
-                )
-
-            # Kiểm tra lại signal sau stability wait (phải vẫn còn)
-            _stable_c: list = []
-            _stable_ls: list = []
-            _stable_logout = False
-            try:
-                _ck2 = await page.context.cookies()
-                _stable_c = [c["name"] for c in _ck2 if c["name"] not in _NOISE_COOKIES]
-            except Exception:
-                pass
-            try:
-                _ls2 = await page.evaluate("""() => {
-                    const k = [];
-                    for (let i = 0; i < localStorage.length; i++) k.push(localStorage.key(i));
-                    return k;
-                }""")
-                _stable_ls = [k for k in (_ls2 or []) if any(h in k.lower() for h in _TOKEN_HINTS)]
-            except Exception:
-                pass
-            _stable_logout = await _find_visible(page, _LOGOUT_SELECTORS) is not None
-
-            if _stable_c or _stable_ls or _stable_logout:
-                _log(f"[login] ✅ Session ổn định — "
-                     f"cookies={_stable_c}, ls={_stable_ls}, logout={_stable_logout}")
-                session_confirmed = True
-                break
-            else:
-                _log("[login] Tín hiệu session biến mất sau stability wait — tiếp tục chờ")
-
-        _log(f"[login] Giây {waited}: chưa có session ổn định — URL={page.url}")
-        await asyncio.sleep(1)
-
-    if not session_confirmed:
-        diag = await _collect_diag(
-            "Không tìm thấy cookie/token xác thực ổn định sau 15s — "
-            "website có thể lưu session theo cách khác hoặc đăng nhập thất bại."
-        )
-        _step("Xác minh session", False, diag[:600])
-        raise RuntimeError(f"Đăng nhập thất bại — không có session sau 15s\n{diag}")
-
-    # 9. Xác nhận cuối: URL không phải /login + signal còn tồn tại
-    logged_in, reason = await _is_logged_in(page)
-    final_url = page.url
-    if not logged_in:
-        diag = await _collect_diag(f"_is_logged_in thất bại — {reason}")
-        _step("Xác minh sau đăng nhập", False, diag[:600])
-        raise RuntimeError(f"Xác minh cuối thất bại\n{diag}")
-
-    _step(f"✅ Đăng nhập thành công → {final_url}", True, f"Tiêu đề: {curr_title}\n{reason}")
+    final_url   = page.url
+    final_title = await page.title()
+    _step(f"✅ Đăng nhập thành công → {final_url}", True, f"Tiêu đề: {final_title}")
     return final_url
 
 # ── Playwright helpers: navigate + download ────────────────────────────────────
@@ -1081,29 +1013,10 @@ async def _open_orders_page(page) -> None:
         )
     logger.info(f"[SYNC] _open_orders_page: guard OK — URL={_guard_url}")
 
-    # ── 1. Chờ dashboard tải hoàn toàn ────────────────────────────────────────
-    logger.info("[SYNC] Waiting for dashboard initialization")
+    # ── 1. Dashboard đã sẵn sàng (spinner đã chờ trong loginAndWaitReady) ──────
+    # Chỉ chờ domcontentloaded phòng trường hợp SPA vẫn đang navigate
     await page.wait_for_load_state("domcontentloaded")
-
-    # Chờ spinner "Đang khởi tạo dashboard" xuất hiện (tối đa 8s)
-    # rồi chờ nó biến mất (tối đa 30s) → dashboard thực sự sẵn sàng
-    # Không dùng hard wait cố định vì nó cho phép SPA kịp redirect về /login
-    try:
-        await page.get_by_text("Đang khởi tạo dashboard").first.wait_for(
-            state="visible", timeout=8_000
-        )
-        logger.info("[SYNC] Spinner 'Đang khởi tạo dashboard' appeared")
-        await page.get_by_text("Đang khởi tạo dashboard").first.wait_for(
-            state="hidden", timeout=30_000
-        )
-        logger.info("[SYNC] Spinner gone — dashboard ready")
-    except PwTimeout:
-        logger.info("[SYNC] Spinner not detected in time or already gone")
-    except Exception:
-        pass
-
-    # Ghi log trạng thái sau khi dashboard init (KHÔNG raise — tiếp tục điều hướng)
-    logger.info(f"[SYNC] Post-init URL: {page.url} | Title: {await page.title()}")
+    logger.info(f"[SYNC] _open_orders_page ready — URL: {page.url} | Title: {await page.title()}")
 
     # ── 2–5. Retry vòng lặp: hamburger → sidebar → Đơn hàng ──────────────────
     navigated = False
