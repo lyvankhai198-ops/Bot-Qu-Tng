@@ -51770,6 +51770,25 @@ router2.post("/bot/sync-robot/test-login", requireAuth, (req, res) => {
     res.json(result);
   });
 });
+router2.get("/bot/sync-robot/screenshot/:filename", requireAuth, (req, res) => {
+  const { filename } = req.params;
+  if (!/^[\w\-\.]+\.jpg$/i.test(filename)) {
+    return res.status(400).json({ error: "Invalid filename" });
+  }
+  const screenshotsDir = path.join(DATA_DIR, "screenshots");
+  const filePath = path.join(screenshotsDir, filename);
+  if (!filePath.startsWith(screenshotsDir)) {
+    return res.status(400).json({ error: "Invalid path" });
+  }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "Screenshot not found" });
+  }
+  res.setHeader("Content-Type", "image/jpeg");
+  res.setHeader("Cache-Control", "private, max-age=86400");
+  const stream = fs.createReadStream(filePath);
+  stream.on("error", () => res.status(500).end());
+  stream.pipe(res);
+});
 router2.get("/bot/sync-robot/existing-sets", requireAuth, (_req, res) => {
   const orders = readJson("orders", {}) ?? {};
   const orderItems = readJson("order_items", {}) ?? {};
