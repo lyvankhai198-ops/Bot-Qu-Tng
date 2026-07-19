@@ -1,0 +1,238 @@
+SỬA LỖI HIỂN THỊ “ĐĂNG NHẬP THẤT BẠI” DÙ ROBOT ĐÃ ĐĂNG NHẬP THÀNH CÔNG
+
+Kết quả test thực tế hiện tại:
+
+- Mở trang login: thành công
+- Điền tài khoản: thành công
+- Điền mật khẩu: thành công
+- Bấm đăng nhập: thành công
+- URL đã chuyển từ:
+  https://canboso.com/login
+  sang:
+  https://canboso.com/
+- Tiêu đề trang sau đăng nhập:
+  Quản lý bán hàng Telegram
+- Backend trả:
+  ok: true
+  message: "Đăng nhập thành công!"
+
+Nhưng giao diện vẫn mở modal màu đỏ với tiêu đề:
+“Đăng nhập thất bại”
+
+Đây là lỗi xử lý trạng thái ở frontend hoặc API wrapper, không phải lỗi đăng nhập.
+
+YÊU CẦU SỬA:
+
+1. XÁC ĐỊNH KẾT QUẢ THEO FIELD `ok`
+
+Frontend phải kiểm tra chính xác:
+
+if (response.ok === true) {
+  hiển thị đăng nhập thành công
+} else {
+  hiển thị đăng nhập thất bại
+}
+
+Không được xác định thất bại dựa vào:
+- Có nội dung log.
+- Có stderr.
+- Có chuỗi dài.
+- HTTP response chứa nhiều bước test.
+- Có trường error_text nhưng giá trị rỗng.
+- Tiêu đề mặc định của modal.
+- Promise bị xử lý sai ở wrapper.
+
+Nếu response có:
+{
+  "ok": true
+}
+
+thì bắt buộc coi là thành công.
+
+2. KIỂM TRA ĐÚNG CẤU TRÚC RESPONSE
+
+Có thể API hiện trả dữ liệu theo một trong các dạng:
+
+{
+  "ok": true,
+  "message": "..."
+}
+
+hoặc:
+
+{
+  "success": true,
+  "data": {
+    "ok": true
+  }
+}
+
+hoặc Axios:
+
+response.data.ok
+
+Hãy kiểm tra response thực tế và lấy đúng field.
+
+Ví dụ:
+
+const result = response?.data ?? response;
+
+const isSuccess =
+  result?.ok === true ||
+  result?.success === true ||
+  result?.data?.ok === true;
+
+Không được dùng:
+
+if (!response) ...
+if (response.error) ...
+if (logs.length > 0) ...
+if (response.status !== 200) ...
+
+mà bỏ qua field `ok`.
+
+3. TÁCH LOG VÀ KẾT QUẢ
+
+API nên trả cấu trúc rõ ràng:
+
+{
+  "ok": true,
+  "status": "success",
+  "message": "Đăng nhập thành công",
+  "url": "https://canboso.com/",
+  "title": "Quản lý bán hàng Telegram",
+  "duration_s": 6.09,
+  "steps": [...],
+  "logs": [...]
+}
+
+Không gộp toàn bộ log thành một chuỗi rồi dùng chuỗi đó làm `error`.
+
+Trường lỗi chỉ tồn tại khi thất bại:
+
+{
+  "ok": false,
+  "status": "error",
+  "message": "Đăng nhập thất bại",
+  "reason": "...",
+  "suggestion": "..."
+}
+
+4. SỬA MODAL KẾT QUẢ
+
+Khi thành công, hiển thị modal hoặc toast màu xanh:
+
+✅ Đăng nhập thành công
+
+URL:
+https://canboso.com/
+
+Trang:
+Quản lý bán hàng Telegram
+
+Thời gian kiểm tra:
+6.09 giây
+
+Không hiển thị:
+- JSON thô.
+- Toàn bộ log.
+- screenshot_file.
+- Danh sách bước kỹ thuật trong popup chính.
+
+Có thể thêm nút:
+“Xem chi tiết kỹ thuật”
+
+Chỉ khi bấm nút này mới mở phần:
+- Các bước test.
+- Selector.
+- Tên file ảnh debug.
+- Thời gian từng bước.
+
+5. KHI THẤT BẠI
+
+Chỉ mở modal đỏ khi:
+
+result.ok === false
+
+Nội dung gồm:
+- Bước thất bại.
+- URL hiện tại.
+- Nguyên nhân.
+- Gợi ý xử lý.
+
+Không được mở modal đỏ nếu:
+- error_text là chuỗi rỗng.
+- reason là chuỗi rỗng.
+- suggestion là chuỗi rỗng.
+- Robot đã chuyển khỏi `/login`.
+- Backend trả `ok: true`.
+
+6. KIỂM TRA API WRAPPER
+
+Kiểm tra xem code có đang làm kiểu này không:
+
+try {
+  const result = await testLogin();
+  throw new Error(JSON.stringify(result));
+} catch (error) {
+  showErrorModal(error.message);
+}
+
+Hoặc:
+
+toast.error(JSON.stringify(result));
+
+Hoặc:
+
+setLoginError(fullLogs);
+
+Nếu có thì sửa lại.
+
+Đúng phải là:
+
+const result = await testLogin();
+
+if (result.ok) {
+  setLoginSuccess(result);
+  setLoginError(null);
+} else {
+  setLoginError(result);
+  setLoginSuccess(null);
+}
+
+7. KHÔNG HIỂN THỊ TOÀN BỘ JSON
+
+Hiện modal đang hiển thị:
+- ok
+- message
+- url
+- title
+- steps
+- screenshot_file
+- duration_s
+
+Không được render JSON.stringify(response) trực tiếp vào nội dung modal.
+
+Tạo component hiển thị từng trường cần thiết.
+
+8. TEST SAU KHI SỬA
+
+Test lại nút kiểm tra đăng nhập.
+
+Kết quả bắt buộc:
+
+- Tiêu đề: “Đăng nhập thành công”
+- Màu xanh
+- Không còn modal “Đăng nhập thất bại”
+- URL hiển thị: https://canboso.com/
+- Tiêu đề trang: Quản lý bán hàng Telegram
+- Không hiện JSON thô
+- Không hiện screenshot_file
+- Không hiện đồng thời toast đỏ và modal
+
+QUAN TRỌNG:
+- Không sửa logic robot đang chạy đúng.
+- Không đổi tài khoản hoặc mật khẩu hiện tại.
+- Không reset database.
+- Không xóa cấu hình robot.
+- Chỉ sửa cách backend chuẩn hóa response và frontend phân loại thành công/thất bại.

@@ -51731,10 +51731,21 @@ router2.post("/bot/sync-robot/test-login", requireAuth, (req, res) => {
     let result = { ok: false, message: "Kh\xF4ng nh\u1EADn \u0111\u01B0\u1EE3c ph\u1EA3n h\u1ED3i t\u1EEB robot", steps: [] };
     const raw = (stdout || "").trim();
     if (raw) {
-      try {
-        result = JSON.parse(raw);
-      } catch {
-        result = { ok: false, message: raw, steps: [] };
+      const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+      let parsed = false;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (line.startsWith("{") || line.startsWith("[")) {
+          try {
+            result = JSON.parse(line);
+            parsed = true;
+            break;
+          } catch {
+          }
+        }
+      }
+      if (!parsed) {
+        result = { ok: false, message: `Robot kh\xF4ng tr\u1EA3 JSON h\u1EE3p l\u1EC7: ${raw.slice(0, 300)}`, steps: [] };
       }
     } else if (err) {
       const msg = (stderr || err.message || "").slice(0, 500);

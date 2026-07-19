@@ -131,77 +131,85 @@ const STATUS_DEFAULT: RobotStatus = {
 
 // ── TestResultDialog ──────────────────────────────────────────────────────────
 function TestResultDialog({ result, onClose }: { result: TestResult; onClose: () => void }) {
+  const isSuccess = result.ok === true          // tường minh: chỉ true mới là thành công
+  const [showSteps, setShowSteps] = useState(!isSuccess)  // thất bại: auto-hiện steps
   const [expandedIdx, setExpandedIdx] = useState<number | null>(
-    // Auto-expand bước lỗi cuối
-    result.steps ? result.steps.findLastIndex(s => !s.ok) : null
+    !isSuccess && result.steps ? result.steps.findLastIndex(s => !s.ok) : null
   )
   const steps = result.steps ?? []
 
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="w-full max-w-xl mx-auto max-h-[85dvh] flex flex-col gap-0 p-0">
-        {/* Header — luôn hiển thị, không cuộn */}
+        {/* Header cố định */}
         <DialogHeader className="px-4 pt-4 pb-3 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
-            {result.ok
+            {isSuccess
               ? <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />
               : <XCircle      className="h-5 w-5 text-red-500 shrink-0" />}
-            {result.ok ? "Đăng nhập thành công" : "Đăng nhập thất bại"}
+            {isSuccess ? "Đăng nhập thành công" : "Đăng nhập thất bại"}
           </DialogTitle>
         </DialogHeader>
 
-        {/* Nội dung có cuộn */}
+        {/* Nội dung cuộn */}
         <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">
 
-          {/* Tóm tắt */}
+          {/* Banner tóm tắt */}
           <div className={`rounded-lg p-3 text-sm leading-relaxed ${
-            result.ok
+            isSuccess
               ? "bg-green-50 text-green-800 dark:bg-green-950/40 dark:text-green-200"
               : "bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200"
           }`}>
             <p className="font-medium">{result.message}</p>
           </div>
 
-          {/* Metadata */}
-          {(result.url || result.title || result.reason || result.error_text || result.suggestion) && (
-            <div className="space-y-1.5 text-sm">
-              {result.url && (
-                <Row label="URL">
-                  <span className="font-mono text-xs break-all">{result.url}</span>
-                </Row>
-              )}
-              {result.title && <Row label="Tiêu đề">{result.title}</Row>}
-              {result.error_text && (
-                <Row label="Lỗi trang">
-                  <span className="text-red-600 dark:text-red-400 whitespace-pre-line break-words">
-                    {result.error_text}
-                  </span>
-                </Row>
-              )}
-              {result.reason && (
-                <Row label="Nguyên nhân">
-                  <span className="font-medium">{result.reason}</span>
-                </Row>
-              )}
-              {result.suggestion && (
-                <div className="flex gap-2 items-start rounded-md bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 p-2 text-xs text-yellow-800 dark:text-yellow-200">
-                  <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" />
-                  <span>{result.suggestion}</span>
-                </div>
-              )}
-              {result.duration_s !== undefined && (
-                <Row label="Thời gian">{fmtDuration(result.duration_s)}</Row>
-              )}
-            </div>
-          )}
+          {/* Metadata chính — luôn hiển thị */}
+          <div className="space-y-1.5">
+            {result.url && (
+              <Row label="URL">
+                <span className="font-mono text-xs break-all">{result.url}</span>
+              </Row>
+            )}
+            {result.title && <Row label="Trang">{result.title}</Row>}
+            {result.duration_s !== undefined && (
+              <Row label="Thời gian kiểm tra">{result.duration_s} giây</Row>
+            )}
+            {/* Chỉ hiển thị khi thất bại */}
+            {!isSuccess && result.error_text && (
+              <Row label="Lỗi trang">
+                <span className="text-red-600 dark:text-red-400 whitespace-pre-line break-words">
+                  {result.error_text}
+                </span>
+              </Row>
+            )}
+            {!isSuccess && result.reason && (
+              <Row label="Nguyên nhân">
+                <span className="font-medium">{result.reason}</span>
+              </Row>
+            )}
+            {!isSuccess && result.suggestion && (
+              <div className="flex gap-2 items-start rounded-md bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 p-2 text-xs text-yellow-800 dark:text-yellow-200">
+                <Lightbulb className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>{result.suggestion}</span>
+              </div>
+            )}
+          </div>
 
-          {/* Steps */}
+          {/* Steps — ẩn sau nút "Xem chi tiết kỹ thuật" */}
           {steps.length > 0 && (
             <div className="space-y-1.5">
-              <h4 className="text-sm font-semibold text-muted-foreground">
-                Chi tiết {steps.length} bước
-              </h4>
-              {steps.map((s, i) => (
+              <button
+                type="button"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => setShowSteps(v => !v)}
+              >
+                {showSteps
+                  ? <ChevronUp   className="h-3.5 w-3.5" />
+                  : <ChevronDown className="h-3.5 w-3.5" />}
+                {showSteps ? "Ẩn chi tiết kỹ thuật" : `Xem chi tiết kỹ thuật (${steps.length} bước)`}
+              </button>
+
+              {showSteps && steps.map((s, i) => (
                 <div key={i} className={`rounded-md border text-sm overflow-hidden ${
                   s.ok
                     ? "border-green-200 dark:border-green-800"
@@ -245,7 +253,7 @@ function TestResultDialog({ result, onClose }: { result: TestResult; onClose: ()
           )}
         </div>
 
-        {/* Footer — luôn hiển thị */}
+        {/* Footer cố định */}
         <div className="px-4 pb-4 pt-3 border-t shrink-0">
           <Button type="button" variant="outline" className="w-full" onClick={onClose}>
             Đóng
@@ -383,7 +391,13 @@ export default function SyncRobot() {
       description: "Playwright đang mở trình duyệt, tối đa 2 phút",
     })
     try {
-      const result: TestResult = await apiFetch("POST", "/bot/sync-robot/test-login", buildBody())
+      const raw = await apiFetch("POST", "/bot/sync-robot/test-login", buildBody())
+      // Unwrap nếu API wrapper bọc trong { data: ... } hoặc { result: ... }
+      const parsed = raw?.data ?? raw?.result ?? raw
+      const result: TestResult = {
+        ...parsed,
+        ok: parsed?.ok === true,   // tường minh — chỉ boolean true mới là thành công
+      }
       dismiss()
       setTestResult(result)   // mở dialog — KHÔNG toast thêm
     } catch (e: any) {

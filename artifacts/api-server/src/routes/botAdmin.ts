@@ -1988,9 +1988,25 @@ router.post("/bot/sync-robot/test-login", requireAuth, (req: any, res: any) => {
 
   execFile("python3", [robotScript, "--test-login"], { env, timeout: 120_000, maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
     let result: any = { ok: false, message: "Không nhận được phản hồi từ robot", steps: [] };
+    // Python logger now writes to stderr; stdout should contain only the JSON print().
+    // As a fallback, scan lines in reverse to find the last valid JSON line.
     const raw = (stdout || "").trim();
     if (raw) {
-      try { result = JSON.parse(raw); } catch { result = { ok: false, message: raw, steps: [] }; }
+      const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+      let parsed = false;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (line.startsWith("{") || line.startsWith("[")) {
+          try {
+            result = JSON.parse(line);
+            parsed = true;
+            break;
+          } catch { /* try previous line */ }
+        }
+      }
+      if (!parsed) {
+        result = { ok: false, message: `Robot không trả JSON hợp lệ: ${raw.slice(0, 300)}`, steps: [] };
+      }
     } else if (err) {
       const msg = (stderr || err.message || "").slice(0, 500);
       result = { ok: false, message: `Lỗi: ${msg}`, steps: [] };
