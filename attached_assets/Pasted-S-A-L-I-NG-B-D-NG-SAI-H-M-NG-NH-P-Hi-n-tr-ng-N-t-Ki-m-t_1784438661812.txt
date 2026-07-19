@@ -1,0 +1,308 @@
+SỬA LỖI ĐỒNG BỘ DÙNG SAI HÀM ĐĂNG NHẬP
+
+Hiện trạng:
+
+- Nút “Kiểm tra đăng nhập” đăng nhập thành công.
+- Nhưng nút “Đồng bộ ngay” báo:
+
+“Không tìm thấy ô nhập Tài khoản trên https://canboso.com/login (đã thử 15 selector)”
+
+Điều này chứng minh hệ thống đang có 2 luồng đăng nhập khác nhau:
+
+1. Luồng Test Login mới: hoạt động đúng.
+2. Luồng Sync Login cũ: vẫn dùng selector cũ nên thất bại.
+
+YÊU CẦU:
+
+1. XÓA VIỆC ĐĂNG NHẬP RIÊNG TRONG LUỒNG SYNC
+
+Không được để chức năng “Đồng bộ ngay” tự chạy một đoạn login khác.
+
+Nút:
+
+- Kiểm tra đăng nhập
+- Đồng bộ ngay
+- Đồng bộ tự động theo chu kỳ
+
+phải dùng chung duy nhất một hàm đăng nhập.
+
+Ví dụ:
+
+async function loginToCanboso(page, config) {
+  // Toàn bộ logic đăng nhập đang hoạt động thành công
+}
+
+Cả Test và Sync đều phải gọi:
+
+await loginToCanboso(page, config);
+
+2. COPY NGUYÊN LOGIC ĐĂNG NHẬP ĐANG THÀNH CÔNG
+
+Luồng Test hiện đã tìm được:
+
+Tài khoản:
+input[name="username"]
+
+Mật khẩu:
+input[type="password"]
+
+Nút đăng nhập:
+button:has-text("Đăng nhập")
+
+Phải sử dụng đúng logic này trong Sync.
+
+Không được để Sync tiếp tục dùng danh sách 15 selector cũ.
+
+3. TẠO MỘT SERVICE DÙNG CHUNG
+
+Ví dụ:
+
+async function createLoggedInCanbosoPage(config) {
+  const browser = await chromium.launch({
+    headless: true
+  });
+
+  const context = await browser.newContext({
+    viewport: {
+      width: 1365,
+      height: 900
+    }
+  });
+
+  const page = await context.newPage();
+
+  const loginResult = await loginToCanboso(page, config);
+
+  if (!loginResult.ok) {
+    await browser.close();
+
+    throw new Error(
+      loginResult.message || 'Đăng nhập thất bại'
+    );
+  }
+
+  return {
+    browser,
+    context,
+    page,
+    loginResult
+  };
+}
+
+Test login sử dụng service này.
+
+Sync login cũng sử dụng service này.
+
+4. LUỒNG SYNC CHUẨN
+
+async function runCanbosoSync(config) {
+  let browser;
+
+  try {
+    const session = await createLoggedInCanbosoPage(config);
+
+    browser = session.browser;
+    const page = session.page;
+
+    await openOrdersPage(page);
+
+    const xlsxPath = await downloadOrdersXlsx(page);
+
+    const result = await importOrdersFromXlsx(xlsxPath);
+
+    return {
+      ok: true,
+      ...result
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error.message
+    };
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
+}
+
+5. KHÔNG ĐỌC SAI MẬT KHẨU ĐÃ LƯU
+
+Trên giao diện mật khẩu đang hiển thị:
+
+“Đã lưu — để trống để giữ nguyên”
+
+Khi người dùng không nhập mật khẩu mới:
+
+- Không được lưu chuỗi rỗng.
+- Không được xóa mật khẩu cũ.
+- Sync phải lấy mật khẩu đã mã hóa đang lưu trong database.
+- Phải giải mã đúng trước khi truyền vào Playwright.
+
+Ví dụ backend:
+
+const savedConfig = await getCanbosoConfig();
+
+const username = savedConfig.username;
+const password = decrypt(savedConfig.encryptedPassword);
+
+if (!username || !password) {
+  throw new Error(
+    'Thiếu tài khoản hoặc mật khẩu đã lưu'
+  );
+}
+
+6. KIỂM TRA CONFIG CỦA TEST VÀ SYNC
+
+Thêm log an toàn:
+
+[AUTH] Source: test-login
+[AUTH] Username loaded: yes
+[AUTH] Password loaded: yes
+
+[AUTH] Source: sync
+[AUTH] Username loaded: yes
+[AUTH] Password loaded: yes
+
+Không được log nội dung mật khẩu.
+
+Nếu Test lấy config từ database thì Sync cũng phải lấy cùng chỗ đó.
+
+Không được để:
+
+- Test dùng dữ liệu từ form hiện tại.
+- Sync dùng dữ liệu cũ hoặc biến môi trường khác.
+
+7. KHÔNG KIỂM TRA SELECTOR QUÁ SỚM
+
+Sau khi mở:
+
+https://canboso.com/login
+
+phải chờ:
+
+await page.waitForLoadState('domcontentloaded');
+
+await page.locator('input[name="username"]').waitFor({
+  state: 'visible',
+  timeout: 30000
+});
+
+Không được kiểm tra selector ngay lập tức rồi báo không tìm thấy.
+
+8. XỬ LÝ TRƯỜNG HỢP ĐÃ ĐĂNG NHẬP
+
+Nếu mở trang login nhưng website tự chuyển về:
+
+https://canboso.com/
+
+thì coi là đã đăng nhập.
+
+Ví dụ:
+
+if (!page.url().includes('/login')) {
+  return {
+    ok: true,
+    message: 'Đã có phiên đăng nhập'
+  };
+}
+
+9. SAU LOGIN PHẢI GIỮ NGUYÊN PAGE VÀ SESSION
+
+Sau khi login thành công:
+
+- Không đóng browser.
+- Không đóng context.
+- Không tạo page mới.
+- Không mở lại login.
+- Không làm mất cookie.
+
+Phải dùng chính page đó để:
+
+Dashboard
+→ mở menu
+→ bấm Đơn hàng
+→ tải XLSX
+→ import đơn hàng.
+
+10. SỬA TRẠNG THÁI HIỂN THỊ
+
+Hiện tại Sync thất bại ở login thì hiển thị:
+
+❌ Đăng nhập
+❌ Tải file XLSX
+❌ Import đơn hàng
+
+Phải đổi thành:
+
+Nếu login thất bại:
+
+❌ Đăng nhập
+⏭ Chưa tải XLSX
+⏭ Chưa import đơn hàng
+
+Nếu login thành công nhưng mở đơn hàng lỗi:
+
+✅ Đăng nhập
+❌ Mở trang Đơn hàng
+⏭ Chưa tải XLSX
+⏭ Chưa import đơn hàng
+
+Nếu tải file lỗi:
+
+✅ Đăng nhập
+✅ Mở trang Đơn hàng
+❌ Tải file XLSX
+⏭ Chưa import đơn hàng
+
+11. SỬA LỊCH SỬ ĐỒNG BỘ
+
+Thông báo lỗi phải ghi đúng bước thật sự.
+
+Không được báo:
+
+“Không đăng nhập được”
+
+khi trước đó Test Login đã thành công do sử dụng sai hàm.
+
+Log cần có:
+
+[SYNC] Loading saved configuration
+[SYNC] Starting shared login function
+[SYNC] Login successful
+[SYNC] Opening navigation menu
+[SYNC] Opening Đơn hàng
+[SYNC] Downloading XLSX
+[SYNC] Importing orders
+
+12. TEST BẮT BUỘC
+
+Test 1:
+- Bấm “Kiểm tra đăng nhập”.
+- Phải thành công.
+
+Test 2:
+- Không thay đổi cấu hình.
+- Bấm “Đồng bộ ngay”.
+- Phải sử dụng cùng tài khoản và mật khẩu.
+- Không được báo không tìm thấy input username.
+
+Test 3:
+- Để trống ô mật khẩu.
+- Bấm lưu cấu hình.
+- Mật khẩu cũ vẫn phải được giữ.
+- Đồng bộ vẫn chạy được.
+
+Test 4:
+- Chạy đồng bộ tự động sau 5 phút.
+- Phải dùng cùng hàm login như nút Test và Sync thủ công.
+
+QUAN TRỌNG:
+
+- Không sửa lại giao diện đăng nhập vì Test đã hoạt động.
+- Không tạo thêm selector mới không cần thiết.
+- Không reset database.
+- Không xóa cấu hình.
+- Không xóa mật khẩu đã lưu.
+- Không xóa đơn hàng.
+- Chỉ hợp nhất Test Login và Sync Login thành một hàm dùng chung.
