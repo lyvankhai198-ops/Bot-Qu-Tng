@@ -49807,6 +49807,7 @@ var import_express2 = __toESM(require_express2(), 1);
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { execFile } from "child_process";
 var router2 = (0, import_express2.Router)();
 var DATA_DIR = process.env.DATA_DIR ?? path.resolve(process.cwd(), "../../data");
 function dataFile(name) {
@@ -51719,9 +51720,28 @@ router2.post("/bot/sync-robot/test-login", requireAuth, (req, res) => {
     cfg.password = body.password;
   }
   writeJson("sync_robot_config", cfg);
-  writeJson("sync_robot_trigger", { trigger: true, test_only: true, triggered_at: now(), triggered_by: "web-admin" });
   addLog("SYNC_ROBOT_TEST_LOGIN", `email=${cfg.email}`, "web-admin");
-  res.json({ ok: true, message: "\u0110\xE3 g\u1EEDi l\u1EC7nh ki\u1EC3m tra \u0111\u0103ng nh\u1EADp \u2014 xem k\u1EBFt qu\u1EA3 trong log" });
+  const robotScript = path.resolve(DATA_DIR, "..", "sync_robot.py");
+  const env = {
+    ...process.env,
+    DATA_DIR,
+    API_BASE_URL: process.env["API_BASE_URL"] ?? "http://localhost:8080"
+  };
+  execFile("python3", [robotScript, "--test-login"], { env, timeout: 6e4 }, (err, stdout, stderr) => {
+    let result = { ok: false, message: "Kh\xF4ng nh\u1EADn \u0111\u01B0\u1EE3c ph\u1EA3n h\u1ED3i t\u1EEB robot" };
+    const raw = (stdout || "").trim();
+    if (raw) {
+      try {
+        result = JSON.parse(raw);
+      } catch {
+        result = { ok: false, message: raw };
+      }
+    } else if (err) {
+      const msg = (stderr || err.message || "").slice(0, 300);
+      result = { ok: false, message: `L\u1ED7i: ${msg}` };
+    }
+    res.json(result);
+  });
 });
 router2.get("/bot/sync-robot/existing-sets", requireAuth, (_req, res) => {
   const orders = readJson("orders", {}) ?? {};
@@ -51753,7 +51773,7 @@ var botAdmin_default = router2;
 // src/routes/ocr.ts
 var import_express3 = __toESM(require_express2(), 1);
 var import_multer = __toESM(require_multer(), 1);
-import { execFile } from "node:child_process";
+import { execFile as execFile2 } from "node:child_process";
 import { writeFile, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51785,7 +51805,7 @@ var _tesseractOk = null;
 async function checkTesseract() {
   if (_tesseractOk !== null) return _tesseractOk;
   return new Promise((resolve) => {
-    execFile("tesseract", ["--version"], {}, (err) => {
+    execFile2("tesseract", ["--version"], {}, (err) => {
       _tesseractOk = !err;
       if (err) console.error("Tesseract not found:", err.message);
       else console.info("OCR: Tesseract available");
@@ -51802,7 +51822,7 @@ async function runTesseract(buffer, mimeType) {
   try {
     await writeFile(inFile, buffer);
     await new Promise((resolve, reject) => {
-      execFile(
+      execFile2(
         "tesseract",
         [inFile, outBase, "-l", "vie+eng", "--psm", "6", "--oem", "3"],
         { timeout: 3e4 },
@@ -52134,7 +52154,7 @@ async function runOCR(req, res) {
 router3.get("/health/gemini", async (_req, res) => {
   const ok = await checkTesseract();
   const langs = await new Promise((resolve) => {
-    execFile("tesseract", ["--list-langs"], {}, (_err, stdout, stderr) => {
+    execFile2("tesseract", ["--list-langs"], {}, (_err, stdout, stderr) => {
       const out = (stdout || stderr || "").split("\n").map((l) => l.trim()).filter(Boolean);
       resolve(out);
     });
