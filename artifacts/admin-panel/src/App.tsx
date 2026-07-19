@@ -73,6 +73,7 @@ function Router() {
       <Route path="/receivers"><ProtectedRoute component={Receivers} /></Route>
       <Route path="/logs"><ProtectedRoute component={Logs} /></Route>
       <Route path="/refund-history"><ProtectedRoute component={RefundHistory} /></Route>
+      <Route path="/sync-robot"><ProtectedRoute component={SyncRobot} /></Route>
       <Route component={NotFound} />
     </Switch>
   );

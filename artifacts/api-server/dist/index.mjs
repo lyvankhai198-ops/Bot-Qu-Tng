@@ -51661,6 +51661,84 @@ router2.delete("/bot/gift-shop-channels/:id", requireAuth, (req, res) => {
   addLog("GIFT_SHOP_CHANNEL_DELETE", ch.name, "web-admin");
   res.json({ ok: true });
 });
+router2.get("/bot/sync-robot/config", requireAuth, (_req, res) => {
+  const cfg = readJson("sync_robot_config", {}) ?? {};
+  res.json({
+    enabled: cfg.enabled ?? false,
+    site_url: cfg.site_url ?? "",
+    login_url: cfg.login_url ?? "",
+    orders_url: cfg.orders_url ?? "",
+    email: cfg.email ?? "",
+    password: cfg.password ? "***" : "",
+    interval_s: cfg.interval_s ?? 300
+  });
+});
+router2.put("/bot/sync-robot/config", requireAuth, (req, res) => {
+  const body = req.body ?? {};
+  const current = readJson("sync_robot_config", {}) ?? {};
+  const updated = {
+    ...current,
+    enabled: body.enabled !== void 0 ? !!body.enabled : current.enabled ?? false,
+    site_url: body.site_url !== void 0 ? String(body.site_url).trim() : current.site_url ?? "",
+    login_url: body.login_url !== void 0 ? String(body.login_url).trim() : current.login_url ?? "",
+    orders_url: body.orders_url !== void 0 ? String(body.orders_url).trim() : current.orders_url ?? "",
+    email: body.email !== void 0 ? String(body.email).trim() : current.email ?? "",
+    interval_s: body.interval_s !== void 0 ? Number(body.interval_s) : current.interval_s ?? 300
+  };
+  if (body.password && body.password !== "***") {
+    updated.password = String(body.password);
+  }
+  writeJson("sync_robot_config", updated);
+  addLog("SYNC_ROBOT_CONFIG", `enabled=${updated.enabled} interval=${updated.interval_s}s`, "web-admin");
+  res.json({ ok: true, message: "\u0110\xE3 l\u01B0u c\u1EA5u h\xECnh robot" });
+});
+router2.get("/bot/sync-robot/status", requireAuth, (_req, res) => {
+  res.json(readJson("sync_robot_status", { running: false, last_run: null, next_run_at: null }) ?? {});
+});
+router2.get("/bot/sync-robot/logs", requireAuth, (req, res) => {
+  const logs = readJson("sync_robot_logs", []) ?? [];
+  const limit = Math.min(Number(req.query.limit ?? 200), 500);
+  res.json(logs.slice(-limit));
+});
+router2.post("/bot/sync-robot/trigger", requireAuth, (_req, res) => {
+  writeJson("sync_robot_trigger", { trigger: true, triggered_at: now(), triggered_by: "web-admin" });
+  addLog("SYNC_ROBOT_TRIGGER", "manual trigger via admin panel", "web-admin");
+  res.json({ ok: true, message: "\u0110\xE3 k\xEDch ho\u1EA1t \u0111\u1ED3ng b\u1ED9 ngay" });
+});
+router2.post("/bot/sync-robot/test-login", requireAuth, (req, res) => {
+  const body = req.body ?? {};
+  const current = readJson("sync_robot_config", {}) ?? {};
+  const cfg = {
+    ...current,
+    site_url: body.site_url ?? current.site_url ?? "",
+    login_url: body.login_url ?? current.login_url ?? "",
+    orders_url: body.orders_url ?? current.orders_url ?? "",
+    email: body.email ?? current.email ?? ""
+  };
+  if (body.password && body.password !== "***") {
+    cfg.password = body.password;
+  }
+  writeJson("sync_robot_config", cfg);
+  writeJson("sync_robot_trigger", { trigger: true, test_only: true, triggered_at: now(), triggered_by: "web-admin" });
+  addLog("SYNC_ROBOT_TEST_LOGIN", `email=${cfg.email}`, "web-admin");
+  res.json({ ok: true, message: "\u0110\xE3 g\u1EEDi l\u1EC7nh ki\u1EC3m tra \u0111\u0103ng nh\u1EADp \u2014 xem k\u1EBFt qu\u1EA3 trong log" });
+});
+router2.get("/bot/sync-robot/existing-sets", requireAuth, (_req, res) => {
+  const orders = readJson("orders", {}) ?? {};
+  const orderItems = readJson("order_items", {}) ?? {};
+  const orderIds = Object.keys(orders);
+  const itemEmails = [];
+  for (const items of Object.values(orderItems)) {
+    if (!Array.isArray(items)) continue;
+    for (const it of items) {
+      const orig = (it.original_account || it.email || "").toLowerCase();
+      const curr = (it.current_account || "").toLowerCase();
+      if (orig) itemEmails.push(orig);
+      if (curr && curr !== orig) itemEmails.push(curr);
+    }
+  }
+  res.json({ orderIds, itemEmails: [...new Set(itemEmails)] });
+});
 router2.get("/bot/backup", requireAuth, (_req, res) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
   const backup = { exportedAt: now() };

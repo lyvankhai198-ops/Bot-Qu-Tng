@@ -1,0 +1,278 @@
+THÊM ROBOT TỰ ĐỘNG ĐỒNG BỘ ĐƠN HÀNG TỪ WEBSITE BÁN HÀNG
+
+LƯU Ý:
+Đây là tính năng mới, không được reset website, database hoặc bất kỳ dữ liệu nào.
+Không ảnh hưởng đến chức năng hiện có.
+
+==================================================
+MỤC TIÊU
+==================================================
+
+Tạo một Robot Auto Sync chạy 24/7.
+
+Robot sẽ:
+
+1. Đăng nhập website bán hàng.
+2. Truy cập trang Đơn hàng.
+3. Tự bấm nút "Tải xuống".
+4. Chờ file XLSX tải xong.
+5. Đọc dữ liệu.
+6. Chỉ import đơn mới.
+7. Update đơn thay đổi.
+8. Xóa file tạm.
+9. Lặp lại theo chu kỳ.
+
+==================================================
+1. TRANG CÀI ĐẶT
+==================================================
+
+Thêm menu:
+
+Robot Đồng Bộ
+
+Cho phép nhập:
+
+- URL website
+- URL đăng nhập
+- Email
+- Mật khẩu
+- Chu kỳ đồng bộ
+
+Tùy chọn:
+
+30 giây
+1 phút
+2 phút
+5 phút
+10 phút
+
+Có nút:
+
+- Kiểm tra đăng nhập
+- Đồng bộ ngay
+- Lưu cấu hình
+
+Không lưu mật khẩu dạng plaintext nếu có thể.
+
+==================================================
+2. ROBOT
+==================================================
+
+Robot chạy nền.
+
+Theo chu kỳ:
+
+Đăng nhập
+
+↓
+
+Mở trang Đơn hàng
+
+↓
+
+Tự bấm nút "Tải xuống"
+
+↓
+
+Đợi file XLSX tải xong
+
+↓
+
+Đọc dữ liệu
+
+↓
+
+Import
+
+↓
+
+Update
+
+↓
+
+Xóa file
+
+↓
+
+Ngủ đến chu kỳ tiếp theo
+
+==================================================
+3. IMPORT
+==================================================
+
+Khóa chính:
+
+Mã đơn.
+
+Nếu chưa tồn tại:
+
+Import.
+
+Nếu đã tồn tại:
+
+So sánh.
+
+Nếu có thay đổi:
+
+Update.
+
+Nếu giống:
+
+Bỏ qua.
+
+==================================================
+4. IMPORT TÀI KHOẢN
+==================================================
+
+Nếu file chứa:
+
+email
+password
+2FA
+
+hoặc
+
+email|password|2FA
+
+thì tự tách.
+
+Nếu nhiều tài khoản trong một đơn:
+
+Tạo nhiều order_item.
+
+==================================================
+5. LOG
+==================================================
+
+Hiển thị:
+
+Lần chạy gần nhất
+
+Đăng nhập thành công
+
+Bao nhiêu đơn mới
+
+Bao nhiêu đơn update
+
+Bao nhiêu đơn bỏ qua
+
+Bao nhiêu lỗi
+
+Thời gian chạy
+
+==================================================
+6. THÔNG BÁO
+==================================================
+
+Nếu đồng bộ thành công:
+
+✔ Đồng bộ thành công lúc ...
+
+Nếu lỗi:
+
+Hiển thị:
+
+Không đăng nhập được
+
+hoặc
+
+Không tải được file
+
+hoặc
+
+Không đọc được XLSX
+
+==================================================
+7. AN TOÀN
+==================================================
+
+Không cho phép chạy 2 robot cùng lúc.
+
+Nếu một lần sync đang chạy thì lần sau phải chờ.
+
+Dùng lock.
+
+==================================================
+8. TỰ KHÔI PHỤC
+==================================================
+
+Nếu:
+
+Website timeout
+
+Mất mạng
+
+Lỗi tải file
+
+Robot phải tự thử lại ở chu kỳ tiếp theo.
+
+Không dừng vĩnh viễn.
+
+==================================================
+9. KHÔNG IMPORT TRÙNG
+==================================================
+
+Không được tạo trùng đơn.
+
+Không được tạo trùng tài khoản.
+
+Không được mất dữ liệu cũ.
+
+==================================================
+10. PLAYWRIGHT
+==================================================
+
+Dùng Playwright để điều khiển trình duyệt.
+
+Không dùng click theo tọa độ.
+
+Ưu tiên:
+
+- selector
+- text
+- role
+- aria-label
+
+để khi website thay đổi nhẹ vẫn hoạt động.
+
+==================================================
+11. TỐI ƯU
+==================================================
+
+Lần sync đầu:
+
+Import toàn bộ.
+
+Các lần sau:
+
+Chỉ import đơn mới hoặc đơn thay đổi.
+
+Không đọc lại toàn bộ database.
+
+==================================================
+12. TEST
+==================================================
+
+Test:
+
+- Đăng nhập.
+- Tải file.
+- File rỗng.
+- File có 1 đơn.
+- File có 1000 đơn.
+- Restart VPS.
+- Restart website.
+- Deploy code.
+
+Robot vẫn hoạt động bình thường.
+
+==================================================
+MỤC TIÊU CUỐI
+
+Robot chạy nền 24/7.
+
+Không cần API.
+
+Không cần admin tải file thủ công.
+
+Website Support luôn tự cập nhật đơn hàng từ website bán hàng.
