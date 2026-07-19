@@ -115,8 +115,11 @@ function fmtDate(iso?: string | null) {
 
 function fmtDuration(s: number) {
   if (!s) return "—"
-  if (s < 60) return `${s}s`
-  return `${Math.floor(s / 60)}m ${s % 60}s`
+  const rounded = Math.round(s * 100) / 100
+  if (rounded < 60) return `${rounded} giây`
+  const m = Math.floor(rounded / 60)
+  const rem = Math.round((rounded % 60) * 100) / 100
+  return `${m} phút ${rem} giây`
 }
 
 const FORM_DEFAULT: FormData = {
@@ -172,7 +175,7 @@ function TestResultDialog({ result, onClose }: { result: TestResult; onClose: ()
             )}
             {result.title && <Row label="Trang">{result.title}</Row>}
             {result.duration_s !== undefined && (
-              <Row label="Thời gian kiểm tra">{result.duration_s} giây</Row>
+              <Row label="Thời gian kiểm tra">{fmtDuration(result.duration_s)}</Row>
             )}
             {/* Chỉ hiển thị khi thất bại */}
             {!isSuccess && result.error_text && (

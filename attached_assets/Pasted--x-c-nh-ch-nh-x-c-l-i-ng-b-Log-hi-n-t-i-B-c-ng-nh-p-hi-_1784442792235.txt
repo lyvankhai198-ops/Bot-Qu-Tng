@@ -1,0 +1,134 @@
+Đã xác định chính xác lỗi đồng bộ.
+
+Log hiện tại:
+
+- Bước đăng nhập hiển thị thành công.
+- Nhưng khi tìm mục Đơn hàng, URL đã quay về:
+  https://canboso.com/login
+- Cookies chỉ có: app_locale
+- localStorage chỉ có: login_lang
+- Không có session đăng nhập/token xác thực.
+
+Kết luận:
+Robot đang làm mất phiên đăng nhập trước bước tải XLSX.
+
+Hãy sửa theo yêu cầu sau:
+
+1. Toàn bộ quy trình phải chạy trong CÙNG MỘT browser context và CÙNG MỘT page:
+
+login
+→ chờ đăng nhập thật sự hoàn tất
+→ mở menu Đơn hàng
+→ tải XLSX
+→ import dữ liệu
+
+Tuyệt đối không đóng page, browser hoặc browserContext sau khi login.
+
+2. Không được tạo browserContext mới cho bước tải XLSX.
+
+Sai:
+
+const loginContext = await browser.newContext();
+login...
+await loginContext.close();
+
+const syncContext = await browser.newContext();
+download...
+
+Đúng:
+
+const context = await browser.newContext();
+const page = await context.newPage();
+
+await loginAndWaitReady(page);
+await downloadOrdersXlsx(page);
+await importOrders();
+
+Chỉ đóng context sau khi toàn bộ đồng bộ hoàn thành.
+
+3. Hàm kiểm tra đăng nhập không được chỉ dựa vào:
+
+- URL đổi khỏi /login
+- tiêu đề trang
+- toast “Đăng nhập thành công”
+- dashboard xuất hiện tạm thời
+
+Phải kiểm tra phiên đăng nhập thật sự bằng ít nhất một trong các cách:
+
+- mở được menu tài khoản của người bán;
+- mở được trang Đơn hàng mà không quay về /login;
+- gọi được API yêu cầu đăng nhập và nhận HTTP 200;
+- tồn tại cookie/token xác thực thực tế.
+
+4. Sau khi bấm Đăng nhập:
+
+- chờ network idle;
+- chờ dashboard tải hoàn tất;
+- chờ thêm tối đa 15 giây để session được lưu;
+- thử mở menu;
+- nếu quay về /login thì đăng nhập chưa thành công, không được báo thành công giả.
+
+5. Nếu cần chuyển sang page mới để tải file, page mới bắt buộc phải được tạo từ CÙNG context:
+
+const ordersPage = await context.newPage();
+
+Không dùng:
+
+browser.newPage()
+browser.newContext()
+
+6. Nếu hệ thống hiện đang lưu storageState, phải lưu sau khi đăng nhập thật sự:
+
+await context.storageState({ path: storagePath });
+
+Khi dùng lại phải nạp:
+
+browser.newContext({
+  storageState: storagePath
+});
+
+Nhưng ưu tiên chạy toàn bộ một lần trong cùng context để tránh mất session.
+
+7. Bỏ logic tìm mục “Đơn hàng” khi URL hiện tại là /login.
+
+Trước khi tìm menu phải kiểm tra:
+
+if (new URL(page.url()).pathname.includes('/login')) {
+  throw new Error(
+    'Phiên đăng nhập đã bị mất trước khi mở Đơn hàng'
+  );
+}
+
+8. Thêm log kỹ thuật:
+
+- browserContext ID;
+- page ID;
+- URL sau login;
+- URL trước tải XLSX;
+- danh sách tên cookie, không ghi giá trị;
+- thời điểm page/context được tạo hoặc đóng;
+- có tạo context mới giữa login và download hay không.
+
+9. Nút “Kiểm tra đăng nhập” và “Đồng bộ ngay” phải cùng gọi một hàm:
+
+loginAndVerifySession(page)
+
+Nhưng Sync phải tiếp tục sử dụng chính page/context đã đăng nhập thành công, không gọi lại bằng browser khác.
+
+10. Sửa hiển thị thời gian:
+
+Hiện đang hiện:
+1m 4.090000000000003s
+
+Đổi thành:
+1 phút 4.09 giây
+
+11. Không sửa selector menu Đơn hàng lúc này.
+
+Lỗi hiện tại không phải không tìm thấy menu.
+Lỗi thật sự là robot đã quay về /login vì mất session.
+
+Không reset database.
+Không xóa đơn hàng.
+Không xóa cấu hình đã lưu.
+Không thay đổi các tính năng khác.
