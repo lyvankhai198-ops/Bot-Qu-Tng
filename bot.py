@@ -25,6 +25,7 @@ from telegram.constants import ParseMode
 
 import data_manager as db
 from translations import t
+import rate_limiter as rl
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 logging.basicConfig(format="%(asctime)s — %(levelname)s — %(message)s", level=logging.INFO)
@@ -767,6 +768,12 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(t(L, "gift_banned"))
         return
 
+    # ── Rate limit check ───────────────────────────────────────────────────
+    rl_result = rl.check_and_record(user.id, "gift", user.username or "")
+    if not rl_result.allowed:
+        await update.message.reply_text(rl_result.message(L), parse_mode=ParseMode.HTML)
+        return
+
     # ── Channel join-gate — TRƯỚC khi kiểm tra kho ────────────────────────
     if settings.get("require_channel_check", False):
         channels         = db.get_required_channels()
@@ -863,6 +870,15 @@ async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     if db.is_banned(user.id):
         await query.edit_message_text(t(L, "gift_banned"))
+        return
+
+    # ── Rate limit check (shared bucket với handle_gift) ──────────────────
+    rl_result = rl.check_and_record(user.id, "check_join", user.username or "")
+    if not rl_result.allowed:
+        try:
+            await query.edit_message_text(rl_result.message(L), parse_mode=ParseMode.HTML)
+        except Exception:
+            await query.message.reply_text(rl_result.message(L), parse_mode=ParseMode.HTML)
         return
 
     channels         = db.get_required_channels()
@@ -1222,6 +1238,15 @@ async def handle_multi_warranty_desc(update: Update, context: ContextTypes.DEFAU
     L    = lang(user.id)
     description = update.message.text.strip()
 
+    # ── Rate limit check ───────────────────────────────────────────────────
+    rl_result = rl.check_and_record(user.id, "support", user.username or "")
+    if not rl_result.allowed:
+        await update.message.reply_text(rl_result.message(L), parse_mode=ParseMode.HTML,
+                                        reply_markup=main_keyboard(user.id))
+        for key in ("conv_state", "_mw_found", "_mw_not_found", "_mw_sel"):
+            db.clear_user_state(user.id, key)
+        return
+
     state = db.get_user_state(user.id)
     try:
         found = _json.loads(state.get("_mw_found", "[]"))
@@ -1306,11 +1331,22 @@ async def handle_check_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=back_keyboard(user.id),
     )
 
+# Rate limit on the actual lookup (when user sends the order code/email)
+
 # ─── Order lookup (shared for support + check_order states) ───────────────────
 
 async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     L = lang(user.id)
+
+    # ── Rate limit check ───────────────────────────────────────────────────
+    rl_result = rl.check_and_record(user.id, "lookup", user.username or "")
+    if not rl_result.allowed:
+        await update.message.reply_text(rl_result.message(L), parse_mode=ParseMode.HTML,
+                                        reply_markup=main_keyboard(user.id))
+        db.clear_user_state(user.id, "conv_state")
+        return
+
     # Normalize: strip "email/tài khoản: " prefix if user copies it from a message
     query_text = re.sub(
         r'^(?:email\s*/\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*:\s*',
@@ -1392,6 +1428,16 @@ async def handle_report_issue_input(update: Update, context: ContextTypes.DEFAUL
     L = lang(user.id)
     vi = L == "vi"
     description = update.message.text.strip()
+
+    # ── Rate limit check ───────────────────────────────────────────────────
+    rl_result = rl.check_and_record(user.id, "support", user.username or "")
+    if not rl_result.allowed:
+        await update.message.reply_text(rl_result.message(L), parse_mode=ParseMode.HTML,
+                                        reply_markup=main_keyboard(user.id))
+        for key in ("conv_state", "_report_order_id", "_report_email", "_report_item_id"):
+            db.clear_user_state(user.id, key)
+        return
+
     state    = db.get_user_state(user.id)
     order_id = state.get("_report_order_id", "")
     item_id  = state.get("_report_item_id", "")
