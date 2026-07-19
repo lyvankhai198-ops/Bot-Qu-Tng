@@ -38,6 +38,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sync_robot")
 
+# ── Auto-install Playwright browser ───────────────────────────────────────────
+def ensure_playwright_browser():
+    """Cài Chromium nếu chưa có. Chạy một lần khi khởi động."""
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            [sys.executable, "-m", "playwright", "install", "chromium", "--with-deps"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode == 0:
+            logger.info("[robot] Playwright chromium OK")
+        else:
+            logger.warning(f"[robot] playwright install: {result.stderr[:200]}")
+    except Exception as e:
+        logger.warning(f"[robot] ensure_playwright_browser: {e}")
+
 # ── Thread lock (prevent concurrent sync runs) ─────────────────────────────────
 _run_lock = threading.Lock()
 
@@ -621,5 +637,65 @@ def robot_loop():
                 break
             time.sleep(5)
 
+# ── CLI: --test-login mode (synchronous, for API endpoint) ────────────────────
+async def do_test_login_only(config: dict) -> dict:
+    """Chỉ đăng nhập, không tải file. Trả JSON kết quả ra stdout."""
+    from playwright.async_api import async_playwright
+
+    site_url  = config.get("site_url", "").rstrip("/")
+    login_url = config.get("login_url", "").rstrip("/") or f"{site_url}/login"
+    email     = config.get("email", "")
+    password  = config.get("password", "")
+
+    if not site_url or not email or not password:
+        return {"ok": False, "message": "Chưa cấu hình URL / email / mật khẩu"}
+
+    start = time.time()
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        ctx  = await browser.new_context()
+        page = await ctx.new_page()
+        try:
+            await page.goto(login_url, timeout=30_000)
+            await page.wait_for_load_state("domcontentloaded")
+            await page.fill(
+                'input[type="email"], input[name="email"], input[name="username"], '
+                'input[placeholder*="mail" i], input[placeholder*="Email" i]',
+                email,
+            )
+            await page.fill('input[type="password"], input[name="password"]', password)
+            await page.click(
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("Đăng nhập"), button:has-text("Login"), button:has-text("Sign in")',
+            )
+            await page.wait_for_load_state("networkidle", timeout=20_000)
+            curr = page.url
+            if any(kw in curr.lower() for kw in ("login", "signin", "sign-in")):
+                return {"ok": False, "message": f"Đăng nhập thất bại — trình duyệt vẫn ở {curr}", "url": curr, "duration_s": round(time.time()-start, 2)}
+            return {"ok": True, "message": f"✅ Đăng nhập thành công! Redirect đến: {curr}", "url": curr, "duration_s": round(time.time()-start, 2)}
+        except Exception as ex:
+            return {"ok": False, "message": f"❌ Lỗi: {ex}", "duration_s": round(time.time()-start, 2)}
+        finally:
+            await browser.close()
+
 if __name__ == "__main__":
-    robot_loop()
+    if len(sys.argv) > 1 and sys.argv[1] == "--test-login":
+        # Synchronous test mode — called by API server, prints JSON to stdout
+        cfg = load_config()
+        # Allow passing config as env override
+        if os.environ.get("ROBOT_SITE_URL"):    cfg["site_url"]    = os.environ["ROBOT_SITE_URL"]
+        if os.environ.get("ROBOT_LOGIN_URL"):   cfg["login_url"]   = os.environ["ROBOT_LOGIN_URL"]
+        if os.environ.get("ROBOT_EMAIL"):       cfg["email"]       = os.environ["ROBOT_EMAIL"]
+        if os.environ.get("ROBOT_PASSWORD"):    cfg["password"]    = os.environ["ROBOT_PASSWORD"]
+        try:
+            result = asyncio.run(do_test_login_only(cfg))
+        except Exception as e:
+            result = {"ok": False, "message": str(e)}
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result.get("ok") else 1)
+    else:
+        ensure_playwright_browser()
+        robot_loop()

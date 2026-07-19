@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { execFile } from "child_process";
 
 const router = Router();
 
@@ -1959,11 +1960,9 @@ router.post("/bot/sync-robot/trigger", requireAuth, (_req: any, res: any) => {
 });
 
 // ── POST /bot/sync-robot/test-login ──────────────────────────────────────────
-// Write a special trigger for robot to do a login-only test; respond immediately
-// (actual test is async in the robot process; result visible in status/logs)
+// Spawns python3 sync_robot.py --test-login and waits for result (≤60s)
 router.post("/bot/sync-robot/test-login", requireAuth, (req: any, res: any) => {
   const body = req.body ?? {};
-  // Persist any config updates from the form before testing
   const current: any = readJson("sync_robot_config", {}) ?? {};
   const cfg: any = {
     ...current,
@@ -1975,10 +1974,29 @@ router.post("/bot/sync-robot/test-login", requireAuth, (req: any, res: any) => {
   if (body.password && body.password !== "***") {
     cfg.password = body.password;
   }
+  // Save updated config so subprocess can read it
   writeJson("sync_robot_config", cfg);
-  writeJson("sync_robot_trigger", { trigger: true, test_only: true, triggered_at: now(), triggered_by: "web-admin" });
   addLog("SYNC_ROBOT_TEST_LOGIN", `email=${cfg.email}`, "web-admin");
-  res.json({ ok: true, message: "Đã gửi lệnh kiểm tra đăng nhập — xem kết quả trong log" });
+
+  // Resolve path to sync_robot.py (sibling of data/ dir)
+  const robotScript = path.resolve(DATA_DIR, "..", "sync_robot.py");
+  const env = {
+    ...process.env,
+    DATA_DIR,
+    API_BASE_URL: process.env["API_BASE_URL"] ?? "http://localhost:8080",
+  };
+
+  execFile("python3", [robotScript, "--test-login"], { env, timeout: 60_000 }, (err, stdout, stderr) => {
+    let result: any = { ok: false, message: "Không nhận được phản hồi từ robot" };
+    const raw = (stdout || "").trim();
+    if (raw) {
+      try { result = JSON.parse(raw); } catch { result = { ok: false, message: raw }; }
+    } else if (err) {
+      const msg = (stderr || err.message || "").slice(0, 300);
+      result = { ok: false, message: `Lỗi: ${msg}` };
+    }
+    res.json(result);
+  });
 });
 
 // ── GET /bot/sync-robot/existing-sets ────────────────────────────────────────
