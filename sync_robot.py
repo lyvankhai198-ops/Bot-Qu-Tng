@@ -501,6 +501,10 @@ _LOGOUT_SELECTORS = [
 ]
 _LOGIN_URL_KEYWORDS = ("login", "signin", "sign-in", "auth/login", "/account/login", "/user/login")
 
+class _LoginRedirectError(RuntimeError):
+    """Raised khi SPA redirect về trang login sau khi đã "login thành công" — session không hợp lệ."""
+    pass
+
 def _build_login_url(site_url: str, override: str = "") -> str:
     """Tạo URL login chuẩn — tránh double slash hay /login/login."""
     if override and override.strip():
@@ -902,6 +906,14 @@ async def _open_orders_page(page) -> None:
         pass
     logger.info("[SYNC] Dashboard ready")
 
+    # ── Guard: nếu SPA đã redirect về login sau khi init → sai mật khẩu ──────
+    if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
+        title = await page.title()
+        raise _LoginRedirectError(
+            f"Sau khi chờ dashboard, trang quay về trang đăng nhập ({page.url}). "
+            f"Kiểm tra lại mật khẩu / tài khoản trong cấu hình Sync Robot."
+        )
+
     # ── 2–5. Retry vòng lặp: hamburger → sidebar → Đơn hàng ──────────────────
     navigated = False
     last_error_info: dict = {}
@@ -1164,6 +1176,11 @@ async def do_playwright_sync(config: dict) -> dict:
             # ── Bước 2: Mở trang Đơn hàng qua menu (KHÔNG goto /orders) ────
             try:
                 await _open_orders_page(page)
+            except _LoginRedirectError as ex:
+                # SPA redirect về login sau init → sai mật khẩu, không phải lỗi download
+                logger.error(f"[SYNC] Phiên đăng nhập không hợp lệ: {ex}")
+                return {"login_ok": False, "download_ok": False, "path": None, "dir": download_dir,
+                        "error": str(ex)}
             except Exception as ex:
                 logger.error(f"[SYNC] Lỗi mở trang đơn hàng: {ex}")
                 return {"login_ok": True, "download_ok": False, "path": None, "dir": download_dir,
