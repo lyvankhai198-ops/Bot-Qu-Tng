@@ -889,26 +889,26 @@ async def _open_orders_page(page) -> None:
     # ── 1. Chờ dashboard tải hoàn toàn ────────────────────────────────────────
     logger.info("[SYNC] Waiting for dashboard initialization")
     await page.wait_for_load_state("domcontentloaded")
-    await page.wait_for_timeout(4_000)   # đợi bắt buộc 4 giây
 
-    # Đợi spinner / loading text biến mất (tối đa 20s)
-    loading_signals = ["Đang khởi tạo dashboard", "Loading", "Đang tải"]
-    for sig in loading_signals:
-        try:
-            await page.get_by_text(sig).first.wait_for(state="hidden", timeout=20_000)
-        except PwTimeout:
-            pass
-        except Exception:
-            pass
+    # Chờ spinner "Đang khởi tạo dashboard" xuất hiện (tối đa 8s)
+    # rồi chờ nó biến mất (tối đa 30s) → dashboard thực sự sẵn sàng
+    # Không dùng hard wait cố định vì nó cho phép SPA kịp redirect về /login
     try:
-        await page.wait_for_load_state("networkidle", timeout=10_000)
+        await page.get_by_text("Đang khởi tạo dashboard").first.wait_for(
+            state="visible", timeout=8_000
+        )
+        logger.info("[SYNC] Spinner 'Đang khởi tạo dashboard' appeared")
+        await page.get_by_text("Đang khởi tạo dashboard").first.wait_for(
+            state="hidden", timeout=30_000
+        )
+        logger.info("[SYNC] Spinner gone — dashboard ready")
     except PwTimeout:
+        logger.info("[SYNC] Spinner not detected in time or already gone")
+    except Exception:
         pass
-    logger.info("[SYNC] Dashboard ready")
 
-    # ── Guard: nếu SPA đã redirect về login sau khi init → sai mật khẩu ──────
+    # ── Guard: nếu SPA redirect về login sau khi init → sai mật khẩu ─────────
     if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
-        title = await page.title()
         raise _LoginRedirectError(
             f"Sau khi chờ dashboard, trang quay về trang đăng nhập ({page.url}). "
             f"Kiểm tra lại mật khẩu / tài khoản trong cấu hình Sync Robot."
@@ -1154,6 +1154,7 @@ async def do_playwright_sync(config: dict) -> dict:
         browser = await pw.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+                  "--disable-blink-features=AutomationControlled",
                   "--window-size=1280,800"],
         )
         ctx = await browser.new_context(
@@ -1162,6 +1163,11 @@ async def do_playwright_sync(config: dict) -> dict:
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
         )
         page = await ctx.new_page()
+        # Ẩn dấu hiệu headless để tránh bot-detection của SPA
+        await ctx.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            "window.chrome={runtime:{}};"
+        )
 
         try:
             # ── Bước 1: Đăng nhập (dùng hàm chung với test-login) ──────────
@@ -1432,13 +1438,19 @@ async def do_test_login_only(config: dict) -> dict:
         browser = await pw.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
-                  "--disable-extensions", "--window-size=1280,800"],
+                  "--disable-extensions", "--disable-blink-features=AutomationControlled",
+                  "--window-size=1280,800"],
         )
         ctx  = await browser.new_context(
             viewport={"width": 1280, "height": 800},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
         )
         page = await ctx.new_page()
+        # Ẩn dấu hiệu headless để tránh bot-detection của SPA
+        await ctx.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            "window.chrome={runtime:{}};"
+        )
 
         try:
             # ── Bước 1: Mở trang login ─────────────────────────────────────
