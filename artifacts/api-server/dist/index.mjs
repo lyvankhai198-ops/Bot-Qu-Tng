@@ -51727,18 +51727,45 @@ router2.post("/bot/sync-robot/test-login", requireAuth, (req, res) => {
     DATA_DIR,
     API_BASE_URL: process.env["API_BASE_URL"] ?? "http://localhost:8080"
   };
-  execFile("python3", [robotScript, "--test-login"], { env, timeout: 6e4 }, (err, stdout, stderr) => {
-    let result = { ok: false, message: "Kh\xF4ng nh\u1EADn \u0111\u01B0\u1EE3c ph\u1EA3n h\u1ED3i t\u1EEB robot" };
+  execFile("python3", [robotScript, "--test-login"], { env, timeout: 12e4, maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
+    let result = { ok: false, message: "Kh\xF4ng nh\u1EADn \u0111\u01B0\u1EE3c ph\u1EA3n h\u1ED3i t\u1EEB robot", steps: [] };
     const raw = (stdout || "").trim();
     if (raw) {
       try {
         result = JSON.parse(raw);
       } catch {
-        result = { ok: false, message: raw };
+        result = { ok: false, message: raw, steps: [] };
       }
     } else if (err) {
-      const msg = (stderr || err.message || "").slice(0, 300);
-      result = { ok: false, message: `L\u1ED7i: ${msg}` };
+      const msg = (stderr || err.message || "").slice(0, 500);
+      result = { ok: false, message: `L\u1ED7i: ${msg}`, steps: [] };
+    }
+    try {
+      const logs = readJson("sync_robot_logs", []) ?? [];
+      const summary = {
+        type: "test_login",
+        started_at: (/* @__PURE__ */ new Date()).toISOString(),
+        ended_at: (/* @__PURE__ */ new Date()).toISOString(),
+        duration_s: result.duration_s ?? 0,
+        success: result.ok,
+        login_ok: result.ok,
+        download_ok: false,
+        import_ok: false,
+        new_orders: 0,
+        updated_orders: 0,
+        skipped_orders: 0,
+        errors: result.ok ? 0 : 1,
+        message: result.message ?? "",
+        url: result.url ?? "",
+        title: result.title ?? "",
+        error_text: result.error_text ?? "",
+        step_count: Array.isArray(result.steps) ? result.steps.length : 0,
+        steps_summary: Array.isArray(result.steps) ? result.steps.map((s) => ({ step: s.step, ok: s.ok, note: s.note })) : []
+      };
+      logs.push(summary);
+      if (logs.length > 200) logs.splice(0, logs.length - 200);
+      writeJson("sync_robot_logs", logs);
+    } catch (_) {
     }
     res.json(result);
   });

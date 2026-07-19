@@ -1986,15 +1986,46 @@ router.post("/bot/sync-robot/test-login", requireAuth, (req: any, res: any) => {
     API_BASE_URL: process.env["API_BASE_URL"] ?? "http://localhost:8080",
   };
 
-  execFile("python3", [robotScript, "--test-login"], { env, timeout: 60_000 }, (err, stdout, stderr) => {
-    let result: any = { ok: false, message: "Không nhận được phản hồi từ robot" };
+  execFile("python3", [robotScript, "--test-login"], { env, timeout: 120_000, maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
+    let result: any = { ok: false, message: "Không nhận được phản hồi từ robot", steps: [] };
     const raw = (stdout || "").trim();
     if (raw) {
-      try { result = JSON.parse(raw); } catch { result = { ok: false, message: raw }; }
+      try { result = JSON.parse(raw); } catch { result = { ok: false, message: raw, steps: [] }; }
     } else if (err) {
-      const msg = (stderr || err.message || "").slice(0, 300);
-      result = { ok: false, message: `Lỗi: ${msg}` };
+      const msg = (stderr || err.message || "").slice(0, 500);
+      result = { ok: false, message: `Lỗi: ${msg}`, steps: [] };
     }
+
+    // Lưu tóm tắt vào sync_robot_logs (không lưu screenshot để tránh file quá lớn)
+    try {
+      const logs: any[] = readJson("sync_robot_logs", []) ?? [];
+      const summary: any = {
+        type: "test_login",
+        started_at: new Date().toISOString(),
+        ended_at: new Date().toISOString(),
+        duration_s: result.duration_s ?? 0,
+        success: result.ok,
+        login_ok: result.ok,
+        download_ok: false,
+        import_ok: false,
+        new_orders: 0,
+        updated_orders: 0,
+        skipped_orders: 0,
+        errors: result.ok ? 0 : 1,
+        message: result.message ?? "",
+        url: result.url ?? "",
+        title: result.title ?? "",
+        error_text: result.error_text ?? "",
+        step_count: Array.isArray(result.steps) ? result.steps.length : 0,
+        steps_summary: Array.isArray(result.steps)
+          ? result.steps.map((s: any) => ({ step: s.step, ok: s.ok, note: s.note }))
+          : [],
+      };
+      logs.push(summary);
+      if (logs.length > 200) logs.splice(0, logs.length - 200);
+      writeJson("sync_robot_logs", logs);
+    } catch (_) { /* không fail nếu ghi log lỗi */ }
+
     res.json(result);
   });
 });
