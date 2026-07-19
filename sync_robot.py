@@ -539,25 +539,58 @@ async def _get_page_error_text(page) -> str:
     return ""
 
 async def _is_logged_in(page) -> tuple[bool, str]:
-    """Kiểm tra đa tín hiệu đăng nhập."""
-    curr  = page.url
-    title = await page.title()
-    # Tín hiệu 1: URL rời khỏi login
-    url_left_login = not any(kw in curr.lower() for kw in _LOGIN_URL_KEYWORDS)
-    # Tín hiệu 2: Tiêu đề chứa từ khóa dashboard
-    title_ok = any(kw in title.lower() for kw in ("quản lý", "dashboard", "admin", "manager", "home", "trang chủ"))
-    # Tín hiệu 3: Nút logout / avatar xuất hiện
-    has_logout = await _find_visible(page, _LOGOUT_SELECTORS) is not None
-    # Tín hiệu 4: Form login đã biến mất
-    form_gone  = await _find_visible(page, _ACCOUNT_SELECTORS) is None
+    """
+    Kiểm tra phiên đăng nhập THỰC SỰ.
+    KHÔNG chấp nhận chỉ URL đổi khỏi /login, tiêu đề trang, hay toast tạm thời.
+    Cần ít nhất một trong:
+    - Cookie xác thực thực tế (không phải app_locale/login_lang)
+    - localStorage chứa key có hint token/auth/session/jwt/user/access
+    - Nút đăng xuất / avatar tài khoản hiển thị
+    """
+    curr = page.url
 
-    if url_left_login and (has_logout or form_gone or title_ok):
-        return True, f"URL={curr}, tiêu đề={title}"
-    if url_left_login:
-        return True, f"URL đổi sang {curr}"
-    if has_logout and form_gone:
-        return True, "Tìm thấy nút đăng xuất + form login đã ẩn"
-    return False, f"Vẫn ở login — URL={curr}, tiêu đề={title}"
+    # Nếu vẫn ở trang /login → chắc chắn chưa đăng nhập
+    if any(kw in curr.lower() for kw in _LOGIN_URL_KEYWORDS):
+        return False, f"Vẫn ở trang login — URL={curr}"
+
+    # Tín hiệu 1: Cookie xác thực (loại trừ cookie nhiễu UI)
+    _NOISE_COOKIES = {"app_locale", "login_lang"}
+    all_cookies: list = []
+    auth_cookies: list = []
+    try:
+        all_cookies = await page.context.cookies()
+        auth_cookies = [c["name"] for c in all_cookies if c["name"] not in _NOISE_COOKIES]
+    except Exception:
+        pass
+
+    # Tín hiệu 2: localStorage chứa key token/session
+    auth_ls: list = []
+    try:
+        ls_keys = await page.evaluate("""() => {
+            const keys = [];
+            for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+            return keys;
+        }""")
+        _TOKEN_HINTS = ("token", "access", "auth", "jwt", "session", "user")
+        auth_ls = [k for k in (ls_keys or []) if any(h in k.lower() for h in _TOKEN_HINTS)]
+    except Exception:
+        pass
+
+    # Tín hiệu 3: Nút đăng xuất / avatar tài khoản
+    has_logout = await _find_visible(page, _LOGOUT_SELECTORS) is not None
+
+    if auth_cookies:
+        return True, f"Cookie xác thực: {auth_cookies}"
+    if auth_ls:
+        return True, f"localStorage token: {auth_ls}"
+    if has_logout:
+        return True, "Tìm thấy nút đăng xuất/avatar"
+
+    all_names = [c["name"] for c in all_cookies]
+    return False, (
+        f"URL đổi sang {curr} nhưng không có token xác thực — "
+        f"Cookies có: {all_names if all_names else 'trống'}"
+    )
 
 async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, source: str = "sync") -> str:
     """
@@ -663,18 +696,99 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
     _log(f"[login] URL sau redirect: {curr_url}")
     _log(f"[login] Tiêu đề: {curr_title}")
 
-    # 7. Xác nhận đăng nhập thành công
+    # 7. Chờ tối đa 15s để session thực sự được lưu
+    _log("[login] Chờ session thực sự được lưu (tối đa 15s)...")
+    _NOISE_COOKIES = {"app_locale", "login_lang"}
+    _TOKEN_HINTS   = ("token", "access", "auth", "jwt", "session", "user")
+    session_confirmed = False
+    for waited in range(1, 16):
+        # Nếu URL quay về /login → dừng ngay, không chờ thêm
+        if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
+            _log(f"[login] ❌ URL quay về login sau {waited}s: {page.url}")
+            break
+        # Kiểm tra cookie xác thực
+        _auth_c: list = []
+        try:
+            _ck = await page.context.cookies()
+            _auth_c = [c["name"] for c in _ck if c["name"] not in _NOISE_COOKIES]
+        except Exception:
+            pass
+        # Kiểm tra localStorage token
+        _auth_ls: list = []
+        try:
+            _ls = await page.evaluate("""() => {
+                const k = [];
+                for (let i = 0; i < localStorage.length; i++) k.push(localStorage.key(i));
+                return k;
+            }""")
+            _auth_ls = [k for k in (_ls or []) if any(h in k.lower() for h in _TOKEN_HINTS)]
+        except Exception:
+            pass
+        # Kiểm tra logout button
+        _logout = await _find_visible(page, _LOGOUT_SELECTORS) is not None
+        if _auth_c or _auth_ls or _logout:
+            _log(f"[login] ✅ Session xác nhận sau {waited}s — cookies={_auth_c}, ls={_auth_ls}, logout={_logout}")
+            session_confirmed = True
+            break
+        _log(f"[login] Giây {waited}: chưa có session — URL={page.url}")
+        await asyncio.sleep(1)
+
+    if not session_confirmed:
+        # Thu thập diagnostics đầy đủ
+        _dc: list = []
+        _dls: dict = {}
+        _dss: dict = {}
+        try:
+            _dc = await page.context.cookies()
+        except Exception:
+            pass
+        try:
+            _dls = await page.evaluate("""() => {
+                const o = {};
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    o[k] = localStorage.getItem(k);
+                }
+                return o;
+            }""")
+        except Exception:
+            pass
+        try:
+            _dss = await page.evaluate("""() => {
+                const o = {};
+                for (let i = 0; i < sessionStorage.length; i++) {
+                    const k = sessionStorage.key(i);
+                    o[k] = sessionStorage.getItem(k);
+                }
+                return o;
+            }""")
+        except Exception:
+            pass
+        _curr_now = page.url
+        _err_text = await _get_page_error_text(page)
+        diag = (
+            f"URL: {_curr_now}\n"
+            f"Cookies: {[c['name'] for c in _dc]}\n"
+            f"localStorage: {str(_dls)[:500]}\n"
+            f"sessionStorage: {str(_dss)[:300]}\n"
+            f"Lỗi trang: {_err_text}"
+        )
+        _step("Xác minh session", False, diag)
+        raise RuntimeError(f"Đăng nhập thất bại — không có session sau 15s\n{diag}")
+
+    # 8. Xác nhận cuối bằng _is_logged_in
     logged_in, reason = await _is_logged_in(page)
+    final_url = page.url
     if not logged_in:
         err_text = await _get_page_error_text(page)
-        msg = f"Đăng nhập thất bại — {reason}"
+        msg = f"Xác minh cuối thất bại — {reason}"
         if err_text:
             msg += f" | lỗi trang: {err_text}"
-        _step("Xác minh sau đăng nhập", False, f"URL: {curr_url}\nTiêu đề: {curr_title}\n{msg}")
+        _step("Xác minh sau đăng nhập", False, f"URL: {final_url}\n{msg}")
         raise RuntimeError(msg)
 
-    _step(f"✅ Đăng nhập thành công → {curr_url}", True, f"Tiêu đề: {curr_title}\n{reason}")
-    return curr_url
+    _step(f"✅ Đăng nhập thành công → {final_url}", True, f"Tiêu đề: {curr_title}\n{reason}")
+    return final_url
 
 # ── Playwright helpers: navigate + download ────────────────────────────────────
 
@@ -876,6 +990,20 @@ async def _open_orders_page(page) -> None:
     from playwright.async_api import TimeoutError as PwTimeout
 
     SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ── 0. Guard: phiên đăng nhập phải còn sống trước khi làm gì ─────────────
+    _guard_url = page.url
+    if any(kw in _guard_url.lower() for kw in _LOGIN_URL_KEYWORDS):
+        try:
+            _gc = await page.context.cookies()
+            _gnames = [c["name"] for c in _gc]
+        except Exception:
+            _gnames = []
+        raise RuntimeError(
+            f"Phiên đăng nhập đã bị mất trước khi mở Đơn hàng — "
+            f"URL={_guard_url} | Cookies: {_gnames}"
+        )
+    logger.info(f"[SYNC] _open_orders_page: guard OK — URL={_guard_url}")
 
     # ── 1. Chờ dashboard tải hoàn toàn ────────────────────────────────────────
     logger.info("[SYNC] Waiting for dashboard initialization")
@@ -1177,26 +1305,41 @@ async def do_playwright_sync(config: dict) -> dict:
             "window.chrome={runtime:{}};"
         )
 
+        _ctx_id  = id(ctx)
+        _page_id = id(page)
+        logger.info(f"[SYNC] Context created — ctx_id={_ctx_id} | page_id={_page_id}")
+
         try:
             # ── Bước 1: Đăng nhập — dùng loginAndWaitReady (CHUNG với Test Login) ─
-            logger.info("[SYNC] Bắt đầu đăng nhập...")
+            logger.info(f"[SYNC] Bắt đầu đăng nhập... ctx_id={_ctx_id}")
             try:
-                await loginAndWaitReady(page, config, source="sync")
-                logger.info("[SYNC] Login successful")
+                login_url_result = await loginAndWaitReady(page, config, source="sync")
+                # Log kỹ thuật sau đăng nhập
+                _post_ck = await ctx.cookies()
+                logger.info(
+                    f"[SYNC] Login OK — ctx_id={_ctx_id} | page_id={id(page)} | "
+                    f"URL={login_url_result} | "
+                    f"Cookies: {[c['name'] for c in _post_ck]}"
+                )
             except Exception as ex:
                 return {"login_ok": False, "download_ok": False, "path": None, "dir": download_dir,
                         "error": str(ex)}
 
             # ── Bước 2: Mở trang Đơn hàng qua menu (KHÔNG goto /orders) ────
+            # Không tạo context mới — dùng đúng ctx và page từ đăng nhập
+            logger.info(f"[SYNC] Mở menu Đơn hàng — ctx_id={_ctx_id} | page_id={id(page)} | URL trước={page.url}")
             try:
                 await _open_orders_page(page)
+                logger.info(f"[SYNC] Đơn hàng page OK — URL={page.url}")
             except Exception as ex:
                 logger.error(f"[SYNC] Lỗi mở trang đơn hàng: {ex}")
                 return {"login_ok": True, "download_ok": False, "path": None, "dir": download_dir,
                         "error": str(ex)}
 
             # ── Bước 3: Tải XLSX ────────────────────────────────────────────
-            logger.info("[SYNC] Starting order download")
+            logger.info(
+                f"[SYNC] Starting order download — ctx_id={_ctx_id} | page_id={id(page)} | URL={page.url}"
+            )
             try:
                 out_path = await _download_orders_xlsx(page, download_dir)
             except Exception as ex:
@@ -1205,6 +1348,7 @@ async def do_playwright_sync(config: dict) -> dict:
                         "error": str(ex)}
 
         finally:
+            logger.info(f"[SYNC] Đóng browser — ctx_id={_ctx_id}")
             await browser.close()
 
     logger.info("[SYNC] Starting order import")
@@ -1349,6 +1493,16 @@ def _cleanup_old_screenshots():
                 f.unlink(missing_ok=True)
     except Exception:
         pass
+
+def _format_duration(seconds: float) -> str:
+    """Định dạng thời gian: '1 phút 4.09 giây' thay vì '64.09s'."""
+    s = round(seconds, 2)
+    if s < 60:
+        return f"{s} giây"
+    m = int(s // 60)
+    rem = round(s % 60, 2)
+    return f"{m} phút {rem} giây"
+
 
 def _safe_text(text: str, max_len: int = 1000) -> str:
     """Cắt text dài, loại bỏ chuỗi base64."""
