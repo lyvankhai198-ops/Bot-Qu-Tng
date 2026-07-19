@@ -98,6 +98,38 @@ async function apiReorderShopChannels(ids: string[]): Promise<ShopChannel[]> {
   return res.json()
 }
 
+// ── Gift shop channels helpers ────────────────────────────────────────────────
+async function fetchGiftShopChannels(): Promise<ShopChannel[]> {
+  const res = await fetch("/api/bot/gift-shop-channels", { headers: authHeader() })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+async function apiAddGiftShopChannel(data: Omit<ShopChannel, "id" | "order">): Promise<ShopChannel> {
+  const res = await fetch("/api/bot/gift-shop-channels", {
+    method: "POST", headers: { ...authHeader(), "Content-Type": "application/json" }, body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+async function apiUpdateGiftShopChannel(id: string, data: Partial<ShopChannel>): Promise<ShopChannel> {
+  const res = await fetch(`/api/bot/gift-shop-channels/${id}`, {
+    method: "PUT", headers: { ...authHeader(), "Content-Type": "application/json" }, body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+async function apiDeleteGiftShopChannel(id: string): Promise<void> {
+  const res = await fetch(`/api/bot/gift-shop-channels/${id}`, { method: "DELETE", headers: authHeader() })
+  if (!res.ok) throw new Error(await res.text())
+}
+async function apiReorderGiftShopChannels(ids: string[]): Promise<ShopChannel[]> {
+  const res = await fetch("/api/bot/gift-shop-channels/reorder", {
+    method: "PUT", headers: { ...authHeader(), "Content-Type": "application/json" }, body: JSON.stringify({ ids }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 export default function Settings() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -156,6 +188,13 @@ export default function Settings() {
   const [newShopCh, setNewShopCh] = useState({ name: "", username: "", link: "", icon: "🛒" })
   const [editingShopId, setEditingShopId] = useState<string | null>(null)
   const [editShopCh, setEditShopCh] = useState<Partial<ShopChannel>>({})
+
+  // ── Gift shop channels state ─────────────────────────────────────────────
+  const [giftShopChannels, setGiftShopChannels] = useState<ShopChannel[]>([])
+  const [giftShopSaving, setGiftShopSaving] = useState(false)
+  const [newGiftShopCh, setNewGiftShopCh] = useState({ name: "", username: "", link: "", icon: "🛍️" })
+  const [editingGiftShopId, setEditingGiftShopId] = useState<string | null>(null)
+  const [editGiftShopCh, setEditGiftShopCh] = useState<Partial<ShopChannel>>({})
 
   const handleFetchChannelInfo = async () => {
     // Accept username (@handle), link (t.me/...), or numeric chatId
@@ -394,6 +433,72 @@ export default function Settings() {
     setShopChannels(newOrder)
     try { await apiReorderShopChannels(newOrder.map(c => c.id)) }
     catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" }); loadShopChannels() }
+  }
+
+  // ── Gift shop channel handlers ────────────────────────────────────────────
+  const loadGiftShopChannels = useCallback(async () => {
+    try { setGiftShopChannels(await fetchGiftShopChannels()) } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { loadGiftShopChannels() }, [loadGiftShopChannels])
+
+  const handleAddGiftShopChannel = async () => {
+    const { name, username, link, icon } = newGiftShopCh
+    if (!name.trim() || !link.trim()) {
+      toast({ title: "Lỗi", description: "Tên và Link là bắt buộc", variant: "destructive" }); return
+    }
+    setGiftShopSaving(true)
+    try {
+      const ch = await apiAddGiftShopChannel({ name: name.trim(), username: username.trim(), link: link.trim(), icon: icon.trim() || "🛍️", enabled: true })
+      setGiftShopChannels(prev => [...prev, ch])
+      setNewGiftShopCh({ name: "", username: "", link: "", icon: "🛍️" })
+      toast({ title: "Đã thêm kênh", description: ch.name })
+    } catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    } finally { setGiftShopSaving(false) }
+  }
+
+  const handleToggleGiftShopChannel = async (id: string, enabled: boolean) => {
+    setGiftShopChannels(prev => prev.map(c => c.id === id ? { ...c, enabled } : c))
+    try { await apiUpdateGiftShopChannel(id, { enabled }) }
+    catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" }); loadGiftShopChannels() }
+  }
+
+  const handleDeleteGiftShopChannel = async (id: string) => {
+    const ch = giftShopChannels.find(c => c.id === id)
+    setGiftShopChannels(prev => prev.filter(c => c.id !== id))
+    try { await apiDeleteGiftShopChannel(id); toast({ title: "Đã xoá", description: ch?.name }) }
+    catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" }); loadGiftShopChannels() }
+  }
+
+  const handleStartEditGiftShop = (ch: ShopChannel) => {
+    setEditingGiftShopId(ch.id)
+    setEditGiftShopCh({ name: ch.name, username: ch.username, link: ch.link, icon: ch.icon })
+  }
+
+  const handleSaveEditGiftShop = async (id: string) => {
+    if (!editGiftShopCh.name?.trim() || !editGiftShopCh.link?.trim()) {
+      toast({ title: "Lỗi", description: "Tên và Link là bắt buộc", variant: "destructive" }); return
+    }
+    try {
+      const updated = await apiUpdateGiftShopChannel(id, editGiftShopCh)
+      setGiftShopChannels(prev => prev.map(c => c.id === id ? updated : c))
+      setEditingGiftShopId(null)
+      toast({ title: "Đã lưu", description: updated.name })
+    } catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" }) }
+  }
+
+  const handleMoveGiftShop = async (id: string, direction: "up" | "down") => {
+    const sorted = [...giftShopChannels].sort((a, b) => a.order - b.order)
+    const idx = sorted.findIndex(c => c.id === id)
+    if (direction === "up" && idx === 0) return
+    if (direction === "down" && idx === sorted.length - 1) return
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1
+    const newArr = [...sorted]
+    ;[newArr[idx], newArr[swapIdx]] = [newArr[swapIdx], newArr[idx]]
+    const newOrder = newArr.map((c, i) => ({ ...c, order: i + 1 }))
+    setGiftShopChannels(newOrder)
+    try { await apiReorderGiftShopChannels(newOrder.map(c => c.id)) }
+    catch (e: any) { toast({ title: "Lỗi", description: e.message, variant: "destructive" }); loadGiftShopChannels() }
   }
 
   if (isLoading) {
@@ -909,6 +1014,142 @@ export default function Settings() {
             </Button>
           </div>
 
+        </CardContent>
+      </Card>
+
+      {/* ── Kênh bán hàng sau khi phát quà ─────────────────────────────────── */}
+      <div>
+        <h2 className="text-lg md:text-xl font-semibold tracking-tight flex items-center gap-2 mt-2 mb-1">
+          <ShoppingBag className="w-5 h-5 text-green-600" /> Kênh bán hàng sau khi phát quà
+        </h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Các nút URL này xuất hiện ngay trong tin nhắn nhận quà thành công. Mỗi kênh bật = 1 nút riêng biệt.
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Danh sách kênh hiển thị sau khi nhận quà</CardTitle>
+          <CardDescription>
+            Thứ tự hiển thị dùng ↑ ↓ · Tất cả kênh đang bật sẽ xuất hiện dưới dạng nút trong tin nhắn quà
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Preview */}
+          {giftShopChannels.filter(c => c.enabled).length > 0 && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-1.5">
+              <p className="font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">Xem trước tin nhắn quà</p>
+              <p className="text-foreground">🎉 <b>Chúc mừng! Bạn đã nhận quà thành công.</b></p>
+              <p className="text-muted-foreground">📧 Tài khoản: … &nbsp;🔑 Mật khẩu: …</p>
+              <p className="text-foreground">🛍️ <b>Nếu cần mua tài khoản Premium, vui lòng tham gia các kênh bán hàng bên dưới:</b></p>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {[...giftShopChannels].filter(c => c.enabled).sort((a,b)=>a.order-b.order).map(ch => (
+                  <span key={ch.id} className="inline-flex items-center gap-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 text-[11px]">
+                    {ch.icon} {ch.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Channel list */}
+          {giftShopChannels.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground text-sm">
+              <ShoppingBag className="h-6 w-6 mx-auto mb-2 opacity-30" />
+              Chưa có kênh nào — thêm bên dưới để hiển thị nút trong tin nhắn quà
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {[...giftShopChannels].sort((a, b) => a.order - b.order).map((ch, idx, arr) => (
+                <div key={ch.id} className={`rounded-lg border transition-colors ${ch.enabled ? "bg-background border-border" : "bg-muted/30 border-border/40 opacity-60"}`}>
+                  {editingGiftShopId === ch.id ? (
+                    <div className="p-3 space-y-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Icon</Label>
+                          <Input value={editGiftShopCh.icon ?? ""} onChange={e => setEditGiftShopCh(v => ({ ...v, icon: e.target.value }))} placeholder="🛍️" className="min-h-[40px] text-center text-lg" maxLength={4} />
+                        </div>
+                        <div className="space-y-1 sm:col-span-3">
+                          <Label className="text-xs">Tên hiển thị *</Label>
+                          <Input value={editGiftShopCh.name ?? ""} onChange={e => setEditGiftShopCh(v => ({ ...v, name: e.target.value }))} placeholder="Shop AI Chính" className="min-h-[40px]" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Username</Label>
+                          <Input value={editGiftShopCh.username ?? ""} onChange={e => setEditGiftShopCh(v => ({ ...v, username: e.target.value }))} placeholder="@shoptaikhoan" className="min-h-[40px]" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Link Telegram *</Label>
+                          <Input value={editGiftShopCh.link ?? ""} onChange={e => setEditGiftShopCh(v => ({ ...v, link: e.target.value }))} placeholder="https://t.me/..." className="min-h-[40px]" />
+                        </div>
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <Button size="sm" variant="outline" onClick={() => setEditingGiftShopId(null)} className="gap-1"><X className="w-3 h-3" />Huỷ</Button>
+                        <Button size="sm" onClick={() => handleSaveEditGiftShop(ch.id)} className="gap-1"><Check className="w-3 h-3" />Lưu</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 p-3">
+                      <span className="text-xl shrink-0">{ch.icon || "🛍️"}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-sm">{ch.name}</span>
+                          {ch.username && <Badge variant="secondary" className="font-mono text-xs">{ch.username}</Badge>}
+                        </div>
+                        {ch.link && (
+                          <a href={ch.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-600 text-xs flex items-center gap-0.5 mt-0.5 truncate max-w-[200px]">
+                            <ExternalLink className="w-3 h-3 shrink-0" />{ch.link}
+                          </a>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => handleMoveGiftShop(ch.id, "up")} disabled={idx === 0} className="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors" title="Lên">
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleMoveGiftShop(ch.id, "down")} disabled={idx === arr.length - 1} className="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors" title="Xuống">
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleStartEditGiftShop(ch)} className="p-1 text-muted-foreground hover:text-blue-500 transition-colors" title="Chỉnh sửa">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <Switch checked={ch.enabled} onCheckedChange={v => handleToggleGiftShopChannel(ch.id, v)} />
+                        <button onClick={() => handleDeleteGiftShopChannel(ch.id)} className="p-1 text-muted-foreground hover:text-destructive transition-colors" title="Xoá">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add new gift shop channel */}
+          <div className="border border-dashed border-border/70 rounded-lg p-4 space-y-3 bg-muted/20">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Thêm kênh mới</p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Icon</Label>
+                <Input value={newGiftShopCh.icon} onChange={e => setNewGiftShopCh(n => ({ ...n, icon: e.target.value }))} placeholder="🛍️" className="min-h-[44px] text-center text-lg" maxLength={4} />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <Label className="text-xs">Tên hiển thị *</Label>
+                <Input value={newGiftShopCh.name} onChange={e => setNewGiftShopCh(n => ({ ...n, name: e.target.value }))} placeholder="Shop AI Chính" className="min-h-[44px]" />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <Label className="text-xs">Username</Label>
+                <Input value={newGiftShopCh.username} onChange={e => setNewGiftShopCh(n => ({ ...n, username: e.target.value }))} placeholder="@shoptaikhoan" className="min-h-[44px]" />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Link Telegram *</Label>
+              <Input value={newGiftShopCh.link} onChange={e => setNewGiftShopCh(n => ({ ...n, link: e.target.value }))} placeholder="https://t.me/shoptaikhoan hoặc https://t.me/+xxxxx" className="min-h-[44px]" />
+            </div>
+            <Button onClick={handleAddGiftShopChannel} disabled={giftShopSaving || !newGiftShopCh.name.trim() || !newGiftShopCh.link.trim()} className="min-h-[44px] bg-green-600 hover:bg-green-700">
+              <Plus className="w-4 h-4 mr-1" /> Thêm kênh sau khi phát quà
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

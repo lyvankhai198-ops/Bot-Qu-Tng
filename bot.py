@@ -64,10 +64,10 @@ def shop_inline(L: str, settings: dict) -> InlineKeyboardMarkup:
         InlineKeyboardButton(t(L, "btn_open_shop"), url=settings.get("shop_link", ""))
     ]])
 
-def get_active_shop_channels() -> list:
-    """Load enabled shop channels from data/shop_channels.json, sorted by order."""
+def _load_active_channels_from(filename: str) -> list:
+    """Generic: load enabled channels from a data/*.json file, sorted by order."""
     try:
-        path = os.path.join(os.path.dirname(__file__), "data", "shop_channels.json")
+        path = os.path.join(os.path.dirname(__file__), "data", filename)
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
                 channels = _json.load(f)
@@ -77,6 +77,14 @@ def get_active_shop_channels() -> list:
     except Exception:
         pass
     return []
+
+def get_active_shop_channels() -> list:
+    """Load enabled shop channels (button menu), sorted by order."""
+    return _load_active_channels_from("shop_channels.json")
+
+def get_active_gift_shop_channels() -> list:
+    """Load enabled gift-delivery shop channels, sorted by order."""
+    return _load_active_channels_from("gift_shop_channels.json")
 
 def shop_channels_inline(L: str, channels: list) -> InlineKeyboardMarkup:
     """Inline keyboard with one button per active shop channel + back button."""
@@ -666,18 +674,62 @@ async def _claim_gift(user, context, L: str, settings: dict) -> None:
         await context.bot.send_message(user.id, t(L, "gift_empty"))
         return
 
-    email    = account.get("email", "")
-    password = account.get("password", "")
-    now_str  = datetime.now().isoformat()
+    email        = account.get("email", "")
+    password     = account.get("password", "")
+    account_type = account.get("type", "")
+    now_str      = datetime.now().isoformat()
 
     db.add_claim(round_id, user.id, user.username, user.first_name, email, now_str)
     db.add_log("CLAIM_GIFT", f"@{user.username} ({user.id})", "")
 
+    # ── Build gift message ────────────────────────────────────────────────────
+    vi = L == "vi"
+    type_line = (f"Loại tài khoản: {account_type}\n" if vi else f"Account type: {account_type}\n") if account_type else ""
+
+    if vi:
+        msg = (
+            "🎉 <b>Chúc mừng! Bạn đã nhận quà thành công.</b>\n\n"
+            f"📧 <b>Tài khoản:</b>\n<code>{email}</code>\n\n"
+            f"🔑 <b>Mật khẩu:</b>\n<code>{password}</code>\n\n"
+            "📌 <b>Ghi chú:</b>\n"
+            f"{type_line}"
+            "• Đây là tài khoản quà tặng miễn phí.\n"
+            "• Vui lòng đổi mật khẩu nếu tài khoản hỗ trợ đổi.\n"
+            "• Shop không bảo hành tài khoản quà tặng.\n"
+            "• Mỗi tài khoản chỉ được nhận một lần theo quy định của shop."
+        )
+    else:
+        msg = (
+            "🎉 <b>Congratulations! You have claimed your gift successfully.</b>\n\n"
+            f"📧 <b>Account:</b>\n<code>{email}</code>\n\n"
+            f"🔑 <b>Password:</b>\n<code>{password}</code>\n\n"
+            "📌 <b>Note:</b>\n"
+            f"{type_line}"
+            "• This is a free gift account.\n"
+            "• Please change the password if the account supports it.\n"
+            "• The shop does not provide warranty for gift accounts.\n"
+            "• Each account can only be claimed once per the shop's rules."
+        )
+
+    # ── Build gift shop channels keyboard ─────────────────────────────────────
+    gift_channels = get_active_gift_shop_channels()
+    if gift_channels:
+        if vi:
+            msg += "\n\n🛍️ <b>Nếu cần mua tài khoản Premium, vui lòng tham gia các kênh bán hàng bên dưới:</b>"
+        else:
+            msg += "\n\n🛍️ <b>For Premium accounts, please visit our sales channels below:</b>"
+
+    rows = [
+        [InlineKeyboardButton(f"{ch.get('icon','🛍️')} {ch.get('name','Shop')}", url=ch["link"])]
+        for ch in gift_channels if ch.get("link")
+    ]
+    keyboard = InlineKeyboardMarkup(rows) if rows else None
+
     await context.bot.send_message(
         user.id,
-        t(L, "gift_success", email=email, password=password),
+        msg,
         parse_mode=ParseMode.HTML,
-        reply_markup=shop_inline(L, settings),
+        reply_markup=keyboard,
     )
 
     if ADMIN_ID:
