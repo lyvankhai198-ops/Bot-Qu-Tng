@@ -427,10 +427,11 @@ export default function SyncRobot() {
     setIsDirty(false)
   }
 
-  function StepIcon({ ok }: { ok: boolean }) {
-    return ok
-      ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-      : <XCircle      className="h-4 w-4 text-red-500 shrink-0" />
+  // ok=true → ✅  ok=false → ❌  ok=null → ⏭ (bước chưa chạy)
+  function StepIcon({ ok }: { ok: boolean | null }) {
+    if (ok === true)  return <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+    if (ok === false) return <XCircle      className="h-4 w-4 text-red-500 shrink-0" />
+    return <span className="h-4 w-4 text-muted-foreground shrink-0 text-center leading-4 text-xs font-bold select-none">⏭</span>
   }
 
   const lastRun = status.last_run
@@ -658,14 +659,20 @@ export default function SyncRobot() {
                   </div>
                   <hr className="border-border" />
                   <div className="space-y-1.5">
-                    {([
-                      { label: "Đăng nhập",       ok: lastRun.login_ok    },
-                      { label: "Tải file XLSX",    ok: lastRun.download_ok },
-                      { label: "Import đơn hàng", ok: lastRun.import_ok   },
-                    ] as const).map(s => (
+                    {((): { label: string; ok: boolean | null }[] => {
+                      // Cascade: bước chưa chạy hiện ⏭ (null), không hiện ❌
+                      const loginOk    = lastRun.login_ok    ?? false
+                      const downloadOk = loginOk ? (lastRun.download_ok ?? false) : null
+                      const importOk   = (loginOk && downloadOk === true) ? (lastRun.import_ok ?? false) : null
+                      return [
+                        { label: "Đăng nhập",       ok: loginOk    },
+                        { label: "Tải file XLSX",    ok: downloadOk },
+                        { label: "Import đơn hàng", ok: importOk   },
+                      ]
+                    })().map(s => (
                       <div key={s.label} className="flex items-center gap-2 text-xs">
                         <StepIcon ok={s.ok} />
-                        <span className={s.ok ? "" : "text-muted-foreground"}>{s.label}</span>
+                        <span className={s.ok === true ? "" : "text-muted-foreground"}>{s.label}</span>
                       </div>
                     ))}
                   </div>

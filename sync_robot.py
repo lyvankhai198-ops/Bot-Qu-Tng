@@ -558,12 +558,13 @@ async def _is_logged_in(page) -> tuple[bool, str]:
         return True, "Tìm thấy nút đăng xuất + form login đã ẩn"
     return False, f"Vẫn ở login — URL={curr}, tiêu đề={title}"
 
-async def login_to_website(page, config: dict, log_fn=None) -> str:
+async def login_to_website(page, config: dict, log_fn=None, source: str = "sync") -> str:
     """
     Hàm đăng nhập CHUNG — dùng bởi cả Sync và Test-login.
     Trả về URL sau khi đăng nhập thành công.
     Raise RuntimeError nếu thất bại.
     log_fn(msg): callback tuỳ chọn để ghi log.
+    source: "sync" | "test-login" — dùng cho log [AUTH].
     """
     from playwright.async_api import TimeoutError as PwTimeout
 
@@ -578,12 +579,43 @@ async def login_to_website(page, config: dict, log_fn=None) -> str:
     account   = config.get("email", "")
     password  = config.get("password", "")
 
+    # Log [AUTH] an toàn — không log nội dung mật khẩu
+    _log(f"[AUTH] Source: {source}")
+    _log(f"[AUTH] Username loaded: {'yes' if account else 'NO'}")
+    _log(f"[AUTH] Password loaded: {'yes' if password else 'NO'}")
+
+    if not account or not password:
+        missing = []
+        if not account:  missing.append("tài khoản")
+        if not password: missing.append("mật khẩu")
+        raise RuntimeError(f"Chưa có {', '.join(missing)} trong cấu hình đã lưu")
+
     # 1. Mở trang login
+    _log(f"[SYNC] Starting shared login function")
     _log(f"[login] Mở trang: {login_url}")
     await page.goto(login_url, timeout=30_000, wait_until="domcontentloaded")
     _log(f"[login] URL sau goto: {page.url}")
 
-    # 2. Tài khoản
+    # 1b. Nếu website tự redirect ra khỏi trang login → đã đăng nhập sẵn
+    if not any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
+        _log(f"[login] ✅ Trang tự redirect sang {page.url} — đã có phiên đăng nhập")
+        return page.url
+
+    # 2. Chờ input username xuất hiện (tránh scan selector khi trang chưa render)
+    _log("[login] Chờ form đăng nhập render...")
+    try:
+        await page.locator('input[name="username"]').first.wait_for(state="visible", timeout=30_000)
+        _log("[login] Form đăng nhập đã sẵn sàng (input[name='username'] visible)")
+    except PwTimeout:
+        # Thử thêm một selector phổ biến khác trước khi báo lỗi
+        _log("[login] input[name='username'] chưa visible — thử chờ input[type='email']...")
+        try:
+            await page.locator('input[type="email"]').first.wait_for(state="visible", timeout=10_000)
+            _log("[login] Form đăng nhập đã sẵn sàng (input[type='email'] visible)")
+        except PwTimeout:
+            _log("[login] Không tìm thấy form sau 40s — tiếp tục scan selector")
+
+    # 3. Tìm ô tài khoản
     acc_sel = await _find_visible(page, _ACCOUNT_SELECTORS)
     if not acc_sel:
         raise RuntimeError(
@@ -593,7 +625,7 @@ async def login_to_website(page, config: dict, log_fn=None) -> str:
     _log(f"[login] Selector tài khoản: {acc_sel}")
     await page.locator(acc_sel).first.fill(account)
 
-    # 3. Mật khẩu
+    # 4. Tìm ô mật khẩu
     pw_sel = await _find_visible(page, _PW_SELECTORS)
     if not pw_sel:
         raise RuntimeError(
@@ -603,7 +635,7 @@ async def login_to_website(page, config: dict, log_fn=None) -> str:
     _log(f"[login] Selector mật khẩu: {pw_sel}")
     await page.locator(pw_sel).first.fill(password)
 
-    # 4. Nút đăng nhập
+    # 5. Tìm nút đăng nhập
     submit_sel = await _find_visible(page, _SUBMIT_SELECTORS)
     if not submit_sel:
         raise RuntimeError(
@@ -613,7 +645,7 @@ async def login_to_website(page, config: dict, log_fn=None) -> str:
     _log(f"[login] Selector nút đăng nhập: {submit_sel}")
     url_before = page.url
 
-    # 5. Click + chờ redirect
+    # 6. Click + chờ redirect
     await page.locator(submit_sel).first.click()
     _log(f"[login] Đã click — URL trước: {url_before}")
 
@@ -630,12 +662,12 @@ async def login_to_website(page, config: dict, log_fn=None) -> str:
     except PwTimeout:
         pass
 
-    curr_url  = page.url
+    curr_url   = page.url
     curr_title = await page.title()
     _log(f"[login] URL sau redirect: {curr_url}")
     _log(f"[login] Tiêu đề: {curr_title}")
 
-    # 6. Xác nhận
+    # 7. Xác nhận đăng nhập thành công
     logged_in, reason = await _is_logged_in(page)
     if not logged_in:
         err_text = await _get_page_error_text(page)
@@ -645,7 +677,8 @@ async def login_to_website(page, config: dict, log_fn=None) -> str:
         _log(f"[login] ❌ {msg}")
         raise RuntimeError(msg)
 
-    _log(f"[login] ✅ Thành công — {reason}")
+    _log(f"[SYNC] Login successful")
+    _log(f"[login] ✅ {reason}")
     return curr_url
 
 # ── Playwright helpers: navigate + download ────────────────────────────────────
