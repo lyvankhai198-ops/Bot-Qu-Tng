@@ -623,8 +623,13 @@ def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
         warranty_status = "active" if remaining_days > 0 else "expired"
         can_report = warranty_status == "active"
 
+    # Block if this specific item was individually refunded
+    if item.get("item_status") == "refunded":
+        can_report = False
+        warranty_status = "refunded"
+
     # Block warranty reporting for orders that were already refunded
-    if order.get("status") == "refunded":
+    elif order.get("status") == "refunded":
         can_report = False
 
     # Pro-rated refund
@@ -972,6 +977,19 @@ def get_refund_record(order_id: str) -> dict | None:
         return None
     history = load("refund_history", [])
     matches = [r for r in history if r.get("orderId") == order_id]
+    return matches[-1] if matches else None
+
+def get_refund_record_by_account(order_id: str = None, account: str = None) -> dict | None:
+    """Return the most recent refund record matching order_id and/or account email."""
+    history = load("refund_history", [])
+    matches = []
+    if order_id and account:
+        matches = [r for r in history if r.get("orderId") == order_id and
+                   (r.get("account") or r.get("email") or "").lower() == (account or "").lower()]
+    if not matches and order_id:
+        matches = [r for r in history if r.get("orderId") == order_id]
+    if not matches and account:
+        matches = [r for r in history if (r.get("account") or r.get("email") or "").lower() == (account or "").lower()]
     return matches[-1] if matches else None
 
 # ─── Required channels (join-gate for gift) ──────────────────────────────────

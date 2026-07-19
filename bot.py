@@ -246,7 +246,9 @@ def _fmt_order(L: str, order: dict, settings: dict,
             lines.append(f"💰 {'Giá mua' if vi else 'Price'}: {price_str}")
             if can_report and refund_str:
                 lines.append(f"💵 {'Hoàn dự kiến' if vi else 'Est. Refund'}: {refund_str}")
-            is_refunded = order.get("status") == "refunded"
+            item_refunded  = item.get("item_status") == "refunded" if item else False
+            order_refunded = order.get("status") == "refunded"
+            is_refunded    = item_refunded or order_refunded
             if is_refunded:
                 status_label = "Đã hoàn tiền" if vi else "Refunded"
             else:
@@ -258,7 +260,12 @@ def _fmt_order(L: str, order: dict, settings: dict,
 
             # Refund detail block
             if is_refunded:
-                ref = db.get_refund_record(order.get("orderId", ""))
+                item_email = (item.get("original_account") or item.get("email") or "") if item else ""
+                ref = (
+                    db.get_refund_record_by_account(order.get("orderId", ""), item_email)
+                    if item_refunded and not order_refunded
+                    else db.get_refund_record(order.get("orderId", ""))
+                )
                 lines.append("")
                 lines.append("━" * 28)
                 lines.append(f"💰 <b>{'ĐÃ HOÀN TIỀN' if vi else 'REFUNDED'}</b>")
@@ -460,7 +467,10 @@ def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
         can   = wdata["canReport"]
         w_st  = wdata["warrantyStatus"]
 
-        if w_st == "expired":
+        if w_st == "refunded" or item.get("item_status") == "refunded":
+            label = "Đã hoàn tiền" if vi else "Refunded"
+            icon  = "💰"
+        elif w_st == "expired":
             label = "Hết bảo hành" if vi else "Warranty expired"
             icon  = "❌"
         elif rep_count > 0:
@@ -1409,16 +1419,29 @@ async def handle_report_issue_input(update: Update, context: ContextTypes.DEFAUL
     if found_item and order:
         wdata = db.calc_item_warranty(found_item, order, settings)
         if not wdata["canReport"]:
-            msg = (
-                "❌ <b>Đơn hàng đã hết thời hạn bảo hành.</b>\n\n"
-                "Không thể tạo yêu cầu hỗ trợ cho đơn này."
-            ) if vi else (
-                "❌ <b>This order's warranty has expired.</b>\n\n"
-                "Cannot create a support request for this order."
-            )
+            w_st = wdata.get("warrantyStatus", "")
+            item_refunded  = found_item.get("item_status") == "refunded"
+            order_refunded = order.get("status") == "refunded"
+            if item_refunded or order_refunded or w_st == "refunded":
+                msg = (
+                    "💰 <b>Đơn hàng đã được hoàn tiền.</b>\n\n"
+                    "⚠️ Đơn hàng này đã được hoàn tiền và không thể tiếp tục gửi yêu cầu báo lỗi hoặc bảo hành."
+                ) if vi else (
+                    "💰 <b>This order has been refunded.</b>\n\n"
+                    "⚠️ This order has been refunded and no further error reports or warranty requests are allowed."
+                )
+                db.add_log("WARRANTY_BLOCKED_REFUNDED", f"@{user.username} ({user.id}) | Order: {order_id}", "")
+            else:
+                msg = (
+                    "❌ <b>Đơn hàng đã hết thời hạn bảo hành.</b>\n\n"
+                    "Không thể tạo yêu cầu hỗ trợ cho đơn này."
+                ) if vi else (
+                    "❌ <b>This order's warranty has expired.</b>\n\n"
+                    "Cannot create a support request for this order."
+                )
+                db.add_log("WARRANTY_BLOCKED_EXPIRED", f"@{user.username} ({user.id}) | Order: {order_id}", "")
             for key in ("conv_state", "_report_order_id", "_report_email", "_report_item_id"):
                 db.clear_user_state(user.id, key)
-            db.add_log("WARRANTY_BLOCKED_EXPIRED", f"@{user.username} ({user.id}) | Order: {order_id}", "")
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
             return
 
@@ -1459,6 +1482,37 @@ async def callback_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if data.startswith("order:report:"):
         order_id = data[len("order:report:"):]
+        vi = L == "vi"
+        # Backend refund gate — blocks even when button was already shown
+        order = db.get_order(order_id)
+        if order and order.get("status") == "refunded":
+            await query.answer(
+                "💰 Đơn hàng này đã được hoàn tiền. Không thể báo lỗi." if vi
+                else "💰 This order has been refunded. Cannot report errors.",
+                show_alert=True,
+            )
+            return
+        # Also check per-item refund using stored item_id
+        stored_item_id = db.get_user_state(user.id).get("_report_item_id", "")
+        if stored_item_id and order_id:
+            settings_ = db.get_settings()
+            for it in db.get_order_items(order_id):
+                if it.get("itemId") == stored_item_id:
+                    if it.get("item_status") == "refunded":
+                        await query.answer(
+                            "💰 Tài khoản này đã được hoàn tiền. Không thể báo lỗi." if vi
+                            else "💰 This account has been refunded. Cannot report errors.",
+                            show_alert=True,
+                        )
+                        return
+                    wdata_ = db.calc_item_warranty(it, order or {}, settings_)
+                    if not wdata_["canReport"]:
+                        label = ("💰 Đã hoàn tiền." if wdata_.get("warrantyStatus") == "refunded"
+                                 else ("❌ Đơn hàng đã hết thời hạn bảo hành." if vi
+                                       else "❌ Warranty has expired."))
+                        await query.answer(label, show_alert=True)
+                        return
+                    break
         db.set_user_state(user.id, "conv_state", "report_issue")
         db.set_user_state(user.id, "_report_order_id", order_id)
         await query.message.reply_text(

@@ -1024,9 +1024,68 @@ router.post("/bot/warranty/:id/accounts/:accId/refund", requireAuth, async (req:
   const accIdx = (req_.accounts ?? []).findIndex((a: any) => a.id === accId);
   if (accIdx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy tài khoản con" }); return; }
   const acc = req_.accounts[accIdx];
-  requests[idx].accounts[accIdx] = { ...acc, status: "resolved", resolution: `refund:${amount}`, resolvedAt: now(), resolvedBy: "web-admin" };
+
+  // Block double refund
+  if (acc.status === "resolved" && (acc.resolution || "").startsWith("refund:")) {
+    res.status(400).json({ ok: false, code: "ORDER_ALREADY_REFUNDED", message: "Tài khoản này đã được hoàn tiền rồi." }); return;
+  }
+
+  const refundedAt = now();
+  requests[idx].accounts[accIdx] = { ...acc, status: "resolved", resolution: `refund:${amount}`, resolvedAt: refundedAt, resolvedBy: "web-admin" };
   _recomputeGroupStatus(requests[idx]);
   writeJson("warranty_requests", requests);
+
+  // Update order_items: mark this specific account's item as refunded
+  const accOrderId = acc.orderId || req_.orderId || "";
+  const accEmailLower = (acc.email || "").toLowerCase();
+  let foundItemId: string | null = null;
+  if (accOrderId && accEmailLower) {
+    const orderItems: any = readJson("order_items", {}) ?? {};
+    const itemList: any[] = orderItems[accOrderId] ?? [];
+    for (let i = 0; i < itemList.length; i++) {
+      const it = itemList[i];
+      const orig = (it.original_account || it.email || "").toLowerCase();
+      const curr = (it.current_account  || it.email || "").toLowerCase();
+      if (orig === accEmailLower || curr === accEmailLower) {
+        foundItemId = it.itemId || null;
+        itemList[i] = { ...it, item_status: "refunded", refunded_at: refundedAt, refund_amount: Number(amount), refund_admin_id: "web-admin", support_enabled: false };
+        break;
+      }
+    }
+    orderItems[accOrderId] = itemList;
+    writeJson("order_items", orderItems);
+    // If ALL items in the order are now refunded → mark the order fully refunded
+    const allRefunded = itemList.every((it: any) => it.item_status === "refunded");
+    if (allRefunded) {
+      const orders: any = readJson("orders", {}) ?? {};
+      if (orders[accOrderId]) {
+        orders[accOrderId].status = "refunded";
+        orders[accOrderId].refundedAt = refundedAt;
+        orders[accOrderId].refundAmount = Number(amount);
+        writeJson("orders", orders);
+      }
+    }
+  }
+
+  // Save to refund_history
+  const history: any[] = readJson("refund_history", []) ?? [];
+  history.push({
+    id: crypto.randomUUID(),
+    warrantyRequestId: id,
+    orderId: accOrderId || null,
+    orderItemId: foundItemId,
+    orderCode: accOrderId || null,
+    account: acc.email || "",
+    email: acc.email || "",
+    amount: Number(amount),
+    note: note || "",
+    refundedAt,
+    refundedBy: "web-admin",
+    reason: note || "",
+    supportTicketId: id,
+  });
+  writeJson("refund_history", history);
+
   const msg = `💰 <b>Hoàn tiền tài khoản: <code>${acc.email}</code></b>\n\nSố tiền: <b>${Number(amount).toLocaleString("vi")}đ</b>${note ? `\nGhi chú: ${note}` : ""}`;
   await sendTelegramMessage(req_.userId, msg);
   addLog("GROUP_REFUND", `${id}/${accId} → ${amount}đ`, "web-admin");
@@ -1109,37 +1168,91 @@ router.post("/bot/warranty/:id/refund", requireAuth, async (req: any, res: any) 
   const idx = requests.findIndex((r: any) => r.id === id);
   if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
   const req_ = requests[idx];
-  const resolvedBy = adminName || "web-admin";
-  const refundedAt = now();
-  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: refundedAt, resolvedBy, reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
-  writeJson("warranty_requests", requests);
 
-  // Update order: mark refunded + store amount/time
-  const orders: any = readJson("orders", {}) ?? {};
-  const email = req_.email || (req_.accounts && req_.accounts[0]?.originalEmail) || "";
-  if (req_.orderId && orders[req_.orderId]) {
-    orders[req_.orderId].status = "refunded";
-    orders[req_.orderId].refundedAt = refundedAt;
-    orders[req_.orderId].refundAmount = Number(amount);
-    writeJson("orders", orders);
+  // Block double refund
+  if (req_.status === "resolved" && (req_.resolution || "").startsWith("refund:")) {
+    res.status(400).json({ ok: false, code: "ORDER_ALREADY_REFUNDED", message: "Đơn hàng này đã được hoàn tiền rồi. Không thể hoàn tiền lần hai." }); return;
   }
 
-  // Save to refund_history.json
+  const resolvedBy = adminName || "web-admin";
+  const refundedAt = now();
+  const email = req_.email || (req_.accounts && req_.accounts[0]?.originalEmail) || "";
+
+  // Mark this ticket as resolved
+  requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: refundedAt, resolvedBy, reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
+
+  // Close all other open tickets for the same order/email (prevent reminders & re-reporting)
+  for (let i = 0; i < requests.length; i++) {
+    if (i === idx) continue;
+    const r = requests[i];
+    const rEmail = r.email || "";
+    if (r.orderId === req_.orderId && rEmail === email && !["resolved", "rejected", "refunded"].includes(r.status)) {
+      requests[i] = { ...r, status: "refunded", resolvedAt: refundedAt, resolvedBy, reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
+    }
+  }
+  writeJson("warranty_requests", requests);
+
+  // Update order_items: mark the specific item as refunded
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  const emailLower = email.toLowerCase();
+  let foundItemId: string | null = null;
+  if (req_.orderId && emailLower) {
+    const itemList: any[] = orderItems[req_.orderId] ?? [];
+    for (let i = 0; i < itemList.length; i++) {
+      const it = itemList[i];
+      const orig = (it.original_account || it.email || "").toLowerCase();
+      const curr = (it.current_account  || it.email || "").toLowerCase();
+      if (orig === emailLower || curr === emailLower) {
+        foundItemId = it.itemId || null;
+        itemList[i] = { ...it, item_status: "refunded", refunded_at: refundedAt, refund_amount: Number(amount), refund_admin_id: resolvedBy, support_enabled: false };
+        break;
+      }
+    }
+    orderItems[req_.orderId] = itemList;
+    writeJson("order_items", orderItems);
+    // If ALL items in the order are now refunded → mark the order fully refunded
+    const allRefunded = (itemList as any[]).every((it: any) => it.item_status === "refunded");
+    const orders: any = readJson("orders", {}) ?? {};
+    if (allRefunded && orders[req_.orderId]) {
+      orders[req_.orderId].status = "refunded";
+      orders[req_.orderId].refundedAt = refundedAt;
+      orders[req_.orderId].refundAmount = Number(amount);
+      writeJson("orders", orders);
+    } else if (!allRefunded && req_.orderId && orders[req_.orderId]) {
+      // Partial refund on multi-account order: keep order status, just save orders if needed
+      // (no status change needed)
+    }
+  } else if (req_.orderId) {
+    // Single-account order without order_items entry: mark the whole order as refunded
+    const orders: any = readJson("orders", {}) ?? {};
+    if (orders[req_.orderId]) {
+      orders[req_.orderId].status = "refunded";
+      orders[req_.orderId].refundedAt = refundedAt;
+      orders[req_.orderId].refundAmount = Number(amount);
+      writeJson("orders", orders);
+    }
+  }
+
+  // Save to refund_history.json (expanded fields per spec)
   const history: any[] = readJson("refund_history", []) ?? [];
-  const record = {
+  history.push({
     id: crypto.randomUUID(),
     warrantyRequestId: id,
     orderId: req_.orderId || null,
+    orderItemId: foundItemId,
+    orderCode: req_.orderId || null,
+    account: email,
     email,
     amount: Number(amount),
     note: note || "",
     refundedAt,
     refundedBy: resolvedBy,
-  };
-  history.push(record);
+    reason: note || "",
+    supportTicketId: id,
+  });
   writeJson("refund_history", history);
 
-  // Send notification to customer (Vietnamese)
+  // Send notification to customer
   const amountStr = Number(amount).toLocaleString("vi");
   const msg =
     `💰 <b>Hoàn tiền thành công</b>\n\n` +
@@ -1212,6 +1325,12 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
 
   // ── Warranty computation helper ──────────────────────────────────────────────
   function calcWarranty(item: any, order: any) {
+    // Block if item was individually refunded
+    if (item.item_status === "refunded") {
+      const warrantyDaysR = Number(item.warranty_days || order?.warrantyDays || 0);
+      return { warrantyStatus: "refunded", remainingDays: null, canReport: false,
+               refundAmount: 0, warrantyEndDate: null, originalDeliveredAt: null, warrantyDays: warrantyDaysR };
+    }
     const today = new Date(); today.setHours(0, 0, 0, 0);
     // §7: date priority — original_delivered_at > paymentAt > purchaseDate
     const startStr = item.original_delivered_at || item.deliveredAt ||
@@ -1245,6 +1364,8 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
       warrantyStatus = remainingDays > 0 ? "active" : "expired";
       canReport = warrantyStatus === "active";
     }
+    // Block if full order was refunded
+    if (order?.status === "refunded") { canReport = false; }
     const price = Number(order?.price || 0);
     let refundAmount: number | string = 0;
     if (remainingDays && remainingDays > 0 && price && warrantyDays) {

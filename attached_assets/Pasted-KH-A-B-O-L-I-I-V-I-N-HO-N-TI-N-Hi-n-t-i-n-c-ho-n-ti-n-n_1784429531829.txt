@@ -1,0 +1,136 @@
+KHÓA BÁO LỖI ĐỐI VỚI ĐƠN ĐÃ HOÀN TIỀN
+
+Hiện tại đơn đã được hoàn tiền nhưng khách vẫn có thể tra cứu rồi tiếp tục bấm “Báo lỗi”. Điều này không đúng.
+
+Yêu cầu sửa:
+
+1. Khi admin thực hiện hoàn tiền thành công, phải cập nhật ngay trạng thái đơn/tài khoản trong database:
+
+- order_status = refunded
+hoặc
+- item_status = refunded
+- refunded_at = thời gian hoàn tiền
+- refund_amount = số tiền đã hoàn
+- refund_admin_id = admin thực hiện
+- support_enabled = false
+
+2. Khi khách tra cứu bằng mã đơn hoặc email/tài khoản, backend phải kiểm tra trạng thái hoàn tiền trước khi hiển thị nút thao tác.
+
+Nếu đơn hoặc tài khoản có trạng thái:
+
+- refunded
+- fully_refunded
+- closed_after_refund
+
+thì phải trả:
+
+{
+  "canReport": false,
+  "refundStatus": "refunded"
+}
+
+3. Nội dung hiển thị khi tra cứu đơn đã hoàn tiền:
+
+💰 ĐƠN HÀNG ĐÃ HOÀN TIỀN
+
+🏷 Mã đơn: ...
+📧 Email/tài khoản: ...
+📦 Sản phẩm: ...
+💵 Số tiền đã hoàn: ...
+🕒 Thời gian hoàn: ...
+📊 Trạng thái: Đã hoàn tiền
+
+⚠️ Đơn hàng này đã được hoàn tiền và không thể tiếp tục gửi yêu cầu báo lỗi hoặc bảo hành.
+
+Chỉ hiển thị nút:
+
+⬅️ Quay lại
+
+4. Không được hiển thị các nút:
+
+- Báo lỗi
+- Báo lỗi tất cả
+- Chọn tài khoản cụ thể
+- Yêu cầu bảo hành
+- Hoàn tiền lần nữa
+
+5. Backend bắt buộc phải chặn, không chỉ ẩn nút Telegram.
+
+Khi tạo ticket hỗ trợ, endpoint phải kiểm tra trạng thái hiện tại trong database.
+
+Nếu đã hoàn tiền, trả:
+
+{
+  "success": false,
+  "code": "ORDER_ALREADY_REFUNDED",
+  "message": "Đơn hàng đã được hoàn tiền và không thể gửi báo lỗi."
+}
+
+Không được:
+
+- Tạo ticket mới
+- Gửi thông báo cho admin
+- Tạo reminder
+- Ghi nhận yêu cầu bảo hành
+- Cho hoàn tiền lần hai
+
+6. Nếu đơn có nhiều tài khoản:
+
+- Tài khoản nào đã hoàn tiền thì khóa riêng tài khoản đó
+- Tài khoản chưa hoàn tiền vẫn có thể báo lỗi nếu còn bảo hành
+- Nếu toàn bộ tài khoản trong mã đơn đã hoàn tiền thì khóa toàn bộ đơn
+- Nút “Báo lỗi tất cả” chỉ áp dụng cho các tài khoản chưa hoàn tiền và còn bảo hành
+
+7. Khi tra bằng tài khoản thay thế trong cùng chuỗi:
+
+Nếu order_item gốc đã hoàn tiền thì tất cả tài khoản trong chuỗi:
+
+tài khoản gốc
+→ tài khoản bảo hành 1
+→ tài khoản bảo hành 2
+
+đều phải trả trạng thái “Đã hoàn tiền” và không cho báo lỗi nữa.
+
+8. Khi admin hoàn tiền:
+
+Phải đóng toàn bộ ticket liên quan đến tài khoản đó:
+
+- status = refunded
+- resolved_at = thời gian hiện tại
+- reminder_enabled = false
+- next_reminder_at = null
+
+Không được gửi nhắc bảo hành sau khi đã hoàn tiền.
+
+9. Lưu lịch sử hoàn tiền
+
+Tạo hoặc cập nhật bảng refund_history:
+
+- id
+- order_id
+- order_item_id
+- order_code
+- account
+- refund_amount
+- refunded_at
+- refunded_by
+- reason
+- support_ticket_id
+
+Không xóa dữ liệu cũ.
+
+10. Test bắt buộc:
+
+- Tra đơn chưa hoàn tiền → còn nút Báo lỗi
+- Hoàn tiền đơn
+- Tra lại ngay → hiện “Đã hoàn tiền”
+- Không còn nút Báo lỗi
+- Gọi callback cũ → bị chặn
+- Gọi API tạo ticket trực tiếp → bị chặn
+- Không gửi thông báo admin
+- Không tạo reminder
+- Restart/deploy vẫn giữ trạng thái đã hoàn tiền
+- Không thể hoàn tiền lần hai
+
+LƯU Ý BẮT BUỘC:
+Chỉ sửa logic trạng thái hoàn tiền và khóa báo lỗi. Không reset website, không xóa dữ liệu, không thay đổi các cài đặt hiện có.
