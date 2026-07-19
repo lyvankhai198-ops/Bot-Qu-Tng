@@ -1,4 +1,11 @@
-import { useState, useEffect, useRef } from "react"
+/**
+ * sync-robot.tsx
+ *
+ * QUAN TRỌNG — tách biệt hoàn toàn:
+ *   formData   → dữ liệu người dùng đang nhập (CHỈ load 1 lần lúc mở trang)
+ *   robotStatus → trạng thái robot đang polling (KHÔNG được ghi đè formData)
+ */
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -47,14 +54,25 @@ async function apiFetch(method: string, path: string, body?: unknown): Promise<a
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Config = {
-  enabled: boolean
+
+/** Dữ liệu form — chỉ do người dùng kiểm soát */
+type FormData = {
   site_url: string
   login_url: string
   orders_url: string
   email: string
+  /** "" = chưa nhập gì (hiển thị placeholder "Đã lưu mật khẩu"), giá trị thật = người dùng đang gõ mới */
   password: string
   interval_s: number
+}
+
+/** Trạng thái robot — chỉ cập nhật từ polling, KHÔNG liên quan form */
+type RobotStatus = {
+  enabled: boolean
+  running: boolean
+  updated_at: string | null
+  next_run_at: string | null
+  last_run: LastRun | null
 }
 
 type LastRun = {
@@ -70,13 +88,6 @@ type LastRun = {
   skipped_orders: number
   errors: number
   message: string
-}
-
-type SyncStatus = {
-  running: boolean
-  updated_at: string | null
-  next_run_at: string | null
-  last_run: LastRun | null
 }
 
 type LogEntry = LastRun
@@ -101,66 +112,134 @@ function fmtDuration(s: number): string {
   return `${m}m ${r}s`
 }
 
+const FORM_DEFAULT: FormData = {
+  site_url: "",
+  login_url: "",
+  orders_url: "",
+  email: "",
+  password: "",   // "" = server có mật khẩu cũ, placeholder thay thế
+  interval_s: 300,
+}
+
+const STATUS_DEFAULT: RobotStatus = {
+  enabled: false,
+  running: false,
+  updated_at: null,
+  next_run_at: null,
+  last_run: null,
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function SyncRobot() {
   const { toast } = useToast()
 
-  const [config, setConfig] = useState<Config>({
-    enabled: false,
-    site_url: "",
-    login_url: "",
-    orders_url: "",
-    email: "",
-    password: "",
-    interval_s: 300,
-  })
-  const [showPw,          setShowPw]          = useState(false)
-  const [passwordChanged, setPasswordChanged] = useState(false)
-  const [status,          setStatus]          = useState<SyncStatus | null>(null)
-  const [logs,            setLogs]            = useState<LogEntry[]>([])
-  const [loading,         setLoading]         = useState(true)
-  const [saving,          setSaving]          = useState(false)
-  const [testing,         setTesting]         = useState(false)
-  const [syncing,         setSyncing]         = useState(false)
+  // ── form state — chỉ user cập nhật ────────────────────────────────────────
+  const [formData, setFormData] = useState<FormData>(FORM_DEFAULT)
+  const [isDirty,  setIsDirty]  = useState(false)
+  const [hasServerPassword, setHasServerPassword] = useState(false)
+  const [showPw,  setShowPw]    = useState(false)
+
+  // ── robot status state — chỉ polling cập nhật ─────────────────────────────
+  const [status,  setStatus]    = useState<RobotStatus>(STATUS_DEFAULT)
+  const [logs,    setLogs]      = useState<LogEntry[]>([])
+
+  // ── UI state ───────────────────────────────────────────────────────────────
+  const [configLoaded, setConfigLoaded] = useState(false)
+  const [saving,  setSaving]    = useState(false)
+  const [testing, setTesting]   = useState(false)
+  const [syncing, setSyncing]   = useState(false)
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // ── Data loading ───────────────────────────────────────────────────────────
-  async function reload(quiet = false) {
+  // ── Load config — CHỈ 1 LẦN khi mount ────────────────────────────────────
+  const loadConfig = useCallback(async () => {
     try {
-      const [cfg, st, lg] = await Promise.all([
-        apiFetch("GET", "/bot/sync-robot/config"),
+      const cfg = await apiFetch("GET", "/bot/sync-robot/config")
+      // Nếu server trả "***" thì password cũ đang tồn tại — KHÔNG gán vào formData
+      const serverHasPw = cfg.password === "***" || (cfg.password && cfg.password !== "")
+      setHasServerPassword(serverHasPw)
+      setFormData({
+        site_url:   cfg.site_url   ?? "",
+        login_url:  cfg.login_url  ?? "",
+        orders_url: cfg.orders_url ?? "",
+        email:      cfg.email      ?? "",
+        password:   "",           // luôn để trống, placeholder chỉ thông báo đã có pw
+        interval_s: cfg.interval_s ?? 300,
+      })
+      setConfigLoaded(true)
+    } catch (e: any) {
+      toast({ title: "Lỗi tải cấu hình", description: e.message, variant: "destructive" })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Poll status + logs — KHÔNG đụng formData ──────────────────────────────
+  const pollStatus = useCallback(async () => {
+    try {
+      const [st, lg] = await Promise.all([
         apiFetch("GET", "/bot/sync-robot/status"),
         apiFetch("GET", "/bot/sync-robot/logs"),
       ])
-      setConfig((prev) => ({
-        ...cfg,
-        password: passwordChanged ? prev.password : "***",
-      }))
-      setStatus(st)
+      setStatus({
+        enabled:    st.enabled    ?? false,
+        running:    st.running    ?? false,
+        updated_at: st.updated_at ?? null,
+        next_run_at: st.next_run_at ?? null,
+        last_run:   st.last_run   ?? null,
+      })
       setLogs(Array.isArray(lg) ? [...lg].reverse() : [])
-    } catch (e: any) {
-      if (!quiet) toast({ title: "Lỗi tải dữ liệu", description: e.message, variant: "destructive" })
-    } finally {
-      setLoading(false)
+    } catch {
+      // polling failure — im lặng, không toast
     }
-  }
-
-  useEffect(() => {
-    reload()
-    pollRef.current = setInterval(() => reload(true), 8_000)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [])
 
-  // ── Save config ────────────────────────────────────────────────────────────
-  async function handleSave() {
+  // ── Mount: load config 1 lần, bắt đầu poll status ─────────────────────────
+  useEffect(() => {
+    loadConfig()
+    pollStatus()
+    pollRef.current = setInterval(pollStatus, 8_000)
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [loadConfig, pollStatus])
+
+  // ── Form field updater — đánh dấu dirty ───────────────────────────────────
+  function setField<K extends keyof FormData>(key: K, value: FormData[K]) {
+    setFormData(prev => ({ ...prev, [key]: value }))
+    setIsDirty(true)
+  }
+
+  // ── Build body gửi lên server ──────────────────────────────────────────────
+  function buildConfigBody(extraEnabled?: boolean) {
+    const body: any = {
+      site_url:   formData.site_url,
+      login_url:  formData.login_url,
+      orders_url: formData.orders_url,
+      email:      formData.email,
+      interval_s: formData.interval_s,
+    }
+    if (extraEnabled !== undefined) body.enabled = extraEnabled
+    // Chỉ gửi password nếu người dùng thật sự gõ mới (không phải "" hay "***")
+    if (formData.password && formData.password !== "***") {
+      body.password = formData.password
+    }
+    return body
+  }
+
+  // ── Save ───────────────────────────────────────────────────────────────────
+  async function handleSave(e?: React.FormEvent) {
+    e?.preventDefault()
     setSaving(true)
     try {
-      const body: any = { ...config }
-      if (!passwordChanged) delete body.password
-      await apiFetch("PUT", "/bot/sync-robot/config", body)
-      setPasswordChanged(false)
-      toast({ title: "Đã lưu cấu hình robot" })
-      reload(true)
+      const saved = await apiFetch("PUT", "/bot/sync-robot/config", buildConfigBody())
+      setIsDirty(false)
+      // Nếu user vừa lưu password mới, cập nhật trạng thái
+      if (formData.password && formData.password !== "***") {
+        setHasServerPassword(true)
+        setFormData(prev => ({ ...prev, password: "" }))
+      }
+      // Cập nhật enabled từ response (nếu server trả về)
+      if (saved?.enabled !== undefined) {
+        setStatus(prev => ({ ...prev, enabled: saved.enabled }))
+      }
+      toast({ title: "✅ Đã lưu cấu hình" })
     } catch (e: any) {
       toast({ title: "Lỗi lưu cấu hình", description: e.message, variant: "destructive" })
     } finally {
@@ -168,19 +247,32 @@ export default function SyncRobot() {
     }
   }
 
+  // ── Toggle bật/tắt ─────────────────────────────────────────────────────────
+  async function handleToggle(enabled: boolean) {
+    try {
+      await apiFetch("PUT", "/bot/sync-robot/config", buildConfigBody(enabled))
+      setStatus(prev => ({ ...prev, enabled }))
+      toast({ title: enabled ? "✅ Robot đã bật" : "⏹ Robot đã tắt" })
+    } catch (e: any) {
+      toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    }
+  }
+
   // ── Test login ─────────────────────────────────────────────────────────────
   async function handleTest() {
     setTesting(true)
     try {
-      const body: any = { ...config }
-      if (!passwordChanged) delete body.password
-      await apiFetch("POST", "/bot/sync-robot/test-login", body)
-      toast({ title: "✅ Đã gửi lệnh kiểm tra", description: "Xem kết quả trong log sau vài giây" })
-      setTimeout(() => reload(true), 5_000)
+      const result = await apiFetch("POST", "/bot/sync-robot/test-login", buildConfigBody())
+      if (result.ok) {
+        toast({ title: "✅ Đăng nhập thành công!", description: result.message })
+      } else {
+        toast({ title: "❌ Đăng nhập thất bại", description: result.message, variant: "destructive" })
+      }
     } catch (e: any) {
-      toast({ title: "❌ Lỗi", description: e.message, variant: "destructive" })
+      toast({ title: "❌ Lỗi kết nối", description: e.message, variant: "destructive" })
     } finally {
       setTesting(false)
+      pollStatus()
     }
   }
 
@@ -190,7 +282,7 @@ export default function SyncRobot() {
     try {
       await apiFetch("POST", "/bot/sync-robot/trigger", {})
       toast({ title: "🔄 Đã kích hoạt đồng bộ ngay", description: "Robot sẽ chạy trong vài giây..." })
-      setTimeout(() => reload(true), 4_000)
+      setTimeout(pollStatus, 4_000)
     } catch (e: any) {
       toast({ title: "Lỗi", description: e.message, variant: "destructive" })
     } finally {
@@ -198,19 +290,10 @@ export default function SyncRobot() {
     }
   }
 
-  // ── Toggle on/off ──────────────────────────────────────────────────────────
-  async function handleToggle(enabled: boolean) {
-    try {
-      await apiFetch("PUT", "/bot/sync-robot/config", {
-        ...config,
-        enabled,
-        password: passwordChanged ? config.password : undefined,
-      })
-      setConfig((p) => ({ ...p, enabled }))
-      toast({ title: enabled ? "✅ Robot đã bật" : "⏹ Robot đã tắt" })
-    } catch (e: any) {
-      toast({ title: "Lỗi", description: e.message, variant: "destructive" })
-    }
+  // ── Reload manual (nút Làm mới) ────────────────────────────────────────────
+  async function handleManualRefresh() {
+    await Promise.all([loadConfig(), pollStatus()])
+    setIsDirty(false)
   }
 
   // ── Step icon ──────────────────────────────────────────────────────────────
@@ -220,9 +303,9 @@ export default function SyncRobot() {
       : <XCircle      className="h-4 w-4 text-red-500 shrink-0" />
   }
 
-  const lastRun = status?.last_run
+  const lastRun = status.last_run
 
-  if (loading) {
+  if (!configLoaded) {
     return (
       <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
         Đang tải...
@@ -242,23 +325,30 @@ export default function SyncRobot() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isDirty && (
+            <Badge variant="outline" className="text-yellow-600 border-yellow-400 gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-yellow-500" />
+              Chưa lưu
+            </Badge>
+          )}
           <Badge
-            variant={status?.running ? "default" : config.enabled ? "outline" : "secondary"}
+            variant={status.running ? "default" : status.enabled ? "outline" : "secondary"}
             className="gap-1.5"
           >
             <span className={`h-2 w-2 rounded-full ${
-              status?.running   ? "bg-green-400 animate-pulse" :
-              config.enabled    ? "bg-yellow-400"              :
-                                  "bg-gray-400"
+              status.running  ? "bg-green-400 animate-pulse" :
+              status.enabled  ? "bg-yellow-400"              :
+                                "bg-gray-400"
             }`} />
-            {status?.running ? "Đang chạy" : config.enabled ? "Chờ chu kỳ" : "Tắt"}
+            {status.running ? "Đang chạy" : status.enabled ? "Chờ chu kỳ" : "Tắt"}
           </Badge>
           <Button
+            type="button"
             size="sm"
-            variant={config.enabled ? "destructive" : "default"}
-            onClick={() => handleToggle(!config.enabled)}
+            variant={status.enabled ? "destructive" : "default"}
+            onClick={() => handleToggle(!status.enabled)}
           >
-            {config.enabled ? "Tắt robot" : "Bật robot"}
+            {status.enabled ? "Tắt robot" : "Bật robot"}
           </Button>
         </div>
       </div>
@@ -271,109 +361,130 @@ export default function SyncRobot() {
             <CardTitle className="text-base">Cấu hình</CardTitle>
             <CardDescription>Thông tin đăng nhập website bán hàng</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <CardContent>
+            {/* form với preventDefault để không reload trang */}
+            <form onSubmit={handleSave} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-              <div className="sm:col-span-2 space-y-1.5">
-                <Label>URL website</Label>
-                <Input
-                  placeholder="https://shop.example.com"
-                  value={config.site_url}
-                  onChange={(e) => setConfig((p) => ({ ...p, site_url: e.target.value }))}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>
-                  URL đăng nhập{" "}
-                  <span className="text-xs text-muted-foreground">(để trống = tự dò)</span>
-                </Label>
-                <Input
-                  placeholder="https://shop.example.com/login"
-                  value={config.login_url}
-                  onChange={(e) => setConfig((p) => ({ ...p, login_url: e.target.value }))}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>
-                  URL trang đơn hàng{" "}
-                  <span className="text-xs text-muted-foreground">(để trống = tự dò)</span>
-                </Label>
-                <Input
-                  placeholder="https://shop.example.com/orders"
-                  value={config.orders_url}
-                  onChange={(e) => setConfig((p) => ({ ...p, orders_url: e.target.value }))}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Email đăng nhập</Label>
-                <Input
-                  type="email"
-                  placeholder="admin@shop.example.com"
-                  value={config.email}
-                  onChange={(e) => setConfig((p) => ({ ...p, email: e.target.value }))}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Mật khẩu</Label>
-                <div className="relative">
+                <div className="sm:col-span-2 space-y-1.5">
+                  <Label htmlFor="site_url">URL website</Label>
                   <Input
-                    type={showPw ? "text" : "password"}
-                    placeholder="••••••••"
-                    value={config.password}
-                    onChange={(e) => {
-                      setConfig((p) => ({ ...p, password: e.target.value }))
-                      setPasswordChanged(true)
-                    }}
-                    className="pr-10"
+                    id="site_url"
+                    type="url"
+                    placeholder="https://shop.example.com"
+                    value={formData.site_url}
+                    onChange={(e) => setField("site_url", e.target.value)}
+                    autoComplete="off"
                   />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1"
-                    onClick={() => setShowPw((v) => !v)}
-                  >
-                    {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
                 </div>
-                <p className="text-xs text-muted-foreground">Hiển thị *** sau khi lưu</p>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="login_url">
+                    URL đăng nhập{" "}
+                    <span className="text-xs text-muted-foreground">(để trống = tự dò)</span>
+                  </Label>
+                  <Input
+                    id="login_url"
+                    type="url"
+                    placeholder="https://shop.example.com/login"
+                    value={formData.login_url}
+                    onChange={(e) => setField("login_url", e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="orders_url">
+                    URL trang đơn hàng{" "}
+                    <span className="text-xs text-muted-foreground">(để trống = tự dò)</span>
+                  </Label>
+                  <Input
+                    id="orders_url"
+                    type="url"
+                    placeholder="https://shop.example.com/orders"
+                    value={formData.orders_url}
+                    onChange={(e) => setField("orders_url", e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="email">Email đăng nhập</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="admin@shop.example.com"
+                    value={formData.email}
+                    onChange={(e) => setField("email", e.target.value)}
+                    autoComplete="email"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="password">Mật khẩu</Label>
+                  <div className="relative">
+                    <Input
+                      id="password"
+                      type={showPw ? "text" : "password"}
+                      placeholder={hasServerPassword && !formData.password ? "Đã lưu mật khẩu — để trống để giữ nguyên" : "Nhập mật khẩu mới"}
+                      value={formData.password}
+                      onChange={(e) => {
+                        // setField tự đánh dấu dirty
+                        setField("password", e.target.value)
+                      }}
+                      className="pr-10"
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1"
+                      onClick={() => setShowPw((v) => !v)}
+                    >
+                      {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {hasServerPassword && !formData.password && (
+                    <p className="text-xs text-muted-foreground">
+                      Mật khẩu đã lưu — nhập mới để thay đổi.
+                    </p>
+                  )}
+                </div>
+
+                <div className="sm:col-span-2 space-y-1.5">
+                  <Label>Chu kỳ đồng bộ</Label>
+                  <Select
+                    value={String(formData.interval_s)}
+                    onValueChange={(v) => setField("interval_s", Number(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INTERVALS.map((i) => (
+                        <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
-              <div className="sm:col-span-2 space-y-1.5">
-                <Label>Chu kỳ đồng bộ</Label>
-                <Select
-                  value={String(config.interval_s)}
-                  onValueChange={(v) => setConfig((p) => ({ ...p, interval_s: Number(v) }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {INTERVALS.map((i) => (
-                      <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {/* Buttons */}
+              <div className="flex flex-wrap gap-2 pt-2">
+                {/* Nút Lưu là submit thật — có preventDefault qua onSubmit */}
+                <Button type="submit" disabled={saving}>
+                  <Save className="h-4 w-4 mr-2" />
+                  {saving ? "Đang lưu..." : "Lưu cấu hình"}
+                </Button>
+                <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
+                  <Plug className="h-4 w-4 mr-2" />
+                  {testing ? "Đang kiểm tra..." : "Kiểm tra đăng nhập"}
+                </Button>
+                <Button type="button" variant="secondary" onClick={handleSyncNow} disabled={syncing || status.running}>
+                  <Play className="h-4 w-4 mr-2" />
+                  {syncing ? "Đã kích hoạt..." : "Đồng bộ ngay"}
+                </Button>
               </div>
-            </div>
-
-            {/* Buttons */}
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button onClick={handleSave} disabled={saving}>
-                <Save className="h-4 w-4 mr-2" />
-                {saving ? "Đang lưu..." : "Lưu cấu hình"}
-              </Button>
-              <Button variant="outline" onClick={handleTest} disabled={testing}>
-                <Plug className="h-4 w-4 mr-2" />
-                {testing ? "Đang kiểm tra..." : "Kiểm tra đăng nhập"}
-              </Button>
-              <Button variant="secondary" onClick={handleSyncNow} disabled={syncing || !!status?.running}>
-                <Play className="h-4 w-4 mr-2" />
-                {syncing ? "Đã kích hoạt..." : "Đồng bộ ngay"}
-              </Button>
-            </div>
+            </form>
           </CardContent>
         </Card>
 
@@ -389,7 +500,7 @@ export default function SyncRobot() {
             <CardContent className="text-sm space-y-3">
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Chu kỳ tiếp theo</span>
-                <span className="font-mono">{fmtDate(status?.next_run_at)}</span>
+                <span className="font-mono">{fmtDate(status.next_run_at)}</span>
               </div>
 
               {lastRun ? (
@@ -452,7 +563,8 @@ export default function SyncRobot() {
             </CardContent>
           </Card>
 
-          <Button variant="outline" size="sm" className="w-full" onClick={() => reload()}>
+          {/* Làm mới thủ công — load lại cả config lẫn status */}
+          <Button type="button" variant="outline" size="sm" className="w-full" onClick={handleManualRefresh}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Làm mới
           </Button>

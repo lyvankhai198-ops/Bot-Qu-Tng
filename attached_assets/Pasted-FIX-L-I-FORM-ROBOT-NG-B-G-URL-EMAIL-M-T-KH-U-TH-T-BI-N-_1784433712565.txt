@@ -1,0 +1,146 @@
+FIX LỖI FORM ROBOT ĐỒNG BỘ: GÕ URL/EMAIL/MẬT KHẨU THÌ TỰ BIẾN MẤT
+
+Hiện tại các ô cấu hình bị reset giá trị ngay khi người dùng đang nhập.
+
+Biểu hiện:
+- Gõ URL website thì chữ vừa nhập tự biến mất.
+- Các ô URL đăng nhập, URL đơn hàng, email và mật khẩu cũng có thể bị tương tự.
+- Có thể do trang tự refresh/polling trạng thái và mỗi lần nhận dữ liệu từ API lại ghi đè vào state của form.
+
+YÊU CẦU SỬA:
+
+1. TÁCH RIÊNG STATE CỦA FORM VÀ STATE TRẠNG THÁI ROBOT
+
+Không dùng chung một object/state cho:
+- Dữ liệu người dùng đang nhập
+- Trạng thái robot đang polling
+
+Ví dụ tách thành:
+
+formData:
+- websiteUrl
+- loginUrl
+- ordersUrl
+- email
+- password
+- syncInterval
+
+robotStatus:
+- enabled
+- lastRunAt
+- nextRunAt
+- running
+- loginSuccess
+- downloadSuccess
+- importSuccess
+- error
+
+Polling trạng thái robot tuyệt đối không được ghi đè formData.
+
+2. KHÔNG REFETCH CONFIG LIÊN TỤC
+
+Chỉ tải cấu hình từ API:
+- Khi mở trang lần đầu
+- Sau khi bấm Lưu cấu hình thành công
+- Khi admin chủ động bấm Làm mới cấu hình
+
+Không gọi API config mỗi 5 giây hoặc mỗi lần polling trạng thái.
+
+Polling chỉ gọi endpoint status/logs.
+
+3. KHÔNG GÁN LẠI FORM SAU MỖI RENDER
+
+Không làm kiểu:
+
+setFormData(apiConfig)
+
+trong effect chạy theo status, interval hoặc render.
+
+Effect tải config chỉ được chạy một lần:
+
+useEffect(() => {
+  loadConfig();
+}, []);
+
+Không thêm robotStatus hoặc formData vào dependency của effect tải config.
+
+4. INPUT PHẢI LÀ CONTROLLED INPUT ĐÚNG CÁCH
+
+Mỗi input phải cập nhật đúng field:
+
+value={formData.websiteUrl}
+onChange={(e) =>
+  setFormData(prev => ({
+    ...prev,
+    websiteUrl: e.target.value
+  }))
+}
+
+Áp dụng tương tự cho tất cả ô.
+
+Không mutate object trực tiếp.
+
+Không dùng defaultValue kết hợp value.
+
+5. GIỮ NGUYÊN DỮ LIỆU ĐANG GÕ KHI POLLING
+
+Trong lúc người dùng đang gõ:
+- Polling status vẫn được chạy.
+- Chỉ phần Trạng thái cập nhật.
+- Nội dung form không thay đổi.
+- Không remount component form.
+- Không đổi key của form theo status hoặc timestamp.
+
+6. THÊM CỜ DIRTY
+
+Khi người dùng sửa bất kỳ ô nào:
+
+isDirty = true
+
+Trong lúc isDirty = true:
+- Không tự động nạp lại config từ server.
+- Không ghi đè dữ liệu người dùng đang nhập.
+
+Sau khi Lưu thành công:
+- isDirty = false
+- Cập nhật form bằng dữ liệu đã lưu nếu cần.
+
+7. MẬT KHẨU
+
+Nếu backend trả về:
+
+password = "***"
+
+thì không được tự ghi đè "***" vào ô đang nhập.
+
+Quy tắc:
+- Khi mở trang, nếu đã có mật khẩu thì hiển thị placeholder “Đã lưu mật khẩu”.
+- Nếu người dùng không nhập mật khẩu mới thì giữ mật khẩu cũ.
+- Chỉ cập nhật mật khẩu khi người dùng thật sự nhập giá trị mới.
+- Không gửi "***" lên backend làm mật khẩu mới.
+
+8. KHÔNG RELOAD TRANG SAU KHI NHẬP
+
+Kiểm tra:
+- Không dùng window.location.reload().
+- Không submit form mặc định.
+- Các nút phải có type="button", trừ nút lưu nếu đã preventDefault.
+- Form submit phải gọi event.preventDefault().
+
+9. TEST BẮT BUỘC
+
+Test trên mobile Safari:
+
+- Gõ đầy đủ URL website, chữ không biến mất.
+- Dừng gõ 30 giây, dữ liệu vẫn còn.
+- Polling trạng thái chạy nhưng form không reset.
+- Chuyển sang ô khác rồi quay lại, dữ liệu vẫn còn.
+- Bấm Kiểm tra đăng nhập, dữ liệu form không mất.
+- Bấm Đồng bộ ngay, dữ liệu form không mất.
+- Lưu cấu hình thành công.
+- Reload trang thì hiện đúng dữ liệu đã lưu.
+- Mật khẩu cũ không bị ghi đè bởi "***".
+
+KHÔNG RESET DATABASE.
+KHÔNG THAY ĐỔI CÁC CHỨC NĂNG KHÁC.
+CHỈ FIX LỖI FORM BỊ RESET KHI ĐANG NHẬP.
