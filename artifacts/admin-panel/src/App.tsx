@@ -18,6 +18,7 @@ import Receivers from "@/pages/receivers";
 import Intro from "@/pages/intro";
 import Logs from "@/pages/logs";
 import RefundHistory from "@/pages/refund-history";
+import SyncRobot from "@/pages/sync-robot";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
