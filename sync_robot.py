@@ -841,26 +841,35 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
             f"Network log  :\n  {_net}"
         )
 
-    # 6. Chờ networkidle sau submit
+    # 6. Chờ SPA navigate ra khỏi /login (tối đa 20s)
+    # KHÔNG dùng networkidle — nó fire quá nhanh (23ms) trước khi POST response về.
+    # Đúng: chờ URL thực sự thay đổi ra khỏi /login = server đã xử lý xong.
+    _log("[login] Chờ URL thay đổi ra khỏi /login (tối đa 20s)...")
+    login_navigated = False
     try:
-        await page.wait_for_load_state("networkidle", timeout=20_000)
-        _log("[login] networkidle đạt được")
+        await page.wait_for_url(
+            lambda url: not any(kw in url.lower() for kw in _LOGIN_URL_KEYWORDS),
+            timeout=20_000,
+        )
+        login_navigated = True
+        _log(f"[login] ✅ URL đã navigate → {page.url}")
     except PwTimeout:
-        _log("[login] networkidle timeout 20s — tiếp tục")
+        _log(f"[login] Timeout 20s — URL vẫn {page.url}")
 
+    # Chờ thêm 0.5s để response handler kịp chạy rồi mới remove
+    await asyncio.sleep(0.5)
     page.remove_listener("request",  _on_req)
     page.remove_listener("response", _on_resp_full)
     _log(f"[login] Network ({len(network_log)} entries): " + " | ".join(network_log[-12:]))
-    # In toàn bộ auth request/response log
     if auth_log:
         for entry in auth_log:
             _log(f"[login][AUTH-DETAIL]{entry}")
     else:
         _log("[login][AUTH-DETAIL] Không bắt được request auth nào")
 
-    # 7. Nếu vẫn ở /login ngay sau networkidle → thất bại rõ ràng
-    if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
-        diag = await _collect_diag("Server từ chối đăng nhập — URL vẫn ở /login sau submit.")
+    # 7. Kết quả: nếu URL không thay đổi sau 20s → thất bại thật sự
+    if not login_navigated:
+        diag = await _collect_diag("Server từ chối đăng nhập — URL không rời /login sau 20s submit.")
         _step("Đăng nhập thất bại", False, diag[:600])
         raise RuntimeError(f"Đăng nhập thất bại — URL vẫn /login\n{diag}")
 
