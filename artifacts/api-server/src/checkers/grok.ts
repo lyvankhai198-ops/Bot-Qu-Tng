@@ -355,16 +355,40 @@ const grokPlugin: CheckerPlugin = {
       const page = await ctx.newPage();
       page.setDefaultTimeout(timeoutMs);
 
+      // ── Capture browser console errors ───────────────────────────────────────
+      const consoleErrors: string[] = [];
+      page.on("console", msg => {
+        if (msg.type() === "error") {
+          const err = `[console.error] ${msg.text()}`;
+          consoleErrors.push(err);
+          log(err.slice(0, 200));
+        }
+      });
+      page.on("pageerror", err => {
+        const e = `[pageerror] ${err.message}`;
+        consoleErrors.push(e);
+        log(e.slice(0, 200));
+      });
+
+      // ── Helper: lấy raw HTML để debug ────────────────────────────────────────
+      const rawHtml = async (chars = 1500): Promise<string> => {
+        try {
+          const html = await page.evaluate(() => document.documentElement.outerHTML);
+          return (html ?? "").slice(0, chars);
+        } catch (e: any) { return `(html error: ${e?.message})`; }
+      };
+
       // ── Helper: navigate với retry networkidle ───────────────────────────────
       const gotoWithRetry = async (target: string, label: string) => {
         log(`goto ${label}: ${target}`);
         try {
           await page.goto(target, { waitUntil: "networkidle", timeout: 30_000 });
         } catch {
-          // networkidle có thể timeout trên trang heavy → fallback
           log(`networkidle timeout for ${label}, continuing`);
+          // Đợi ít nhất load event xong
+          await page.waitForLoadState("load").catch(() => {});
         }
-        await page.waitForTimeout(2_500);
+        await page.waitForTimeout(2_000);
       };
 
       // ── Helper: chụp screenshot base64 ───────────────────────────────────────
@@ -478,11 +502,16 @@ const grokPlugin: CheckerPlugin = {
       }
 
       if (!emailInput) {
-        const bt = (await bodyText(page)).slice(0, 800);
-        log(`Email input not found — body: ${bt}`);
+        const bt = (await bodyText(page)).slice(0, 400);
+        const html = await rawHtml(2000);
+        const domCount = await page.evaluate(() => document.querySelectorAll("*").length).catch(() => 0);
+        log(`Email input not found — DOM elements: ${domCount}`);
+        log(`Body text: ${bt || "(empty)"}`);
+        log(`Raw HTML: ${html}`);
+        if (consoleErrors.length) log(`Console errors: ${consoleErrors.slice(0,3).join(" | ")}`);
         const shot = await screenshot64();
         // Kiểm tra CF lần nữa
-        if (/Performing security verification|Just a moment|security service/i.test(bt)) {
+        if (/Performing security verification|Just a moment|security service/i.test(bt + html)) {
           return {
             code: "CAPTCHA",
             message: "Cloudflare bot protection chặn — không vào được form đăng nhập",
@@ -493,7 +522,7 @@ const grokPlugin: CheckerPlugin = {
         }
         return {
           code: "UNKNOWN",
-          message: `Không tìm thấy ô email — URL: ${url.split("?")[0]} | Page: ${bt.slice(0, 120)}`,
+          message: `Không tìm thấy ô email — URL: ${url.split("?")[0]} | DOM: ${domCount} el | ${bt.slice(0, 80) || html.slice(0, 80)}`,
           responseTime: elapsed(),
           screenshotBase64: shot,
           playwrightLog: logs.join("\n"),
