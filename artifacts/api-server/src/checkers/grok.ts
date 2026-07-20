@@ -355,54 +355,40 @@ const grokPlugin: CheckerPlugin = {
       const page = await ctx.newPage();
       page.setDefaultTimeout(timeoutMs);
 
-      // ── 1. Mở grok.com ───────────────────────────────────────────────────────
-      log("Opening grok.com");
-      await page.goto("https://grok.com", {
-        waitUntil: "domcontentloaded",
-        timeout: 30_000,
-      });
-      await page.waitForTimeout(3_000);
+      // ── Helper: navigate với retry networkidle ───────────────────────────────
+      const gotoWithRetry = async (target: string, label: string) => {
+        log(`goto ${label}: ${target}`);
+        try {
+          await page.goto(target, { waitUntil: "networkidle", timeout: 30_000 });
+        } catch {
+          // networkidle có thể timeout trên trang heavy → fallback
+          log(`networkidle timeout for ${label}, continuing`);
+        }
+        await page.waitForTimeout(2_500);
+      };
+
+      // ── Helper: chụp screenshot base64 ───────────────────────────────────────
+      const screenshot64 = async (): Promise<string | undefined> => {
+        try {
+          const buf = await page.screenshot({ type: "jpeg", quality: 60, timeout: 5_000 });
+          return buf.toString("base64");
+        } catch { return undefined; }
+      };
+
+      // ── 1. Mở trực tiếp trang signin của NextAuth ────────────────────────────
+      // grok.com dùng NextAuth — URL chuẩn là /auth/signin (không phải /auth/login)
+      log("Opening grok.com/auth/signin");
+      await gotoWithRetry("https://grok.com/auth/signin", "auth/signin");
 
       let url = page.url() as string;
-      log(`grok.com loaded — URL: ${url}`);
+      log(`Loaded — URL: ${url}`);
 
-      // ── 2. Đến trang đăng nhập ───────────────────────────────────────────────
-      const alreadyAuth =
-        url.includes("grok.com/auth") ||
-        url.includes("/login") ||
-        url.includes("/signin");
-
-      if (!alreadyAuth) {
-        // Thử click nút Sign in
-        const signInSels = [
-          'button:has-text("Sign in")', 'a:has-text("Sign in")',
-          'button:has-text("Log in")', 'a:has-text("Log in")',
-          'a[href*="sign-in"]', 'a[href*="login"]', 'a[href*="auth"]',
-        ];
-        let clicked = false;
-        for (const sel of signInSels) {
-          if (await isVisible(page, sel, 3_000)) {
-            log(`Clicking: ${sel}`);
-            await page.locator(sel).first().click();
-            await page.waitForTimeout(3_000);
-            clicked = true;
-            break;
-          }
-        }
-        if (!clicked) {
-          log("No sign-in button → going to /auth/login directly");
-          await page.goto("https://grok.com/auth/login", {
-            waitUntil: "domcontentloaded",
-            timeout: 20_000,
-          });
-          await page.waitForTimeout(3_000);
-        }
+      // Nếu redirect về trang chủ (đã login) → check ngay
+      if (!url.includes("/auth/") && !url.includes("/login") && !url.includes("/signin")) {
+        log("Redirected away from auth page — may already be logged in, checking subscription");
       }
 
-      url = page.url() as string;
-      log(`At auth page — URL: ${url}`);
-
-      // ── 3. Xử lý Cloudflare challenge ────────────────────────────────────────
+      // ── 2. Xử lý Cloudflare challenge ────────────────────────────────────────
       {
         const bt = await bodyText(page);
         if (/Performing security verification|Just a moment|checking your browser|security service.*malicious bot/i.test(bt)) {
@@ -411,8 +397,9 @@ const grokPlugin: CheckerPlugin = {
           if (!passed) {
             return {
               code: "CAPTCHA",
-              message: "Cloudflare bot protection không thể bypass trong headless mode. VPS IP bị block.",
+              message: "Cloudflare bot protection không thể bypass. Hãy dùng residential proxy hoặc session cookie.",
               responseTime: elapsed(),
+              screenshotBase64: await screenshot64(),
               playwrightLog: logs.join("\n"),
             };
           }
@@ -421,18 +408,29 @@ const grokPlugin: CheckerPlugin = {
         }
       }
 
-      // ── 4. Chọn "Continue with email" nếu có ─────────────────────────────────
+      // ── 3. Tìm ô email (hỗ trợ nhiều layout) ─────────────────────────────────
+      // Đợi ít nhất 1 input xuất hiện trên trang
+      await page.waitForSelector("input", { timeout: 12_000 }).catch(() => {
+        log("No <input> found after 12s — page may not have loaded form yet");
+      });
+      await page.waitForTimeout(1_500);
+
+      // Thử click "Continue with email" / "Sign in with email" nếu có
       const emailBtnSels = [
         'button:has-text("Continue with email")',
         'button:has-text("Sign in with email")',
+        'button:has-text("Email")',
         'a:has-text("Continue with email")',
         '[data-provider="email"]',
+        '[data-testid*="email"]',
       ];
       for (const sel of emailBtnSels) {
-        if (await isVisible(page, sel, 4_000)) {
-          log(`Clicking email login: ${sel}`);
+        if (await isVisible(page, sel, 3_000)) {
+          log(`Clicking email provider button: ${sel}`);
           await page.locator(sel).first().click();
           await page.waitForTimeout(2_500);
+          // Đợi input xuất hiện sau click
+          await page.waitForSelector("input", { timeout: 8_000 }).catch(() => {});
           break;
         }
       }
@@ -451,25 +449,28 @@ const grokPlugin: CheckerPlugin = {
               code: "CAPTCHA",
               message: "Cloudflare block ở bước chọn email login",
               responseTime: elapsed(),
+              screenshotBase64: await screenshot64(),
               playwrightLog: logs.join("\n"),
             };
           }
         }
       }
 
-      // ── 5. Nhập email ────────────────────────────────────────────────────────
+      // ── 4. Tìm và điền email ─────────────────────────────────────────────────
       const emailInputSels = [
         'input[type="email"]',
         'input[name="email"]',
         'input[autocomplete="email"]',
         'input[placeholder*="email" i]',
+        'input[placeholder*="Email" ]',
+        'form input[type="text"]',
         'input[type="text"]',
       ];
 
       let emailInput: any = null;
       for (const sel of emailInputSels) {
         const el = page.locator(sel).first();
-        if (await el.isVisible({ timeout: 8_000 }).catch(() => false)) {
+        if (await el.isVisible({ timeout: 5_000 }).catch(() => false)) {
           emailInput = el;
           log(`Email input found: ${sel}`);
           break;
@@ -477,21 +478,24 @@ const grokPlugin: CheckerPlugin = {
       }
 
       if (!emailInput) {
-        const bt = (await bodyText(page)).slice(0, 600);
+        const bt = (await bodyText(page)).slice(0, 800);
         log(`Email input not found — body: ${bt}`);
+        const shot = await screenshot64();
         // Kiểm tra CF lần nữa
         if (/Performing security verification|Just a moment|security service/i.test(bt)) {
           return {
             code: "CAPTCHA",
             message: "Cloudflare bot protection chặn — không vào được form đăng nhập",
             responseTime: elapsed(),
+            screenshotBase64: shot,
             playwrightLog: logs.join("\n"),
           };
         }
         return {
           code: "UNKNOWN",
-          message: `Không tìm thấy ô email — URL: ${url.split("?")[0]}`,
+          message: `Không tìm thấy ô email — URL: ${url.split("?")[0]} | Page: ${bt.slice(0, 120)}`,
           responseTime: elapsed(),
+          screenshotBase64: shot,
           playwrightLog: logs.join("\n"),
         };
       }
