@@ -51885,6 +51885,100 @@ router2.get("/bot/sync-robot/existing-sets", requireAuth, (_req, res) => {
   }
   res.json({ orderIds, itemEmails: [...new Set(itemEmails)] });
 });
+var CHECKIN_SETTINGS_DEFAULTS = {
+  enabled: true,
+  hour: 7,
+  minute: 0,
+  timezone: "Asia/Ho_Chi_Minh",
+  points_per_day: 10,
+  streak_bonuses: [
+    { days: 7, bonus_points: 20 },
+    { days: 30, bonus_points: 100 }
+  ]
+};
+function readCheckinSettings() {
+  return { ...CHECKIN_SETTINGS_DEFAULTS, ...readJson("checkin_settings", {}) ?? {} };
+}
+router2.get("/bot/checkin/settings", requireAuth, (_req, res) => {
+  res.json(readCheckinSettings());
+});
+router2.put("/bot/checkin/settings", requireAuth, (req, res) => {
+  const body = req.body ?? {};
+  const current = readCheckinSettings();
+  const updated = {
+    ...current,
+    enabled: typeof body.enabled === "boolean" ? body.enabled : current.enabled,
+    hour: body.hour != null ? Number(body.hour) : current.hour,
+    minute: body.minute != null ? Number(body.minute) : current.minute,
+    timezone: typeof body.timezone === "string" ? body.timezone : current.timezone,
+    points_per_day: body.points_per_day != null ? Number(body.points_per_day) : current.points_per_day,
+    streak_bonuses: Array.isArray(body.streak_bonuses) ? body.streak_bonuses : current.streak_bonuses
+  };
+  writeJson("checkin_settings", updated);
+  addLog("CHECKIN_SETTINGS_UPDATE", "", "web-admin");
+  res.json(updated);
+});
+router2.get("/bot/checkin/stats", requireAuth, (_req, res) => {
+  const records = readJson("checkin_records", {}) ?? {};
+  const users = readJson("users", {}) ?? {};
+  const logs = readJson("checkin_logs", {}) ?? {};
+  const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const todayLog = logs[today] ?? {};
+  let checkedInToday = 0;
+  let longestStreak = 0;
+  let totalPointsToday = 0;
+  for (const rec of Object.values(records)) {
+    if (rec.last_checkin === today) checkedInToday++;
+    if ((rec.streak ?? 0) > longestStreak) longestStreak = rec.streak;
+  }
+  totalPointsToday = todayLog.total_points_distributed ?? 0;
+  const totalUsers = Object.keys(users).length;
+  const notCheckedInToday = totalUsers - checkedInToday;
+  res.json({
+    today,
+    checkedInToday,
+    notCheckedInToday,
+    longestStreak,
+    totalPointsToday,
+    notifSent: todayLog.sent ?? 0,
+    notifFailed: todayLog.failed ?? 0,
+    triggeredAt: todayLog.triggered_at ?? null,
+    totalUsersWithRecords: Object.keys(records).length
+  });
+});
+router2.get("/bot/checkin/records", requireAuth, (_req, res) => {
+  const records = readJson("checkin_records", {}) ?? {};
+  const users = readJson("users", {}) ?? {};
+  const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const list = Object.entries(records).map(([uid, rec]) => {
+    const user = users[uid] ?? {};
+    return {
+      userId: rec.user_id ?? uid,
+      username: user.username ?? "",
+      firstName: user.firstName ?? user.first_name ?? "",
+      lastCheckin: rec.last_checkin ?? "",
+      streak: rec.streak ?? 0,
+      totalPoints: rec.total_points ?? 0,
+      totalCheckins: rec.total_checkins ?? 0,
+      checkedInToday: rec.last_checkin === today
+    };
+  });
+  list.sort((a, b) => b.totalPoints - a.totalPoints);
+  res.json(list);
+});
+router2.post("/bot/checkin/trigger", requireAuth, (_req, res) => {
+  const pending = readJson("pending_broadcasts", []) ?? [];
+  pending.push({
+    id: `checkin_${Date.now()}`,
+    message: "__CHECKIN_NOTIFICATION__",
+    // Special sentinel bot.py recognises
+    target: "checkin_notify",
+    createdAt: now()
+  });
+  writeJson("pending_broadcasts", pending);
+  addLog("CHECKIN_TRIGGER_MANUAL", "", "web-admin");
+  res.json({ ok: true, message: "Checkin notification queued" });
+});
 router2.get("/bot/backup", requireAuth, (_req, res) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
   const backup = { exportedAt: now() };
