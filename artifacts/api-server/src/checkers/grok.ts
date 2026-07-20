@@ -634,10 +634,17 @@ const grokPlugin: CheckerPlugin = {
       if (!pwInput) {
         const bt = (await bodyText(page)).slice(0, 600);
         log(`Password not found — body: ${bt}`);
-        if (/invalid|not found|no account|doesn't exist/i.test(bt)) {
-          return { code: "PASSWORD_INVALID", message: "Email không tồn tại", responseTime: elapsed(), playwrightLog: logs.join("\n") };
+        const shot = await screenshot64();
+        if (/permission.denied|403|forbidden/i.test(bt)) {
+          return { code: "UNKNOWN", message: "accounts.x.ai trả 403 khi kiểm tra email — proxy IP bị block ở API level hoặc email không tồn tại", responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
         }
-        return { code: "UNKNOWN", message: `Không tìm thấy ô mật khẩu — URL: ${url.split("?")[0]}`, responseTime: elapsed(), playwrightLog: logs.join("\n") };
+        if (/invalid|not found|no account|doesn't exist|couldn.*find.*account/i.test(bt)) {
+          return { code: "PASSWORD_INVALID", message: "Email không tồn tại trên accounts.x.ai", responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
+        }
+        if (/magic.link|check.*email|sent.*email|verify.*email/i.test(bt)) {
+          return { code: "UNKNOWN", message: "accounts.x.ai gửi magic link thay vì password — không thể tự động login", responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
+        }
+        return { code: "UNKNOWN", message: `Không tìm thấy ô mật khẩu sau khi nhập email — URL: ${url.split("?")[0]}`, responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
       }
 
       log("Filling password");
