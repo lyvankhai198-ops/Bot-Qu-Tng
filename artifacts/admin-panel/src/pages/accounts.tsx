@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { useListAccounts, useAddAccounts, useUpdateAccount, useDeleteAccount, getListAccountsQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Card, CardContent } from "@/components/ui/card"
@@ -9,39 +9,75 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
-import { Search, Plus, Edit2, Trash2, Package } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
+import { Search, Plus, Edit2, Trash2, Package, Bell, BellOff } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Account } from "@workspace/api-client-react"
 
+function authHeader() {
+  return { Authorization: `Bearer ${localStorage.getItem("admin_token") ?? ""}` }
+}
+
+const DEFAULT_NOTIFY_MSG = "🎁 Kho quà vừa được bổ sung!\n\nTruy cập bot để nhận quà ngay nhé!"
+
 export default function Accounts() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  
+
   const { data: accounts, isLoading } = useListAccounts({ query: { queryKey: getListAccountsQueryKey() } })
-  const addAccounts = useAddAccounts({ mutation: { onSuccess: () => queryClient.invalidateQueries({ queryKey: getListAccountsQueryKey() }) } })
+  const addAccounts   = useAddAccounts({ mutation: { onSuccess: () => queryClient.invalidateQueries({ queryKey: getListAccountsQueryKey() }) } })
   const updateAccount = useUpdateAccount({ mutation: { onSuccess: () => queryClient.invalidateQueries({ queryKey: getListAccountsQueryKey() }) } })
   const deleteAccount = useDeleteAccount({ mutation: { onSuccess: () => queryClient.invalidateQueries({ queryKey: getListAccountsQueryKey() }) } })
 
-  const [search, setSearch] = useState("")
+  const [search, setSearch]           = useState("")
   const [filterStatus, setFilterStatus] = useState("all")
-  
+
   const [addDialogOpen, setAddDialogOpen] = useState(false)
-  const [addText, setAddText] = useState("")
-  const [addType, setAddType] = useState("")
-  const [addNote, setAddNote] = useState("")
+  const [addText, setAddText]   = useState("")
+  const [addType, setAddType]   = useState("")
+  const [addNote, setAddNote]   = useState("")
 
-  const [editAccount, setEditAccount] = useState<Account | null>(null)
-  const [editType, setEditType] = useState("")
-  const [editNote, setEditNote] = useState("")
-  const [editStatus, setEditStatus] = useState("")
+  // ── Notify state ──────────────────────────────────────────────────────────
+  const [notifyEnabled, setNotifyEnabled]     = useState(true)
+  const [notifyMessage, setNotifyMessage]     = useState(DEFAULT_NOTIFY_MSG)
+  const [showMsgEditor, setShowMsgEditor]     = useState(false)
+  const [notifySettingsSaving, setNotifySettingsSaving] = useState(false)
 
+  useEffect(() => {
+    fetch("/api/bot/stock-notify-settings", { headers: authHeader() })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return
+        setNotifyEnabled(d.enabled !== false)
+        setNotifyMessage(d.message || DEFAULT_NOTIFY_MSG)
+      })
+      .catch(() => {})
+  }, [])
+
+  // ── Save default notify settings ─────────────────────────────────────────
+  const saveNotifySettings = async (enabled: boolean, message: string) => {
+    setNotifySettingsSaving(true)
+    try {
+      await fetch("/api/bot/stock-notify-settings", {
+        method: "PUT",
+        headers: { ...authHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled, message }),
+      })
+    } catch { /* ignore */ } finally { setNotifySettingsSaving(false) }
+  }
+
+  // ── Account state ─────────────────────────────────────────────────────────
+  const [editAccount, setEditAccount]             = useState<Account | null>(null)
+  const [editType, setEditType]                   = useState("")
+  const [editNote, setEditNote]                   = useState("")
+  const [editStatus, setEditStatus]               = useState("")
   const [deleteAccountEmail, setDeleteAccountEmail] = useState<string | null>(null)
 
   const filteredAccounts = useMemo(() => {
     if (!accounts) return []
     return accounts.filter(acc => {
-      const matchSearch = acc.email.toLowerCase().includes(search.toLowerCase()) || 
+      const matchSearch = acc.email.toLowerCase().includes(search.toLowerCase()) ||
                           (acc.note || "").toLowerCase().includes(search.toLowerCase())
       const matchStatus = filterStatus === "all" || acc.status === filterStatus
       return matchSearch && matchStatus
@@ -60,11 +96,11 @@ export default function Accounts() {
     const lines = addText.split("\n").filter(l => l.trim().includes(":"))
     const parsedAccounts = lines.map(line => {
       const [email, ...rest] = line.split(":")
-      return { 
-        email: email.trim(), 
-        password: rest.join(":").trim(), 
-        type: addType || undefined, 
-        note: addNote || undefined 
+      return {
+        email: email.trim(),
+        password: rest.join(":").trim(),
+        type: addType || undefined,
+        note: addNote || undefined,
       }
     })
 
@@ -74,13 +110,27 @@ export default function Accounts() {
     }
 
     try {
-      await addAccounts.mutateAsync({ data: { accounts: parsedAccounts } })
-      toast({ title: "Thành công", description: `Đã thêm ${parsedAccounts.length} tài khoản` })
+      const result: any = await addAccounts.mutateAsync({
+        data: {
+          accounts: parsedAccounts,
+          notify: notifyEnabled,
+          notifyMessage: notifyMessage.trim() || DEFAULT_NOTIFY_MSG,
+        } as any,
+      })
+      const added = result?.added ?? parsedAccounts.length
+      if (notifyEnabled && added > 0) {
+        toast({
+          title: "✅ Đã thêm & xếp hàng thông báo",
+          description: `Thêm ${added} tài khoản. Đang gửi thông báo tới người chưa nhận quà.`,
+        })
+      } else {
+        toast({ title: "Thành công", description: `Đã thêm ${added} tài khoản` })
+      }
       setAddDialogOpen(false)
       setAddText("")
       setAddType("")
       setAddNote("")
-    } catch (e) {
+    } catch {
       toast({ title: "Lỗi", description: "Không thể thêm tài khoản", variant: "destructive" })
     }
   }
@@ -88,13 +138,10 @@ export default function Accounts() {
   const handleEditSubmit = async () => {
     if (!editAccount) return
     try {
-      await updateAccount.mutateAsync({
-        email: editAccount.email,
-        data: { type: editType, note: editNote, status: editStatus }
-      })
+      await updateAccount.mutateAsync({ email: editAccount.email, data: { type: editType, note: editNote, status: editStatus } })
       toast({ title: "Thành công", description: "Cập nhật tài khoản thành công" })
       setEditAccount(null)
-    } catch (e) {
+    } catch {
       toast({ title: "Lỗi", description: "Không thể cập nhật", variant: "destructive" })
     }
   }
@@ -105,7 +152,7 @@ export default function Accounts() {
       await deleteAccount.mutateAsync({ email: deleteAccountEmail })
       toast({ title: "Thành công", description: "Đã xóa tài khoản" })
       setDeleteAccountEmail(null)
-    } catch (e) {
+    } catch {
       toast({ title: "Lỗi", description: "Không thể xóa tài khoản", variant: "destructive" })
     }
   }
@@ -254,26 +301,30 @@ export default function Accounts() {
         </CardContent>
       </Card>
 
-      {/* Add Dialog */}
+      {/* ── Add Dialog ──────────────────────────────────────────────────────── */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-[500px] max-h-[90dvh] overflow-y-auto">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[520px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Thêm tài khoản mới</DialogTitle>
             <DialogDescription>
               Nhập danh sách tài khoản theo định dạng email:password, mỗi tài khoản một dòng.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+
+          <div className="grid gap-4 py-2">
+            {/* Accounts textarea */}
             <div className="grid gap-2">
               <Label htmlFor="accounts">Danh sách tài khoản</Label>
               <Textarea
                 id="accounts"
-                placeholder="user1@email.com:pass123&#10;user2@email.com:pass456"
+                placeholder={"user1@email.com:pass123\nuser2@email.com:pass456"}
                 className="h-32 font-mono text-sm"
                 value={addText}
                 onChange={e => setAddText(e.target.value)}
               />
             </div>
+
+            {/* Type + note */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="type">Loại tài khoản</Label>
@@ -284,11 +335,71 @@ export default function Accounts() {
                 <Input id="note" placeholder="Ghi chú tùy chọn" value={addNote} onChange={e => setAddNote(e.target.value)} />
               </div>
             </div>
+
+            {/* ── Notify section ─────────────────────────────────────────── */}
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between gap-3 p-3 bg-muted/30">
+                <div className="flex items-center gap-2 min-w-0">
+                  {notifyEnabled
+                    ? <Bell className="h-4 w-4 text-primary shrink-0" />
+                    : <BellOff className="h-4 w-4 text-muted-foreground shrink-0" />
+                  }
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium leading-none">Thông báo người dùng</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Gửi tin nhắn đến người chưa nhận quà
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={notifyEnabled}
+                  onCheckedChange={v => {
+                    setNotifyEnabled(v)
+                    saveNotifySettings(v, notifyMessage)
+                  }}
+                  className="shrink-0"
+                />
+              </div>
+
+              {notifyEnabled && (
+                <div className="p-3 border-t border-border space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-muted-foreground">Nội dung tin nhắn</Label>
+                    <button
+                      type="button"
+                      className="text-xs text-primary underline-offset-2 hover:underline"
+                      onClick={() => setShowMsgEditor(v => !v)}
+                    >
+                      {showMsgEditor ? "Ẩn" : "Chỉnh sửa"}
+                    </button>
+                  </div>
+
+                  {showMsgEditor ? (
+                    <Textarea
+                      className="text-sm min-h-[80px]"
+                      value={notifyMessage}
+                      onChange={e => setNotifyMessage(e.target.value)}
+                      onBlur={() => saveNotifySettings(notifyEnabled, notifyMessage)}
+                    />
+                  ) : (
+                    <div className="bg-background border border-border/60 rounded p-2 text-xs whitespace-pre-wrap text-foreground/80 font-mono">
+                      {notifyMessage || DEFAULT_NOTIFY_MSG}
+                    </div>
+                  )}
+                  {notifySettingsSaving && (
+                    <p className="text-xs text-muted-foreground">Đang lưu...</p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-          <DialogFooter className="flex-col sm:flex-row gap-2">
+
+          <DialogFooter className="flex-col sm:flex-row gap-2 pt-2">
             <Button variant="outline" className="w-full sm:w-auto" onClick={() => setAddDialogOpen(false)}>Hủy</Button>
             <Button className="w-full sm:w-auto" onClick={handleAddSubmit} disabled={addAccounts.isPending}>
-              {addAccounts.isPending ? "Đang lưu..." : "Lưu tài khoản"}
+              {addAccounts.isPending
+                ? "Đang lưu..."
+                : notifyEnabled ? "Lưu & Thông báo" : "Lưu tài khoản"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -299,9 +410,7 @@ export default function Accounts() {
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[425px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Chỉnh sửa tài khoản</DialogTitle>
-            <DialogDescription>
-              {editAccount?.email}
-            </DialogDescription>
+            <DialogDescription>{editAccount?.email}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -311,9 +420,7 @@ export default function Accounts() {
             <div className="grid gap-2">
               <Label htmlFor="edit-status">Trạng thái</Label>
               <Select value={editStatus} onValueChange={setEditStatus}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="available">Còn hàng</SelectItem>
                   <SelectItem value="distributed">Đã phát</SelectItem>
@@ -340,7 +447,8 @@ export default function Accounts() {
           <DialogHeader>
             <DialogTitle>Xác nhận xóa</DialogTitle>
             <DialogDescription>
-              Bạn có chắc chắn muốn xóa tài khoản <span className="font-bold text-foreground break-all">{deleteAccountEmail}</span> không? Hành động này không thể hoàn tác.
+              Bạn có chắc chắn muốn xóa tài khoản{" "}
+              <span className="font-bold text-foreground break-all">{deleteAccountEmail}</span>? Hành động này không thể hoàn tác.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4 flex-col sm:flex-row gap-2">

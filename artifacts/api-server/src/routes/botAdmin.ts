@@ -193,6 +193,31 @@ router.get("/bot/accounts", requireAuth, (_req: any, res: any) => {
   res.json(accounts);
 });
 
+// ── GET /bot/stock-notify-settings ──────────────────────────────────────────
+router.get("/bot/stock-notify-settings", requireAuth, (_req: any, res: any) => {
+  const defaults = {
+    enabled: true,
+    message: "🎁 Kho quà vừa được bổ sung!\n\nTruy cập bot để nhận quà ngay nhé!",
+    target: "no_received",
+  };
+  const stored = readJson("stock_notify_settings", {}) ?? {};
+  res.json({ ...defaults, ...stored });
+});
+
+// ── PUT /bot/stock-notify-settings ──────────────────────────────────────────
+router.put("/bot/stock-notify-settings", requireAuth, (req: any, res: any) => {
+  const defaults = {
+    enabled: true,
+    message: "🎁 Kho quà vừa được bổ sung!\n\nTruy cập bot để nhận quà ngay nhé!",
+    target: "no_received",
+  };
+  const stored = readJson("stock_notify_settings", {}) ?? {};
+  const updated = { ...defaults, ...stored, ...req.body };
+  writeJson("stock_notify_settings", updated);
+  addLog("STOCK_NOTIFY_SETTINGS_UPDATE", "", "web-admin");
+  res.json(updated);
+});
+
 // ── POST /bot/accounts ──────────────────────────────────────────────────────
 router.post("/bot/accounts", requireAuth, (req: any, res: any) => {
   const incoming: any[] = Array.isArray(req.body?.accounts) ? req.body.accounts : [];
@@ -208,6 +233,23 @@ router.post("/bot/accounts", requireAuth, (req: any, res: any) => {
   }
   writeJson("accounts", accounts);
   addLog("ADD_ACCOUNTS", `added=${added}`, "web-admin");
+
+  // Queue stock notification if requested and accounts were actually added
+  if (added > 0 && req.body?.notify !== false) {
+    const ns = readJson("stock_notify_settings", {}) ?? {};
+    const notifyEnabled = req.body?.notify === true || ns.enabled !== false;
+    if (notifyEnabled) {
+      const message = (typeof req.body?.notifyMessage === "string" && req.body.notifyMessage.trim())
+        ? req.body.notifyMessage.trim()
+        : (ns.message || "🎁 Kho quà vừa được bổ sung!\n\nTruy cập bot để nhận quà ngay nhé!");
+      const target = ns.target || "no_received";
+      const pending: any[] = readJson("pending_broadcasts", []) ?? [];
+      pending.push({ id: `stock_${Date.now()}`, message, target, createdAt: now() });
+      writeJson("pending_broadcasts", pending);
+      addLog("STOCK_NOTIFY_QUEUED", `added=${added} target=${target}`, "web-admin");
+    }
+  }
+
   res.json({ added, total: accounts.length });
 });
 
