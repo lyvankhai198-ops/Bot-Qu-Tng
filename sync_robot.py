@@ -820,53 +820,111 @@ async def _log_all_links(page) -> list:
         return []
 
 
-async def _click_hamburger_by_position(page) -> bool:
+async def _click_hamburger(page) -> bool:
     """
-    Tìm nút hamburger ☰ bằng vị trí: x<180, y<250, w<150, h<150.
-    Ưu tiên button có aria-label/title/data-testid chứa 'menu', hoặc text rỗng.
-    Trả True nếu click được.
+    Tìm và click nút hamburger ☰ (3 gạch) ở góc trên bên trái.
+
+    Thứ tự ưu tiên:
+      1. button[aria-label] chứa "menu" / "navigation" / "sidebar" / "drawer"
+      2. button có aria-label="Menu" hoặc "Open navigation" (exact)
+      3. button chứa <svg> trong vùng góc trên trái (x<220, y<200)
+      4. [role=button] chứa SVG trong vùng đó
+      5. Mọi button không có text hiển thị ở góc trên trái (icon button)
+
+    Trả True nếu đã click được, False nếu không tìm thấy.
     """
+    # ── Cách 1: aria-label chứa từ khóa menu ─────────────────────────────────
+    for kw in ("menu", "sidebar", "drawer", "navigation", "hamburger", "toggle"):
+        try:
+            el = page.locator(
+                f'button[aria-label*="{kw}" i], [role=button][aria-label*="{kw}" i]'
+            ).first
+            if await el.count() > 0 and await el.is_visible():
+                lbl = await el.get_attribute("aria-label")
+                logger.info(f"[SYNC][hamburger] Cách 1: aria-label={lbl!r}")
+                await el.click()
+                return True
+        except Exception:
+            continue
+
+    # ── Cách 2: title chứa từ khóa ───────────────────────────────────────────
+    for kw in ("menu", "navigation", "sidebar"):
+        try:
+            el = page.locator(f'button[title*="{kw}" i]').first
+            if await el.count() > 0 and await el.is_visible():
+                lbl = await el.get_attribute("title")
+                logger.info(f"[SYNC][hamburger] Cách 2: title={lbl!r}")
+                await el.click()
+                return True
+        except Exception:
+            continue
+
+    # ── Cách 3: button chứa SVG ở góc trên trái ─────────────────────────────
+    # Lọc qua bounding box, ưu tiên có aria-label chứa menu
     try:
-        all_buttons = page.locator("button")
-        count = await all_buttons.count()
+        svg_btns = page.locator("button:has(svg), [role=button]:has(svg)")
+        count = await svg_btns.count()
         candidates = []
-        for i in range(min(count, 30)):
-            btn = all_buttons.nth(i)
+        for i in range(min(count, 40)):
+            el = svg_btns.nth(i)
             try:
-                if not await btn.is_visible():
+                if not await el.is_visible():
                     continue
-                bb = await btn.bounding_box()
+                bb = await el.bounding_box()
                 if not bb:
                     continue
-                if bb["x"] >= 180 or bb["y"] >= 250 or bb["width"] >= 150 or bb["height"] >= 150:
+                # Vùng góc trên trái: x < 220, y < 200
+                if bb["x"] >= 220 or bb["y"] >= 200:
                     continue
-                # Thu thập metadata
-                aria  = (await btn.get_attribute("aria-label") or "").lower()
-                title = (await btn.get_attribute("title") or "").lower()
-                dtid  = (await btn.get_attribute("data-testid") or "").lower()
-                txt   = _normalize_text(await btn.inner_text())
+                if bb["width"] >= 150 or bb["height"] >= 150:
+                    continue
+                aria  = (await el.get_attribute("aria-label") or "").lower()
+                title = (await el.get_attribute("title") or "").lower()
+                txt   = _normalize_text(await el.inner_text())
                 score = 0
-                if any(kw in aria  for kw in ("menu", "sidebar", "drawer", "hamburger", "nav")): score += 3
-                if any(kw in title for kw in ("menu", "sidebar", "drawer", "hamburger", "nav")): score += 3
-                if any(kw in dtid  for kw in ("menu", "sidebar", "drawer", "hamburger", "nav")): score += 3
-                if txt == "":  score += 2   # nút không có text → thường là icon
-                candidates.append((score, bb["x"], bb["y"], btn, aria or title or dtid or f"btn[{i}]"))
+                if any(k in aria  for k in ("menu","nav","sidebar","drawer","hamburger")): score += 5
+                if any(k in title for k in ("menu","nav","sidebar","drawer","hamburger")): score += 5
+                if txt == "": score += 2   # nút không có text visible → icon thuần
+                candidates.append((score, bb["x"], bb["y"], el,
+                                   aria or title or f"btn[{i}]@({bb['x']:.0f},{bb['y']:.0f})"))
             except Exception:
                 continue
 
-        if not candidates:
-            logger.warning("[SYNC] No hamburger candidates found in top-left region")
-            return False
-
-        # Sắp xếp: score cao trước, rồi x nhỏ, rồi y nhỏ
-        candidates.sort(key=lambda c: (-c[0], c[1], c[2]))
-        score, bx, by, btn, label = candidates[0]
-        logger.info(f"[SYNC] Clicking hamburger [{label}] at ({bx:.0f},{by:.0f}) score={score}")
-        await btn.click()
-        return True
+        if candidates:
+            candidates.sort(key=lambda c: (-c[0], c[1], c[2]))
+            score, bx, by, btn, label = candidates[0]
+            logger.info(f"[SYNC][hamburger] Cách 3: SVG button [{label}] tại ({bx:.0f},{by:.0f}) score={score}")
+            await btn.click()
+            return True
     except Exception as ex:
-        logger.warning(f"[SYNC] _click_hamburger_by_position error: {ex}")
-        return False
+        logger.warning(f"[SYNC][hamburger] Cách 3 lỗi: {ex}")
+
+    # ── Cách 4: Mọi button không có text ở góc trên trái ─────────────────────
+    try:
+        all_btns = page.locator("button")
+        count = await all_btns.count()
+        for i in range(min(count, 40)):
+            el = all_btns.nth(i)
+            try:
+                if not await el.is_visible():
+                    continue
+                bb = await el.bounding_box()
+                if not bb or bb["x"] >= 220 or bb["y"] >= 200:
+                    continue
+                if bb["width"] >= 150 or bb["height"] >= 150:
+                    continue
+                txt = _normalize_text(await el.inner_text())
+                if txt == "":
+                    logger.info(f"[SYNC][hamburger] Cách 4: icon button tại ({bb['x']:.0f},{bb['y']:.0f})")
+                    await el.click()
+                    return True
+            except Exception:
+                continue
+    except Exception as ex:
+        logger.warning(f"[SYNC][hamburger] Cách 4 lỗi: {ex}")
+
+    logger.warning("[SYNC][hamburger] Không tìm thấy nút hamburger")
+    return False
 
 
 async def _wait_for_sidebar(page) -> bool:
@@ -1107,15 +1165,18 @@ async def _find_and_navigate_order_item(page) -> bool:
 
 async def _open_orders_page(page) -> None:
     """
-    Mở trang Đơn hàng:
-      1. Guard: URL không phải /login
-      2. Mở sidebar nếu chưa mở (bấm hamburger ≡)
-      3. Tìm 'Đơn hàng' bằng nhiều cách, click, xác nhận bằng nội dung
-      4. Retry tối đa 3 lần
-      5. Thất bại → log đầy đủ: URL, title, text menu, sidebar links, href, screenshot
-    """
-    from playwright.async_api import TimeoutError as PwTimeout
+    Mở trang Đơn hàng theo đúng thứ tự:
 
+      Bước 1 — Click nút hamburger (3 gạch) ở góc trên trái.
+               Kiểm tra sidebar đã mở. Retry tối đa 3 lần nếu chưa mở.
+               KHÔNG tìm "Đơn hàng" khi sidebar còn đóng.
+
+      Bước 2 — Chỉ khi sidebar đã mở: tìm mục "Đơn hàng" và click.
+
+      Bước 3 — Chờ nút "Tải xuống" xuất hiện để xác nhận đang ở đúng trang.
+
+      Thất bại → log đầy đủ URL, title, sidebar texts, screenshot.
+    """
     SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
     # ── 0. Guard: phiên đăng nhập phải còn sống ───────────────────────────────
@@ -1131,79 +1192,115 @@ async def _open_orders_page(page) -> None:
             f"URL={_guard_url} | Cookies: {_gnames}"
         )
     logger.info(f"[SYNC] _open_orders_page start — URL={_guard_url}")
-
-    # ── 1. Đảm bảo DOM đã tải ─────────────────────────────────────────────────
     await page.wait_for_load_state("domcontentloaded")
-    logger.info(f"[SYNC] DOM loaded — URL={page.url} | Title={await page.title()}")
 
-    # ── 2–4. Retry: sidebar → Đơn hàng ────────────────────────────────────────
-    navigated   = False
-    last_links: list = []
-    last_url    = page.url
-    last_title  = ""
+    # ══════════════════════════════════════════════════════════════════════
+    # BƯỚC 1: Click hamburger, chờ sidebar mở — retry tối đa 3 lần
+    # ══════════════════════════════════════════════════════════════════════
+    sidebar_open = False
+    for ham_try in range(1, 4):
+        logger.info(f"[SYNC] [Ham {ham_try}/3] Bấm nút hamburger ☰")
 
-    for attempt in range(1, 4):
-        logger.info(f"[SYNC] Attempt {attempt}/3")
-
-        # Kiểm tra sidebar đã mở chưa (tránh toggle đóng lại nếu đang mở)
-        sidebar_already_open = await _wait_for_sidebar(page)
-        if sidebar_already_open:
-            logger.info(f"[SYNC] Sidebar đã mở sẵn (attempt {attempt})")
-        else:
-            logger.info(f"[SYNC] Sidebar chưa mở — bấm hamburger (attempt {attempt})")
-            await _click_hamburger_by_position(page)
-            # Chờ sidebar xuất hiện tối đa 5s
-            sidebar_open = await _wait_for_sidebar(page)
-            if not sidebar_open:
-                logger.warning(f"[SYNC] Sidebar không mở sau hamburger click (attempt {attempt})")
-                await page.wait_for_timeout(1_000)
-
-        # Chụp screenshot sau khi sidebar (có thể) đã mở
-        ss_name = f"sidebar_attempt_{attempt}.png"
-        ss_path = str(SCREENSHOTS_DIR / ss_name)
+        # Chụp ảnh trước khi click hamburger
         try:
-            await page.screenshot(path=ss_path, full_page=False)
-            logger.info(f"[SYNC] Screenshot: {ss_path}")
-        except Exception as e:
-            logger.warning(f"[SYNC] Screenshot thất bại: {e}")
-
-        # Log toàn bộ links + text menu để debug
-        last_links = await _log_all_links(page)
-        try:
-            all_texts = await page.evaluate("""() => {
-                const els = document.querySelectorAll('a, button, [role=menuitem], [role=option], li');
-                return Array.from(els).map(el => (el.innerText||el.textContent||'').trim()).filter(t=>t).slice(0,60);
-            }""")
-            logger.info(f"[SYNC] Menu texts: {all_texts}")
+            await page.screenshot(
+                path=str(SCREENSHOTS_DIR / f"before_hamburger_{ham_try}.png"),
+                full_page=False
+            )
         except Exception:
             pass
 
-        # Tìm "Đơn hàng" và điều hướng (xác nhận bằng content bên trong)
-        navigated = await _find_and_navigate_order_item(page)
-        if navigated:
+        clicked = await _click_hamburger(page)
+        if not clicked:
+            logger.warning(f"[SYNC] [Ham {ham_try}/3] Không click được hamburger")
+            await page.wait_for_timeout(1_000)
+            continue
+
+        # Chờ sidebar xuất hiện tối đa 4s
+        await page.wait_for_timeout(400)
+        sidebar_open = await _wait_for_sidebar(page)
+
+        # Chụp ảnh sau khi click hamburger
+        try:
+            await page.screenshot(
+                path=str(SCREENSHOTS_DIR / f"after_hamburger_{ham_try}.png"),
+                full_page=False
+            )
+        except Exception:
+            pass
+
+        if sidebar_open:
+            logger.info(f"[SYNC] [Ham {ham_try}/3] ✅ Sidebar đã mở")
             break
+        else:
+            logger.warning(f"[SYNC] [Ham {ham_try}/3] Sidebar chưa mở sau click — thử lại")
+            await page.wait_for_timeout(1_000)
 
-        last_url   = page.url
-        last_title = await page.title()
-        logger.warning(f"[SYNC] 'Đơn hàng' không tìm thấy/xác nhận (attempt {attempt}) — URL={last_url}")
-        await page.wait_for_timeout(1_500)
-
-    # ── 5. Thất bại hoàn toàn — log đầy đủ và raise ───────────────────────────
-    if not navigated:
-        fail_ss = str(SCREENSHOTS_DIR / "orders_page_failed.png")
+    if not sidebar_open:
+        # Log diagnostics rồi raise
+        diag_url   = page.url
+        diag_title = await page.title()
+        fail_ss    = str(SCREENSHOTS_DIR / "hamburger_failed.png")
         try:
             await page.screenshot(path=fail_ss, full_page=False)
         except Exception:
             pass
+        cookies_names = []
+        try:
+            cookies_names = [c["name"] for c in await page.context.cookies()]
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"Không mở được sidebar sau 3 lần bấm hamburger.\n"
+            f"URL   : {diag_url}\n"
+            f"Title : {diag_title}\n"
+            f"Cookies: {cookies_names}\n"
+            f"Screenshot: hamburger_failed.png"
+        )
 
-        # Thu thập diagnostics đầy đủ
+    # ══════════════════════════════════════════════════════════════════════
+    # BƯỚC 2: Sidebar đã mở — tìm "Đơn hàng" và click
+    # ══════════════════════════════════════════════════════════════════════
+    logger.info("[SYNC] Sidebar đã mở — bắt đầu tìm mục 'Đơn hàng'")
+
+    # Log nội dung sidebar để debug
+    last_links: list = []
+    try:
+        last_links = await _log_all_links(page)
+        sidebar_texts_debug = await page.evaluate("""() => {
+            const nav = document.querySelector(
+                'nav,[role=navigation],[class*=sidebar i],[class*=drawer i],[class*=menu i]'
+            );
+            const root = nav || document.body;
+            return Array.from(root.querySelectorAll('a,button,[role=menuitem],li'))
+                .map(el => (el.innerText || el.textContent || '').trim())
+                .filter(t => t && t.length < 60)
+                .slice(0, 40);
+        }""")
+        logger.info(f"[SYNC] Sidebar texts: {sidebar_texts_debug}")
+    except Exception:
+        pass
+
+    navigated = await _find_and_navigate_order_item(page)
+
+    if not navigated:
+        # Thất bại — log đầy đủ
         diag_url   = page.url
         diag_title = await page.title()
+        fail_ss    = str(SCREENSHOTS_DIR / "orders_nav_failed.png")
+        try:
+            await page.screenshot(path=fail_ss, full_page=False)
+        except Exception:
+            pass
         try:
             sidebar_texts = await page.evaluate("""() => {
-                const nav = document.querySelector('nav,[role=navigation],[class*=sidebar],[class*=drawer]');
+                const nav = document.querySelector(
+                    'nav,[role=navigation],[class*=sidebar i],[class*=drawer i]'
+                );
                 if (!nav) return [];
-                return Array.from(nav.querySelectorAll('a,button,li')).map(el=>(el.innerText||el.textContent||'').trim()).filter(t=>t);
+                return Array.from(nav.querySelectorAll('a,button,li'))
+                    .map(el => (el.innerText||el.textContent||'').trim())
+                    .filter(t => t);
             }""")
         except Exception:
             sidebar_texts = []
@@ -1216,16 +1313,48 @@ async def _open_orders_page(page) -> None:
             cookies_names = [c["name"] for c in await page.context.cookies()]
         except Exception:
             pass
-
         raise RuntimeError(
-            f"Không tìm thấy/xác nhận trang 'Đơn hàng' sau 3 lần thử.\n"
-            f"URL hiện tại  : {diag_url}\n"
-            f"Title         : {diag_title}\n"
-            f"Sidebar texts : {sidebar_texts}\n"
-            f"Tất cả links  : {links_summary}\n"
-            f"Cookies       : {cookies_names}\n"
-            f"Screenshot    : orders_page_failed.png"
+            f"Sidebar đã mở nhưng không tìm thấy/click được 'Đơn hàng'.\n"
+            f"URL       : {diag_url}\n"
+            f"Title     : {diag_title}\n"
+            f"Sidebar   : {sidebar_texts}\n"
+            f"Links     : {links_summary}\n"
+            f"Cookies   : {cookies_names}\n"
+            f"Screenshot: orders_nav_failed.png"
         )
+
+    # ══════════════════════════════════════════════════════════════════════
+    # BƯỚC 3: Chờ nút "Tải xuống" xuất hiện (xác nhận đang ở đúng trang)
+    # ══════════════════════════════════════════════════════════════════════
+    logger.info("[SYNC] Đã vào trang Đơn hàng — chờ nút 'Tải xuống' xuất hiện")
+    DL_SIGNALS = [
+        'button:has-text("Tải xuống")',
+        'button:has-text("Tải Xuống")',
+        'a:has-text("Tải xuống")',
+        'button:has-text("Download")',
+        'button:has-text("Export")',
+        'a[download]',
+    ]
+    dl_ready = False
+    for tick in range(30):  # chờ tối đa 15s
+        for sig in DL_SIGNALS:
+            try:
+                el = page.locator(sig).first
+                if await el.count() > 0 and await el.is_visible():
+                    logger.info(f"[SYNC] ✅ Nút 'Tải xuống' đã xuất hiện: {sig!r}")
+                    dl_ready = True
+                    break
+            except Exception:
+                pass
+        if dl_ready:
+            break
+        await asyncio.sleep(0.5)
+
+    if not dl_ready:
+        logger.warning(
+            f"[SYNC] Nút 'Tải xuống' chưa xuất hiện sau 15s — URL={page.url} | title={await page.title()}"
+        )
+        # Không raise — để _download_orders_xlsx tự xử lý/retry
 
 
 async def _download_orders_xlsx(page, download_dir: str) -> str:
