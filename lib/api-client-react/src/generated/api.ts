@@ -2877,3 +2877,45 @@ export function useGetBackup<TData = Awaited<ReturnType<typeof getBackup>>, TErr
 
 
 
+
+// ── respondWarranty ────────────────────────────────────────────────────────────
+export const respondWarranty = async (id: string, body: { message: string }, options?: RequestInit): Promise<{ ok: boolean; message: string }> => {
+  return customFetch<{ ok: boolean; message: string }>(`/api/bot/warranty/${id}/respond`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    ...options,
+  });
+};
+
+export const useRespondWarranty = <TError = ErrorType<unknown>, TContext = unknown>(
+  options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof respondWarranty>>, TError, { id: string; data: { message: string } }, TContext> }
+) => {
+  const { mutation: mutationOptions } = options ?? {};
+  const mutationFn = (props: { id: string; data: { message: string } }) => {
+    const { id, data } = props;
+    return respondWarranty(id, data);
+  };
+  return useMutation<Awaited<ReturnType<typeof respondWarranty>>, TError, { id: string; data: { message: string } }, TContext>({ mutationFn, ...mutationOptions });
+};
+
+// ── respondWarrantyAccount ─────────────────────────────────────────────────────
+export const respondWarrantyAccount = async (id: string, accId: string, body: { message: string }, options?: RequestInit): Promise<{ ok: boolean; message: string }> => {
+  return customFetch<{ ok: boolean; message: string }>(`/api/bot/warranty/${id}/accounts/${accId}/respond`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    ...options,
+  });
+};
+
+export const useRespondWarrantyAccount = <TError = ErrorType<unknown>, TContext = unknown>(
+  options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof respondWarrantyAccount>>, TError, { id: string; accId: string; data: { message: string } }, TContext> }
+) => {
+  const { mutation: mutationOptions } = options ?? {};
+  const mutationFn = (props: { id: string; accId: string; data: { message: string } }) => {
+    const { id, accId, data } = props;
+    return respondWarrantyAccount(id, accId, data);
+  };
+  return useMutation<Awaited<ReturnType<typeof respondWarrantyAccount>>, TError, { id: string; accId: string; data: { message: string } }, TContext>({ mutationFn, ...mutationOptions });
+};

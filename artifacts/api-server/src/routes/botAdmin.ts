@@ -1237,6 +1237,29 @@ router.post("/bot/warranty/:id/accounts/:accId/reject", requireAuth, async (req:
   res.json({ ok: true, message: "Đã từ chối" });
 });
 
+// ── POST /bot/warranty/:id/accounts/:accId/respond ───────────────────────────
+router.post("/bot/warranty/:id/accounts/:accId/respond", requireAuth, async (req: any, res: any) => {
+  const { id, accId } = req.params;
+  const { message } = req.body ?? {};
+  if (!message || !String(message).trim()) { res.status(400).json({ ok: false, message: "Nội dung phản hồi không được rỗng" }); return; }
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id && r.type === "group");
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  const accIdx = (req_.accounts ?? []).findIndex((a: any) => a.id === accId);
+  if (accIdx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy tài khoản con" }); return; }
+  const acc = req_.accounts[accIdx];
+  const sentAt = now();
+  const responseEntry = { message: String(message).trim(), sentAt, adminId: "web-admin" };
+  const prevResponses: any[] = acc.responses ?? [];
+  requests[idx].accounts[accIdx] = { ...acc, responses: [...prevResponses, responseEntry] };
+  writeJson("warranty_requests", requests);
+  const teleMsg = `💬 <b>Phản hồi từ admin (tài khoản <code>${acc.email}</code>):</b>\n\n${String(message).trim()}`;
+  const result = await sendTelegramMessage(req_.userId, teleMsg);
+  addLog("GROUP_RESPOND", `${id}/${accId}: ${String(message).trim().slice(0, 60)}`, "web-admin");
+  res.json({ ok: result.ok, message: result.ok ? "Đã gửi phản hồi cho khách" : `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
+});
+
 // ── POST /bot/warranty/:id/accounts/:accId/resend ────────────────────────────
 router.post("/bot/warranty/:id/accounts/:accId/resend", requireAuth, async (req: any, res: any) => {
   const { id, accId } = req.params;
@@ -1495,6 +1518,26 @@ router.post("/bot/warranty/:id/reject", requireAuth, async (req: any, res: any) 
   await sendTelegramMessage(req_.userId, msg);
   addLog("WARRANTY_REJECT", `${id}: ${reason}`, "web-admin");
   res.json({ ok: true, message: "Đã từ chối" });
+});
+
+// ── POST /bot/warranty/:id/respond ───────────────────────────────────────────
+router.post("/bot/warranty/:id/respond", requireAuth, async (req: any, res: any) => {
+  const { id } = req.params;
+  const { message } = req.body ?? {};
+  if (!message || !String(message).trim()) { res.status(400).json({ ok: false, message: "Nội dung phản hồi không được rỗng" }); return; }
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  const sentAt = now();
+  const responseEntry = { message: String(message).trim(), sentAt, adminId: "web-admin" };
+  const prevResponses: any[] = req_.responses ?? [];
+  requests[idx] = { ...req_, responses: [...prevResponses, responseEntry] };
+  writeJson("warranty_requests", requests);
+  const teleMsg = `💬 <b>Phản hồi từ admin:</b>\n\n${String(message).trim()}`;
+  const result = await sendTelegramMessage(req_.userId, teleMsg);
+  addLog("WARRANTY_RESPOND", `${id}: ${String(message).trim().slice(0, 60)}`, "web-admin");
+  res.json({ ok: result.ok, message: result.ok ? "Đã gửi phản hồi cho khách" : `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
 });
 
 // ── GET /orders/lookup?query=... ─────────────────────────────────────────────
