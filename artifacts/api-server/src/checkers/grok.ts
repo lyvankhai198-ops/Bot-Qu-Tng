@@ -452,35 +452,64 @@ const grokPlugin: CheckerPlugin = {
         }
       }
 
-      // ── 3. Tìm ô email (hỗ trợ nhiều layout) ─────────────────────────────────
-      // Đợi ít nhất 1 input xuất hiện trên trang
-      await page.waitForSelector("input", { timeout: 12_000 }).catch(() => {
-        log("No <input> found after 12s — page may not have loaded form yet");
-      });
-      await page.waitForTimeout(1_500);
+      // ── 3. Log what's on the page + find all buttons/links ──────────────────
+      await page.waitForTimeout(3_000);
 
-      // Thử click "Continue with email" / "Sign in with email" nếu có
-      const emailBtnSels = [
+      const bodyInner = await page.evaluate(() => {
+        const body = document.body;
+        return body ? body.innerHTML.slice(0, 3000) : "(no body)";
+      }).catch(() => "(eval error)");
+      log(`Body innerHTML (3000 chars): ${bodyInner}`);
+
+      const allButtons = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll("button, a, [role='button']"));
+        return els.slice(0, 30).map(el => ({
+          tag: el.tagName,
+          text: (el.textContent || "").trim().slice(0, 80),
+          href: (el as HTMLAnchorElement).href || "",
+          visible: (el as HTMLElement).offsetParent !== null,
+        }));
+      }).catch(() => [] as any[]);
+      log(`All buttons/links (${allButtons.length}): ${JSON.stringify(allButtons.slice(0,15))}`);
+
+      // ── 4. Thử click các nút sign-in có thể có ────────────────────────────────
+      // Thứ tự ưu tiên: email → X.com OAuth (vì tài khoản có email/password X.com)
+      const signInBtnSels = [
         'button:has-text("Continue with email")',
         'button:has-text("Sign in with email")',
         'button:has-text("Email")',
         'a:has-text("Continue with email")',
         '[data-provider="email"]',
-        '[data-testid*="email"]',
+        'button:has-text("Continue with X")',
+        'button:has-text("Sign in with X")',
+        'a:has-text("Continue with X")',
+        'button:has-text("Sign in")',
+        'button[type="submit"]',
       ];
-      for (const sel of emailBtnSels) {
-        if (await isVisible(page, sel, 3_000)) {
-          log(`Clicking email provider button: ${sel}`);
+      let clickedSignIn = false;
+      for (const sel of signInBtnSels) {
+        if (await isVisible(page, sel, 2_000)) {
+          log(`Clicking sign-in button: ${sel}`);
           await page.locator(sel).first().click();
-          await page.waitForTimeout(2_500);
-          // Đợi input xuất hiện sau click
-          await page.waitForSelector("input", { timeout: 8_000 }).catch(() => {});
+          await page.waitForTimeout(3_000);
+          clickedSignIn = true;
           break;
         }
       }
 
+      if (!clickedSignIn) {
+        // Thử click button đầu tiên visible trên trang (bất kỳ)
+        const firstBtn = await page.locator("button:visible").first();
+        if (await firstBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
+          const btnText = await firstBtn.textContent().catch(() => "");
+          log(`Clicking first visible button: "${btnText}"`);
+          await firstBtn.click();
+          await page.waitForTimeout(3_000);
+        }
+      }
+
       url = page.url() as string;
-      log(`After email option — URL: ${url}`);
+      log(`After sign-in click — URL: ${url}`);
 
       // Có thể lại gặp CF sau click
       {
