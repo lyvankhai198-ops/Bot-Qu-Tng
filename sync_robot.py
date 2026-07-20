@@ -1860,13 +1860,38 @@ def run_sync_cycle(config: dict) -> dict:
         # STEP 5: Import
         logger.info(f"[SYNC][STEP 5] Bắt đầu import XLSX — path={xlsx_path}")
 
+        # Đọc chế độ đồng bộ từ config
+        # "full"     → cập nhật mật khẩu cho đơn cũ + thêm đơn mới (mặc định)
+        # "new_only" → chỉ thêm đơn chưa tồn tại, bỏ qua đơn đã có
+        sync_mode = config.get("sync_mode", "full")
+        logger.info(f"[SYNC] sync_mode={sync_mode!r}")
+
         # 2. Dedup sets
         known_products = get_known_products(token)
         existing_order_ids, existing_item_emails = get_existing_sets(token)
 
         # 3. Parse XLSX
         rows = parse_xlsx_to_rows(xlsx_path, known_products, existing_order_ids, existing_item_emails)
-        logger.info(f"[SYNC][STEP 5] XLSX → {len(rows)} dòng cần import")
+        logger.info(f"[SYNC][STEP 5] XLSX → {len(rows)} dòng cần xử lý")
+
+        # new_only: lọc sớm trước khi gửi API — chỉ giữ đơn chưa tồn tại
+        if sync_mode == "new_only":
+            total_parsed = len(rows)
+            rows = [r for r in rows if not r.get("dupOrderExists", False)]
+            skipped_existing = total_parsed - len(rows)
+            logger.info(
+                f"[SYNC] new_only: giữ {len(rows)}/{total_parsed} dòng "
+                f"({skipped_existing} đơn cũ bỏ qua)"
+            )
+            if not rows:
+                result["success"]        = True
+                result["import_ok"]      = True
+                result["skipped_orders"] = skipped_existing
+                result["message"]        = (
+                    f"✔ Không có đơn hàng mới (new_only mode, "
+                    f"{skipped_existing} đơn cũ đã bỏ qua)"
+                )
+                return result
 
         if not rows:
             result["success"] = True
@@ -1874,22 +1899,36 @@ def run_sync_cycle(config: dict) -> dict:
             result["message"] = "✔ File XLSX không có đơn hàng mới"
             return result
 
-        # 4. Import via API
-        resp = call_api("POST", "/bot/orders/xlsx-import", body={"rows": rows}, token=token)
+        # 4. Import via API — truyền syncMode để backend cập nhật password đơn cũ
+        resp = call_api(
+            "POST",
+            "/bot/orders/xlsx-import",
+            body={"rows": rows, "syncMode": sync_mode},
+            token=token,
+        )
         result["import_ok"]      = True
         result["new_orders"]     = resp.get("new", resp.get("success", 0))
         result["updated_orders"] = resp.get("updated", 0)
         result["skipped_orders"] = resp.get("skipped", 0) + resp.get("unchanged", 0)
         result["errors"]         = resp.get("failed", 0)
         result["success"]        = True
+        mode_label = "full" if sync_mode == "full" else "chỉ đơn mới"
         result["message"] = (
-            f"✔ Đồng bộ thành công lúc {datetime.now().strftime('%H:%M %d/%m/%Y')}: "
+            f"✔ Đồng bộ [{mode_label}] lúc {datetime.now().strftime('%H:%M %d/%m/%Y')}: "
             f"{result['new_orders']} đơn mới, "
             f"{result['updated_orders']} cập nhật, "
             f"{result['skipped_orders']} bỏ qua, "
             f"{result['errors']} lỗi"
         )
         logger.info(result["message"])
+
+        # Sau khi full sync thành công, nếu config có auto_switch_new_only=True
+        # thì tự chuyển sang new_only cho các lần sau
+        if result["success"] and sync_mode == "full" and config.get("auto_switch_new_only", False):
+            config["sync_mode"] = "new_only"
+            save_json(CONFIG_FILE, config)
+            logger.info("[SYNC] auto_switch_new_only: đã chuyển sang new_only mode")
+            result["message"] += " → chuyển sang chế độ chỉ đơn mới"
 
     except Exception as exc:
         logger.error(f"[robot] Lỗi: {exc}\n{traceback.format_exc()}")

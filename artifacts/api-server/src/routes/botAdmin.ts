@@ -564,10 +564,13 @@ router.post("/bot/orders/bulk", requireAuth, (req: any, res: any) => {
 // ── POST /bot/orders/xlsx-import ─────────────────────────────────────────────
 // Receives pre-parsed, validated rows from the admin panel XLSX import dialog.
 router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
-  const { rows } = req.body ?? {};
+  const { rows, syncMode } = req.body ?? {};
   if (!Array.isArray(rows) || rows.length === 0) {
     res.status(400).json({ ok: false, message: "rows is required" }); return;
   }
+  // syncMode="full"     → cập nhật password/twoFA cho đơn cũ nếu đang trống
+  // syncMode="new_only" → bỏ qua toàn bộ đơn đã tồn tại
+  // undefined/"skip"   → hành vi cũ (skip duplicate)
 
   const orders: any     = readJson("orders", {}) ?? {};
   const orderItems: any = readJson("order_items", {}) ?? {};
@@ -605,12 +608,18 @@ router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
       const existingOrder = orders[orderId];
       if (existingOrder) {
         dupOrders++;
-        if (conflictAction === "skip") {
+        // new_only: bỏ qua toàn bộ đơn cũ
+        if (syncMode === "new_only" || conflictAction === "skip") {
           skippedCount++;
-          results.push({ rowIndex, status: "skipped", message: "Mã đơn đã tồn tại, bỏ qua" });
+          results.push({ rowIndex, status: "skipped", message: syncMode === "new_only" ? "Chế độ đơn mới: bỏ qua đơn đã tồn tại" : "Mã đơn đã tồn tại, bỏ qua" });
           continue;
         }
       }
+
+      // Lấy thông tin đăng nhập từ tài khoản đầu tiên trong deliveredAccounts
+      const firstAcc = Array.isArray(accounts) ? accounts[0] : null;
+      const loginPassword: string = firstAcc?.password || "";
+      const loginTwoFA: string    = firstAcc?.twoFA    || "";
 
       const wd = Number(warrantyDays || 0);
       const ud = Number(usageDays || 0);
@@ -632,6 +641,9 @@ router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
         usageDays: ud || null,
         customerName: customerName || null,
         status: status || "active",
+        // Lưu mật khẩu tài khoản vào order để Health Check dùng
+        password: loginPassword || null,
+        twoFA: loginTwoFA || null,
         createdAt: existingOrder?.createdAt ?? now(),
         updatedAt: now(),
       };
@@ -641,14 +653,17 @@ router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
       } else if (conflictAction === "update") {
         orders[orderId] = { ...existingOrder, ...orderObj };
       } else if (conflictAction === "add_missing") {
-        // Cập nhật các trường còn rỗng/null trong đơn cũ (tên SP, ngày, bảo hành)
+        // Cập nhật các trường còn rỗng/null trong đơn cũ (tên SP, ngày, bảo hành, mật khẩu)
         const ex = existingOrder;
-        if (!ex.productName   && resolvedName)       ex.productName   = resolvedName;
-        if (!ex.warrantyDays  && wd)                 ex.warrantyDays  = wd;
-        if (!ex.usageDays     && ud)                 ex.usageDays     = ud;
-        if (!ex.expiryDate    && orderObj.expiryDate)    ex.expiryDate    = orderObj.expiryDate;
+        if (!ex.productName   && resolvedName)            ex.productName   = resolvedName;
+        if (!ex.warrantyDays  && wd)                      ex.warrantyDays  = wd;
+        if (!ex.usageDays     && ud)                      ex.usageDays     = ud;
+        if (!ex.expiryDate    && orderObj.expiryDate)     ex.expiryDate    = orderObj.expiryDate;
         if (!ex.warrantyExpiry && orderObj.warrantyExpiry) ex.warrantyExpiry = orderObj.warrantyExpiry;
-        if (!ex.purchaseDate  && orderObj.purchaseDate)  ex.purchaseDate  = orderObj.purchaseDate;
+        if (!ex.purchaseDate  && orderObj.purchaseDate)   ex.purchaseDate  = orderObj.purchaseDate;
+        // Full sync: cập nhật mật khẩu nếu đơn cũ chưa có
+        if (syncMode === "full" && loginPassword && !ex.password) ex.password = loginPassword;
+        if (syncMode === "full" && loginTwoFA    && !ex.twoFA)    ex.twoFA    = loginTwoFA;
         orders[orderId] = ex;
       }
 

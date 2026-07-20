@@ -73,6 +73,7 @@ function AuthImage({ filename, alt }: { filename: string; alt: string }) {
 type FormData = {
   site_url: string; login_url: string; orders_url: string
   email: string; password: string; interval_s: number
+  sync_mode: "full" | "new_only"
 }
 
 type RobotStatus = {
@@ -125,6 +126,7 @@ function fmtDuration(s: number) {
 const FORM_DEFAULT: FormData = {
   site_url: "", login_url: "", orders_url: "",
   email: "", password: "", interval_s: 300,
+  sync_mode: "full",
 }
 
 const STATUS_DEFAULT: RobotStatus = {
@@ -311,6 +313,7 @@ export default function SyncRobot() {
         email:      cfg.email      ?? "",
         password:   "",
         interval_s: cfg.interval_s ?? 300,
+        sync_mode:  (cfg.sync_mode === "new_only" ? "new_only" : "full") as "full" | "new_only",
       })
       setConfigLoaded(true)
     } catch (e: any) {
@@ -352,6 +355,7 @@ export default function SyncRobot() {
       site_url: formData.site_url, login_url: formData.login_url,
       orders_url: formData.orders_url, email: formData.email,
       interval_s: formData.interval_s,
+      sync_mode: formData.sync_mode,
     }
     if (extraEnabled !== undefined) body.enabled = extraEnabled
     if (formData.password && formData.password !== "***") body.password = formData.password
@@ -579,6 +583,27 @@ export default function SyncRobot() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="sm:col-span-2 space-y-1.5">
+                  <Label>Chế độ đồng bộ</Label>
+                  <Select value={formData.sync_mode}
+                    onValueChange={v => setField("sync_mode", v as "full" | "new_only")}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="full">
+                        🔄 Toàn bộ — cập nhật mật khẩu cho đơn cũ + thêm đơn mới
+                      </SelectItem>
+                      <SelectItem value="new_only">
+                        ✨ Chỉ đơn mới — bỏ qua đơn đã có (nhanh hơn)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {formData.sync_mode === "full"
+                      ? "Chạy lần đầu hoặc khi cần cập nhật mật khẩu cho tất cả đơn cũ"
+                      : "Dùng sau khi đã đồng bộ đầy đủ — chỉ import đơn chưa tồn tại"}
+                  </p>
                 </div>
               </div>
 
