@@ -21,7 +21,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ChatMemberHandler, ChatJoinRequestHandler, ContextTypes, filters,
+    ContextTypes, filters,
 )
 from telegram.constants import ParseMode
 
@@ -2321,157 +2321,6 @@ def _get_active_gift_box_event() -> dict | None:
         return ev
     return None
 
-async def _notify_gift_box_creator(
-    context: ContextTypes.DEFAULT_TYPE,
-    event_id: str,
-    creator_id: int,
-    total: int,
-    required: int,
-    ev_name: str,
-) -> None:
-    """Send progress / unlock notification to the creator."""
-    try:
-        if total >= required and not db.is_gift_box_unlocked(event_id, creator_id):
-            db.mark_gift_box_unlocked(event_id, creator_id)
-            msg = (
-                f"🎉 <b>Chúc mừng!</b>\n\n"
-                f"Bạn đã mời thành công <b>{required}</b> người.\n\n"
-                f"🎁 <b>{ev_name}</b> đã được mở khóa."
-            )
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🎁 Nhận quà ngay", callback_data=f"gbox_open:{event_id}")
-            ]])
-            await context.bot.send_message(
-                creator_id, msg, parse_mode=ParseMode.HTML, reply_markup=kb
-            )
-        else:
-            msg = (
-                f"👥 Cập nhật: bạn đã mời <b>{total}/{required}</b> người.\n"
-                f"Còn <b>{max(0, required - total)}</b> người nữa để mở khóa 🎁"
-            )
-            await context.bot.send_message(creator_id, msg, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.warning(f"GiftBox notify error creator={creator_id}: {e}")
-
-async def handle_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fires when someone requests to join via our tracked invite link (channel mode)."""
-    req = update.chat_join_request
-    if not req:
-        return
-
-    invitee_id      = req.from_user.id
-    invite_link_obj = req.invite_link
-
-    # Always approve the join request first so the user enters the channel
-    try:
-        await req.approve()
-    except Exception as e:
-        logger.warning(f"GiftBox approve join request error: {e}")
-
-    if not invite_link_obj:
-        return
-
-    link_url = invite_link_obj.invite_link
-    rec      = db.lookup_gift_box_invite_link(link_url)
-    if not rec:
-        return  # Not a gift-box tracked link
-
-    event_id   = rec["event_id"]
-    creator_id = rec["creator_id"]
-
-    if creator_id == invitee_id:
-        return  # Self-invite
-
-    ev = _get_active_gift_box_event()
-    if not ev or ev["id"] != event_id:
-        return
-
-    result = db.record_gift_box_referral(event_id, creator_id, invitee_id)
-    if not result.get("added"):
-        return  # Already counted
-
-    required = int(ev.get("requiredInvites", 1))
-    await _notify_gift_box_creator(
-        context, event_id, creator_id,
-        total=result["total"], required=required,
-        ev_name=ev.get("name", "Ô Quà Bí Mật"),
-    )
-
-async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fires when someone joins a supergroup via our tracked invite link (group mode)."""
-    member = update.chat_member
-    if not member:
-        return
-
-    old_status = member.old_chat_member.status
-    new_status = member.new_chat_member.status
-
-    # Only care about new joins
-    if new_status not in ("member", "administrator", "creator"):
-        return
-    if old_status in ("member", "administrator", "creator"):
-        return
-
-    invite_link_obj = member.invite_link
-    if not invite_link_obj:
-        return
-
-    link_url = invite_link_obj.invite_link
-    rec = db.lookup_gift_box_invite_link(link_url)
-    if not rec:
-        return
-
-    event_id   = rec["event_id"]
-    creator_id = rec["creator_id"]
-    invitee_id = member.new_chat_member.user.id
-
-    if creator_id == invitee_id:
-        return
-
-    ev = _get_active_gift_box_event()
-    if not ev or ev["id"] != event_id:
-        return
-
-    result = db.record_gift_box_referral(event_id, creator_id, invitee_id)
-    if not result.get("added"):
-        return
-
-    required = int(ev.get("requiredInvites", 1))
-    await _notify_gift_box_creator(
-        context, event_id, creator_id,
-        total=result["total"], required=required,
-        ev_name=ev.get("name", "Ô Quà Bí Mật"),
-    )
-
-async def _get_or_create_gift_box_link(
-    context: ContextTypes.DEFAULT_TYPE,
-    event: dict,
-    user_id: int,
-) -> str | None:
-    """Return existing invite link or create a new one for this user+event."""
-    eid      = event["id"]
-    existing = db.get_gift_box_user_link(eid, user_id)
-    if existing:
-        return existing
-
-    channel_id = (event.get("channelId") or "").strip()
-    if not channel_id:
-        return None
-
-    try:
-        link_obj = await context.bot.create_chat_invite_link(
-            chat_id=channel_id,
-            name=f"gbox_{eid[-8:]}_{user_id}",
-            creates_join_request=True,   # channel: dùng join request để nhận event
-        )
-        link_url = link_obj.invite_link
-        db.register_gift_box_invite_link(link_url, eid, user_id)
-        db.set_gift_box_user_link(eid, user_id, link_url)
-        return link_url
-    except Exception as e:
-        logger.error(f"GiftBox create_chat_invite_link error: {e}")
-        return None
-
 async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user   = update.effective_user
     active = _get_active_gift_box_event()
@@ -2506,43 +2355,7 @@ async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-    require_invite = active.get("inviteRequired", True)
-    required       = int(active.get("requiredInvites", 1))
-    eid            = active["id"]
-
-    # ── Check / auto-unlock ───────────────────────────────────────────────
-    unlocked = not require_invite
-    if not unlocked:
-        unlocked = db.is_gift_box_unlocked(eid, user.id)
-    if not unlocked and db.get_gift_box_invite_count(eid, user.id) >= required:
-        db.mark_gift_box_unlocked(eid, user.id)
-        unlocked = True
-
-    if not unlocked:
-        # Create (or reuse) a unique channel invite link for this user
-        invite_link  = await _get_or_create_gift_box_link(context, active, user.id)
-        invite_count = db.get_gift_box_invite_count(eid, user.id)
-
-        if not invite_link:
-            await update.message.reply_text(
-                "⚠️ Sự kiện chưa cấu hình kênh mời.\nVui lòng liên hệ admin.",
-                reply_markup=main_keyboard(user.id),
-            )
-            return
-
-        msg = (
-            f"🔒 <b>Ô Quà Bí Mật đang bị khóa.</b>\n\n"
-            f"Để mở khóa, bạn cần mời ít nhất <b>{required}</b> người bạn tham gia "
-            f"kênh thông qua liên kết riêng bên dưới.\n\n"
-            f"📨 <b>Link mời của bạn:</b>\n"
-            f"{invite_link}\n\n"
-            f"👥 Đã mời: <b>{invite_count}/{required}</b>"
-        )
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔄 Kiểm tra lại", callback_data=f"gbox_check:{eid}")
-        ]])
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb)
-        return
+    eid = active["id"]
 
     # ── Already played? ───────────────────────────────────────────────────
     boxes     = active.get("boxes", [])
@@ -2576,58 +2389,6 @@ async def callback_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     action = parts[0]  # gbox_open | gbox_check | gbox_view | gbox
     eid    = parts[1] if len(parts) > 1 else ""
 
-    # ── gbox_check — refresh locked status ───────────────────────────────
-    if action == "gbox_check":
-        await query.answer()
-        active = _get_active_gift_box_event()
-        if not active or active["id"] != eid:
-            try:
-                await query.edit_message_text("❌ Sự kiện đã kết thúc.", parse_mode=ParseMode.HTML)
-            except Exception:
-                pass
-            return
-
-        require_invite = active.get("inviteRequired", True)
-        required       = int(active.get("requiredInvites", 1))
-        unlocked       = not require_invite or db.is_gift_box_unlocked(eid, user.id)
-
-        if not unlocked and db.get_gift_box_invite_count(eid, user.id) >= required:
-            db.mark_gift_box_unlocked(eid, user.id)
-            unlocked = True
-
-        if unlocked:
-            ev_name = active.get("name", "Ô Quà Bí Mật")
-            total   = len(active.get("boxes", []))
-            msg = (
-                f"🎁 <b>{ev_name}</b>\n\n"
-                f"🎉 Ô Quà Bí Mật đã được mở khóa!\n\n"
-                f"📦 Tổng: <b>{total}</b> ô — Bạn được chọn <b>1</b> ô.\n"
-                f"Bấm nút bên dưới để bắt đầu! 👇"
-            )
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🎁 Nhận quà ngay", callback_data=f"gbox_open:{eid}")
-            ]])
-        else:
-            invite_count = db.get_gift_box_invite_count(eid, user.id)
-            invite_link  = await _get_or_create_gift_box_link(context, active, user.id)
-            link_text    = invite_link if invite_link else "⚠️ Chưa cấu hình kênh — liên hệ admin"
-            msg = (
-                f"🔒 <b>Ô Quà Bí Mật đang bị khóa.</b>\n\n"
-                f"Để mở khóa, bạn cần mời ít nhất <b>{required}</b> người bạn tham gia "
-                f"kênh thông qua liên kết riêng bên dưới.\n\n"
-                f"📨 <b>Link mời của bạn:</b>\n"
-                f"{link_text}\n\n"
-                f"👥 Đã mời: <b>{invite_count}/{required}</b>"
-            )
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔄 Kiểm tra lại", callback_data=f"gbox_check:{eid}")
-            ]])
-        try:
-            await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb)
-        except Exception:
-            pass
-        return
-
     # ── gbox_open — show the grid ─────────────────────────────────────────
     if action == "gbox_open":
         await query.answer()
@@ -2637,16 +2398,6 @@ async def callback_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 await query.edit_message_text("❌ Sự kiện đã kết thúc.", parse_mode=ParseMode.HTML)
             except Exception:
                 pass
-            return
-        # Safety: re-verify unlock
-        require_invite = active.get("inviteRequired", True)
-        required       = int(active.get("requiredInvites", 1))
-        unlocked       = not require_invite or db.is_gift_box_unlocked(eid, user.id)
-        if not unlocked and db.get_gift_box_invite_count(eid, user.id) >= required:
-            db.mark_gift_box_unlocked(eid, user.id)
-            unlocked = True
-        if not unlocked:
-            await query.answer("🔒 Chưa đủ điều kiện mở khóa!", show_alert=True)
             return
         msg = _gift_box_header(active, user.id)
         kb  = _gift_box_grid_keyboard(active, user.id)
@@ -2928,16 +2679,11 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_check_join,    pattern=r"^check_join$"))
     app.add_handler(CallbackQueryHandler(callback_back_main,     pattern=r"^back_main$"))
     app.add_handler(CallbackQueryHandler(callback_gift_box,      pattern=r"^gbox[_:]"))
-    app.add_handler(ChatJoinRequestHandler(handle_chat_join_request))               # channel: join request
-    app.add_handler(ChatMemberHandler(handle_chat_member, chat_member_types=ChatMemberHandler.CHAT_MEMBER))  # supergroup
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
     logger.info("Bot is polling...")
-    app.run_polling(
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,   # phải có "chat_member" để nhận join event
-    )
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
