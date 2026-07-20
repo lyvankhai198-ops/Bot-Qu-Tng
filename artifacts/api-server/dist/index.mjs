@@ -50351,7 +50351,7 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
     }
   }
   const results = [];
-  let successCount = 0, failCount = 0, skippedCount = 0;
+  let newCount = 0, updatedCount = 0, unchangedCount = 0, failCount = 0, skippedCount = 0;
   let accountsAdded = 0, dupOrders = 0, dupAccountsTotal = 0;
   for (const row of rows) {
     const {
@@ -50470,15 +50470,21 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
       writeJson("orders", orders);
       writeJson("order_items", orderItems);
       addLog("XLSX_IMPORT_ORDER", orderId, "web-admin");
-      successCount++;
+      if (!existingOrder) {
+        newCount++;
+      } else if (itemsAddedThisRow > 0) {
+        updatedCount++;
+      } else {
+        unchangedCount++;
+      }
       accountsAdded += itemsAddedThisRow;
-      results.push({ rowIndex, status: "ok", orderId, itemsAdded: itemsAddedThisRow, dupAccounts: dupThisRow });
+      results.push({ rowIndex, status: "ok", orderId, isNew: !existingOrder, itemsAdded: itemsAddedThisRow, dupAccounts: dupThisRow });
     } catch (err) {
       failCount++;
       results.push({ rowIndex, status: "error", message: String(err?.message ?? "L\u1ED7i kh\xF4ng x\xE1c \u0111\u1ECBnh") });
     }
   }
-  res.json({ ok: true, success: successCount, failed: failCount, skipped: skippedCount, accountsAdded, dupOrders, dupAccounts: dupAccountsTotal, results });
+  res.json({ ok: true, new: newCount, updated: updatedCount, unchanged: unchangedCount, success: newCount + updatedCount, failed: failCount, skipped: skippedCount, accountsAdded, dupOrders, dupAccounts: dupAccountsTotal, results });
 });
 router2.get("/bot/orders/:orderId", requireAuth, (req, res) => {
   const orders = readJson("orders", {}) ?? {};

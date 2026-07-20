@@ -573,7 +573,7 @@ router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
   }
 
   const results: any[] = [];
-  let successCount = 0, failCount = 0, skippedCount = 0;
+  let newCount = 0, updatedCount = 0, unchangedCount = 0, failCount = 0, skippedCount = 0;
   let accountsAdded = 0, dupOrders = 0, dupAccountsTotal = 0;
 
   for (const row of rows) {
@@ -691,9 +691,15 @@ router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
       writeJson("order_items", orderItems);
       addLog("XLSX_IMPORT_ORDER", orderId, "web-admin");
 
-      successCount++;
+      if (!existingOrder) {
+        newCount++;
+      } else if (itemsAddedThisRow > 0) {
+        updatedCount++;
+      } else {
+        unchangedCount++;
+      }
       accountsAdded += itemsAddedThisRow;
-      results.push({ rowIndex, status: "ok", orderId, itemsAdded: itemsAddedThisRow, dupAccounts: dupThisRow });
+      results.push({ rowIndex, status: "ok", orderId, isNew: !existingOrder, itemsAdded: itemsAddedThisRow, dupAccounts: dupThisRow });
 
     } catch (err: any) {
       failCount++;
@@ -701,7 +707,7 @@ router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
     }
   }
 
-  res.json({ ok: true, success: successCount, failed: failCount, skipped: skippedCount, accountsAdded, dupOrders, dupAccounts: dupAccountsTotal, results });
+  res.json({ ok: true, new: newCount, updated: updatedCount, unchanged: unchangedCount, success: newCount + updatedCount, failed: failCount, skipped: skippedCount, accountsAdded, dupOrders, dupAccounts: dupAccountsTotal, results });
 });
 
 // ── GET /bot/orders/:orderId ─────────────────────────────────────────────────
