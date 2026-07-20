@@ -1491,49 +1491,65 @@ async def do_playwright_sync(config: dict) -> dict:
         _page_id = id(page)
         logger.info(f"[SYNC] Context created — ctx_id={_ctx_id} | page_id={_page_id}")
 
+        out_path = None
         try:
-            # ── Bước 1: Đăng nhập — dùng loginAndWaitReady (CHUNG với Test Login) ─
-            logger.info(f"[SYNC] Bắt đầu đăng nhập... ctx_id={_ctx_id}")
+            # ════════════════════════════════════════════════════════
+            # STEP 1: Đăng nhập
+            # ════════════════════════════════════════════════════════
+            logger.info(f"[SYNC][STEP 1] Bắt đầu đăng nhập — account={account!r} url={site_url}")
             try:
                 login_url_result = await loginAndWaitReady(page, config, source="sync")
-                # Log kỹ thuật sau đăng nhập
                 _post_ck = await ctx.cookies()
                 logger.info(
-                    f"[SYNC] Login OK — ctx_id={_ctx_id} | page_id={id(page)} | "
-                    f"URL={login_url_result} | "
+                    f"[SYNC][STEP 1] ✅ Login OK — URL={login_url_result} | "
                     f"Cookies: {[c['name'] for c in _post_ck]}"
                 )
             except Exception as ex:
-                return {"login_ok": False, "download_ok": False, "path": None, "dir": download_dir,
-                        "error": str(ex)}
+                logger.error(f"[SYNC][STEP 1] ❌ Login FAILED: {ex}")
+                return {"login_ok": False, "download_ok": False, "path": None,
+                        "dir": download_dir, "error": str(ex)}
 
-            # ── Bước 2: Mở trang Đơn hàng qua menu (KHÔNG goto /orders) ────
-            # Không tạo context mới — dùng đúng ctx và page từ đăng nhập
-            logger.info(f"[SYNC] Mở menu Đơn hàng — ctx_id={_ctx_id} | page_id={id(page)} | URL trước={page.url}")
+            # ════════════════════════════════════════════════════════
+            # STEP 2: Detect session — luôn tiếp tục sang bước sau
+            # (loginAndWaitReady đã trả về → phiên hợp lệ, không return ở đây)
+            # ════════════════════════════════════════════════════════
+            logger.info(
+                f"[SYNC][STEP 2] ✅ Session confirmed — URL={page.url} | "
+                f"title={await page.title()}"
+            )
+
+            # ════════════════════════════════════════════════════════
+            # STEP 3: Navigate to Đơn hàng
+            # ════════════════════════════════════════════════════════
+            logger.info(f"[SYNC][STEP 3] Bắt đầu điều hướng tới Đơn hàng — URL hiện tại={page.url}")
             try:
                 await _open_orders_page(page)
-                logger.info(f"[SYNC] Đơn hàng page OK — URL={page.url}")
+                logger.info(f"[SYNC][STEP 3] ✅ Navigate Orders OK — URL={page.url}")
             except Exception as ex:
-                logger.error(f"[SYNC] Lỗi mở trang đơn hàng: {ex}")
-                return {"login_ok": True, "download_ok": False, "path": None, "dir": download_dir,
-                        "error": str(ex)}
+                logger.error(f"[SYNC][STEP 3] ❌ Navigate Orders FAILED: {ex}")
+                return {"login_ok": True, "download_ok": False, "path": None,
+                        "dir": download_dir, "error": str(ex)}
 
-            # ── Bước 3: Tải XLSX ────────────────────────────────────────────
-            logger.info(
-                f"[SYNC] Starting order download — ctx_id={_ctx_id} | page_id={id(page)} | URL={page.url}"
-            )
+            # ════════════════════════════════════════════════════════
+            # STEP 4: Download XLSX
+            # ════════════════════════════════════════════════════════
+            logger.info(f"[SYNC][STEP 4] Bắt đầu tải XLSX — URL={page.url}")
             try:
                 out_path = await _download_orders_xlsx(page, download_dir)
+                logger.info(f"[SYNC][STEP 4] ✅ Download XLSX OK — path={out_path}")
             except Exception as ex:
-                logger.error(f"[SYNC] Lỗi tải XLSX: {ex}")
-                return {"login_ok": True, "download_ok": False, "path": None, "dir": download_dir,
-                        "error": str(ex)}
+                logger.error(f"[SYNC][STEP 4] ❌ Download XLSX FAILED: {ex}")
+                return {"login_ok": True, "download_ok": False, "path": None,
+                        "dir": download_dir, "error": str(ex)}
 
         finally:
-            logger.info(f"[SYNC] Đóng browser — ctx_id={_ctx_id}")
+            logger.info(f"[SYNC] Đóng browser")
             await browser.close()
 
-    logger.info("[SYNC] Starting order import")
+    # ════════════════════════════════════════════════════════
+    # STEP 5: Import XLSX (bên ngoài browser — xử lý trong run_sync_cycle)
+    # ════════════════════════════════════════════════════════
+    logger.info(f"[SYNC][STEP 5] ✅ Sẵn sàng import XLSX — path={out_path}")
     return {"login_ok": True, "download_ok": True, "path": out_path, "dir": download_dir, "error": ""}
 
 # ── One sync cycle ─────────────────────────────────────────────────────────────
@@ -1576,13 +1592,16 @@ def run_sync_cycle(config: dict) -> dict:
 
         xlsx_path = dl["path"]
 
+        # STEP 5: Import
+        logger.info(f"[SYNC][STEP 5] Bắt đầu import XLSX — path={xlsx_path}")
+
         # 2. Dedup sets
         known_products = get_known_products(token)
         existing_order_ids, existing_item_emails = get_existing_sets(token)
 
         # 3. Parse XLSX
         rows = parse_xlsx_to_rows(xlsx_path, known_products, existing_order_ids, existing_item_emails)
-        logger.info(f"[robot] XLSX → {len(rows)} dòng")
+        logger.info(f"[SYNC][STEP 5] XLSX → {len(rows)} dòng cần import")
 
         if not rows:
             result["success"] = True
