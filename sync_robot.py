@@ -627,32 +627,54 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
         if not password: missing.append("mật khẩu")
         raise RuntimeError(f"Chưa có {', '.join(missing)} trong cấu hình đã lưu")
 
-    # 1. Mở trang login
-    _log(f"[login] Mở trang: {login_url}")
+    # ─────────────────────────────────────────────────────────────────────────
+    # 1. Mở TRANG ROOT (không phải /login) để tránh false-positive
+    #
+    # Vấn đề khi goto /login:
+    #   - SPA client-router redirect ngay về / trước khi auth check
+    #   - Code nhầm tưởng "có session" → false-positive
+    #   - SPA auth API call xong (async) → thấy không hợp lệ → route về /login
+    #
+    # Đúng: goto root → SPA tự kiểm tra auth → ở lại root = có session,
+    #                                          route về /login = không có session
+    # ─────────────────────────────────────────────────────────────────────────
+    _log(f"[login] Mở root: {site_url} (kiểm tra session qua SPA auth check)")
     try:
-        await page.goto(login_url, timeout=30_000, wait_until="domcontentloaded")
-        _step("Mở trang login", True, f"URL: {page.url}")
+        await page.goto(site_url, timeout=30_000, wait_until="domcontentloaded")
+        _step("Mở trang root", True, f"URL: {page.url}")
     except Exception as ex:
-        _step("Mở trang login", False, f"Lỗi: {ex}")
-        raise RuntimeError(f"Không mở được trang login: {ex}")
+        _step("Mở trang root", False, f"Lỗi: {ex}")
+        raise RuntimeError(f"Không mở được trang: {ex}")
 
-    # 1b. Nếu website tự redirect ra khỏi trang login → đã đăng nhập sẵn
+    # Chờ SPA auth check hoàn tất (network idle tối đa 8s)
+    _log(f"[login] Chờ SPA auth check — URL ban đầu={page.url}")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=8_000)
+    except Exception:
+        pass  # timeout OK — tiếp tục
+
+    url_after_root = page.url
+    _log(f"[login] URL sau auth check: {url_after_root}")
+
+    # 1b. Phiên hợp lệ → SPA ở lại root, không route về /login
+    if not any(kw in url_after_root.lower() for kw in _LOGIN_URL_KEYWORDS):
+        _step("Phát hiện phiên đăng nhập sẵn", True, f"URL: {url_after_root}")
+        return url_after_root
+
+    # 1c. Không có session → SPA đã route về /login → tiến hành đăng nhập
+    _log(f"[login] Không có session — đang ở {url_after_root} — tiến hành điền form")
+    # Nếu SPA đã route về /login rồi thì không cần goto lại
     if not any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
-        _log(f"[login] Redirect phát hiện — URL={page.url} — chờ SPA ổn định (networkidle)...")
-        # SPA có thể đang chạy auth-check ở background → chờ 3s networkidle
-        # để tránh false-positive (redirect ra rồi lại vào /login ngay sau đó)
+        # Hiếm: vẫn ở root nhưng không nhận ra session → goto login_url thủ công
+        _log(f"[login] Vào login_url thủ công: {login_url}")
         try:
-            await page.wait_for_load_state("networkidle", timeout=5_000)
-        except Exception:
-            pass  # timeout OK — tiếp tục kiểm tra URL
-        # Re-verify: nếu SPA đã redirect trở lại /login thì phiên không hợp lệ
-        url_after_wait = page.url
-        if any(kw in url_after_wait.lower() for kw in _LOGIN_URL_KEYWORDS):
-            _log(f"[login] Phiên sẵn là false-positive — SPA redirect về {url_after_wait} sau khi chờ")
-            # Không return — tiếp tục flow đăng nhập bên dưới
-        else:
-            _step("Phát hiện phiên đăng nhập sẵn", True, f"URL: {url_after_wait}")
-            return url_after_wait
+            await page.goto(login_url, timeout=30_000, wait_until="domcontentloaded")
+            _step("Mở trang login", True, f"URL: {page.url}")
+        except Exception as ex:
+            _step("Mở trang login", False, f"Lỗi: {ex}")
+            raise RuntimeError(f"Không mở được trang login: {ex}")
+    else:
+        _step("Mở trang login", True, f"URL: {page.url}")
 
     # 2. Chờ form render
     _log("[login] Chờ form đăng nhập render...")
@@ -1572,14 +1594,28 @@ async def do_playwright_sync(config: dict) -> dict:
         ctx = await browser.new_context(
             accept_downloads=True,
             viewport={"width": 1280, "height": 800},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            # Override sec-ch-ua để ẩn HeadlessChrome — đây là lý do server từ chối login
+            extra_http_headers={
+                "sec-ch-ua": '"Google Chrome";v="120", "Chromium";v="120", "Not-A.Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "accept-language": "vi-VN,vi;q=0.9,en;q=0.8",
+            },
         )
         page = await ctx.new_page()
-        # Ẩn dấu hiệu headless để tránh bot-detection của SPA
-        await ctx.add_init_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-            "window.chrome={runtime:{}};"
-        )
+        # Ẩn toàn bộ dấu hiệu headless / automation
+        await ctx.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN', 'vi', 'en'] });
+            window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {}, app: {} };
+            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+        """)
 
         _ctx_id  = id(ctx)
         _page_id = id(page)
@@ -1941,13 +1977,26 @@ async def do_test_login_only(config: dict) -> dict:
         )
         ctx  = await browser.new_context(
             viewport={"width": 1280, "height": 800},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            extra_http_headers={
+                "sec-ch-ua": '"Google Chrome";v="120", "Chromium";v="120", "Not-A.Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "accept-language": "vi-VN,vi;q=0.9,en;q=0.8",
+            },
         )
         page = await ctx.new_page()
-        await ctx.add_init_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-            "window.chrome={runtime:{}};"
-        )
+        await ctx.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN', 'vi', 'en'] });
+            window.chrome = { runtime: {}, loadTimes: () => {}, csi: () => {}, app: {} };
+            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+        """)
 
         try:
             # Gọi loginAndWaitReady — CHÍNH XÁC cùng hàm Sync dùng
