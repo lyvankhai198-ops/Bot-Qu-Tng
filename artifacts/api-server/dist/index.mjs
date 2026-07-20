@@ -50226,14 +50226,37 @@ var grokPlugin = {
       await ctx.addInitScript(STEALTH_SCRIPT);
       const page = await ctx.newPage();
       page.setDefaultTimeout(timeoutMs);
+      const consoleErrors = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error") {
+          const err = `[console.error] ${msg.text()}`;
+          consoleErrors.push(err);
+          log(err.slice(0, 200));
+        }
+      });
+      page.on("pageerror", (err) => {
+        const e = `[pageerror] ${err.message}`;
+        consoleErrors.push(e);
+        log(e.slice(0, 200));
+      });
+      const rawHtml = async (chars = 1500) => {
+        try {
+          const html = await page.evaluate(() => document.documentElement.outerHTML);
+          return (html ?? "").slice(0, chars);
+        } catch (e) {
+          return `(html error: ${e?.message})`;
+        }
+      };
       const gotoWithRetry = async (target, label) => {
         log(`goto ${label}: ${target}`);
         try {
           await page.goto(target, { waitUntil: "networkidle", timeout: 3e4 });
         } catch {
           log(`networkidle timeout for ${label}, continuing`);
+          await page.waitForLoadState("load").catch(() => {
+          });
         }
-        await page.waitForTimeout(2500);
+        await page.waitForTimeout(2e3);
       };
       const screenshot64 = async () => {
         try {
@@ -50327,10 +50350,15 @@ var grokPlugin = {
         }
       }
       if (!emailInput) {
-        const bt = (await bodyText(page)).slice(0, 800);
-        log(`Email input not found \u2014 body: ${bt}`);
+        const bt = (await bodyText(page)).slice(0, 400);
+        const html = await rawHtml(2e3);
+        const domCount = await page.evaluate(() => document.querySelectorAll("*").length).catch(() => 0);
+        log(`Email input not found \u2014 DOM elements: ${domCount}`);
+        log(`Body text: ${bt || "(empty)"}`);
+        log(`Raw HTML: ${html}`);
+        if (consoleErrors.length) log(`Console errors: ${consoleErrors.slice(0, 3).join(" | ")}`);
         const shot = await screenshot64();
-        if (/Performing security verification|Just a moment|security service/i.test(bt)) {
+        if (/Performing security verification|Just a moment|security service/i.test(bt + html)) {
           return {
             code: "CAPTCHA",
             message: "Cloudflare bot protection ch\u1EB7n \u2014 kh\xF4ng v\xE0o \u0111\u01B0\u1EE3c form \u0111\u0103ng nh\u1EADp",
@@ -50341,7 +50369,7 @@ var grokPlugin = {
         }
         return {
           code: "UNKNOWN",
-          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 email \u2014 URL: ${url.split("?")[0]} | Page: ${bt.slice(0, 120)}`,
+          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 email \u2014 URL: ${url.split("?")[0]} | DOM: ${domCount} el | ${bt.slice(0, 80) || html.slice(0, 80)}`,
           responseTime: elapsed(),
           screenshotBase64: shot,
           playwrightLog: logs.join("\n")
