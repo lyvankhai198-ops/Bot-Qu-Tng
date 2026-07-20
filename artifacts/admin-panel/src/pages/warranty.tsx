@@ -10,6 +10,8 @@ import {
   useResolveWarrantyAccountRefund,
   useResolveWarrantyAccountReject,
   useResendWarrantyAccountReplacement,
+  useRespondWarranty,
+  useRespondWarrantyAccount,
   getListWarrantyQueryKey,
 } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
@@ -23,7 +25,7 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import type { WarrantyRequest, WarrantyAccount } from "@workspace/api-client-react"
 import { format } from "date-fns"
-import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle, Clock, Users, ChevronDown, ChevronUp } from "lucide-react"
+import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle, Clock, Users, ChevronDown, ChevronUp, MessageSquareReply } from "lucide-react"
 
 // Parse ?id=xxx from URL hash (e.g. #/warranty?id=abc123)
 function getUrlTargetId(): string | null {
@@ -33,7 +35,7 @@ function getUrlTargetId(): string | null {
   return new URLSearchParams(hash.slice(qIdx)).get("id")
 }
 
-type ModalType = "replace" | "refund" | "reject" | null
+type ModalType = "replace" | "refund" | "reject" | "respond" | null
 
 export default function Warranty() {
   const queryClient = useQueryClient()
@@ -55,19 +57,24 @@ export default function Warranty() {
   const accRejectM  = useResolveWarrantyAccountReject({ mutation: { onSuccess: invalidate } })
   const accResendM  = useResendWarrantyAccountReplacement({ mutation: { onSuccess: invalidate } })
 
+  // Respond mutations
+  const respondM    = useRespondWarranty({ mutation: { onSuccess: invalidate } })
+  const accRespondM = useRespondWarrantyAccount({ mutation: { onSuccess: invalidate } })
+
   // Modal state — shared for single and group
   const [activeReq,  setActiveReq]  = useState<WarrantyRequest | null>(null)
   const [activeAcc,  setActiveAcc]  = useState<WarrantyAccount | null>(null)   // for group sub-account
   const [modalType,  setModalType]  = useState<ModalType>(null)
 
   // Form fields
-  const [rEmail,    setREmail]    = useState("")
-  const [rPassword, setRPassword] = useState("")
-  const [rTwoFA,    setRTwoFA]    = useState("")
-  const [rNote,     setRNote]     = useState("")
-  const [refAmount, setRefAmount] = useState("")
-  const [refNote,   setRefNote]   = useState("")
-  const [rejReason, setRejReason] = useState("")
+  const [rEmail,     setREmail]     = useState("")
+  const [rPassword,  setRPassword]  = useState("")
+  const [rTwoFA,     setRTwoFA]     = useState("")
+  const [rNote,      setRNote]      = useState("")
+  const [refAmount,  setRefAmount]  = useState("")
+  const [refNote,    setRefNote]    = useState("")
+  const [rejReason,  setRejReason]  = useState("")
+  const [respondMsg, setRespondMsg] = useState("")
 
   // Deep-link highlight
   const [targetId, setTargetId] = useState<string | null>(null)
@@ -89,14 +96,14 @@ export default function Warranty() {
     setActiveAcc(acc ?? null)
     setModalType(type)
     setREmail(""); setRPassword(""); setRTwoFA(""); setRNote("")
-    setRefAmount(""); setRefNote(""); setRejReason("")
+    setRefAmount(""); setRefNote(""); setRejReason(""); setRespondMsg("")
   }
 
   const isGroupMode = activeAcc !== null
 
   const isBusy = isGroupMode
-    ? (accReplaceM.isPending || accRefundM.isPending || accRejectM.isPending)
-    : (replaceM.isPending || refundM.isPending || rejectM.isPending)
+    ? (accReplaceM.isPending || accRefundM.isPending || accRejectM.isPending || accRespondM.isPending)
+    : (replaceM.isPending || refundM.isPending || rejectM.isPending || respondM.isPending)
 
   const handleResolve = async () => {
     if (!activeReq || !modalType) return
@@ -137,6 +144,23 @@ export default function Warranty() {
           await rejectM.mutateAsync({ id, data: { reason: rejReason } })
         }
         toast({ title: "Thành công", description: "Đã từ chối" })
+      } else if (modalType === "respond") {
+        if (!respondMsg.trim()) { toast({ title: "Lỗi", description: "Điền nội dung phản hồi", variant: "destructive" }); return }
+        if (isGroupMode && activeAcc) {
+          const result = await accRespondM.mutateAsync({ id, accId: activeAcc.id, data: { message: respondMsg.trim() } })
+          if ((result as any)?.ok === false) {
+            toast({ title: "Đã lưu nhưng gửi Telegram thất bại", description: (result as any).message, variant: "destructive" })
+          } else {
+            toast({ title: "✅ Đã gửi phản hồi cho khách" })
+          }
+        } else {
+          const result = await respondM.mutateAsync({ id, data: { message: respondMsg.trim() } })
+          if ((result as any)?.ok === false) {
+            toast({ title: "Đã lưu nhưng gửi Telegram thất bại", description: (result as any).message, variant: "destructive" })
+          } else {
+            toast({ title: "✅ Đã gửi phản hồi cho khách" })
+          }
+        }
       }
       setModalType(null); setActiveReq(null); setActiveAcc(null)
     } catch {
@@ -329,6 +353,18 @@ export default function Warranty() {
                     </div>
                   )}
 
+                  {/* Responses history */}
+                  {((acc as any).responses ?? []).length > 0 && (
+                    <div className="space-y-1 mt-1">
+                      {((acc as any).responses as any[]).map((r: any, i: number) => (
+                        <div key={i} className="bg-blue-500/10 border border-blue-500/20 rounded p-2 text-xs text-blue-700 dark:text-blue-300">
+                          💬 {r.message}
+                          <span className="ml-2 text-muted-foreground">{r.sentAt ? format(new Date(r.sentAt), 'dd/MM HH:mm') : ""}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Action buttons (only when pending or processing) */}
                   {["pending", "processing"].includes(acc.status) && (
                     <div className="flex flex-wrap gap-1.5 pt-1">
@@ -337,6 +373,9 @@ export default function Warranty() {
                       </Button>
                       <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => openModal(req, "refund", acc)}>
                         <DollarSign className="w-3 h-3 mr-1" /> Hoàn tiền
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-8 text-xs text-violet-600 hover:bg-violet-500/10" onClick={() => openModal(req, "respond", acc)}>
+                        <MessageSquareReply className="w-3 h-3 mr-1" /> Phản hồi
                       </Button>
                       <Button size="sm" variant="ghost" className="h-8 text-xs text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject", acc)}>
                         <XCircle className="w-3 h-3 mr-1" /> Từ chối
@@ -390,12 +429,25 @@ export default function Warranty() {
                         <div className="mt-2 bg-muted/50 p-3 rounded-lg text-sm border border-border/50">{req.description}</div>
                       </div>
                     </div>
+                    {((req as any).responses ?? []).length > 0 && (
+                      <div className="space-y-1">
+                        {((req as any).responses as any[]).map((r: any, i: number) => (
+                          <div key={i} className="bg-blue-500/10 border border-blue-500/20 rounded p-2 text-xs text-blue-700 dark:text-blue-300">
+                            💬 {r.message}
+                            <span className="ml-2 text-muted-foreground">{r.sentAt ? format(new Date(r.sentAt), 'dd/MM HH:mm') : ""}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex flex-col sm:flex-row gap-2">
                       <Button size="sm" className="w-full sm:flex-1 min-h-[44px] bg-blue-600 hover:bg-blue-700" onClick={() => openModal(req, "replace")}>
                         <RefreshCcw className="w-4 h-4 mr-2" /> Tài khoản mới
                       </Button>
                       <Button size="sm" variant="outline" className="w-full sm:flex-1 min-h-[44px]" onClick={() => openModal(req, "refund")}>
                         <DollarSign className="w-4 h-4 mr-2" /> Hoàn tiền
+                      </Button>
+                      <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-violet-600 hover:bg-violet-500/10" onClick={() => openModal(req, "respond")}>
+                        <MessageSquareReply className="w-4 h-4 mr-2" /> Phản hồi
                       </Button>
                       <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject")}>
                         <XCircle className="w-4 h-4 mr-2" /> Từ chối
@@ -464,12 +516,25 @@ export default function Warranty() {
                           </Button>
                         </div>
                       )}
+                      {(r.responses ?? []).length > 0 && (
+                        <div className="space-y-1">
+                          {(r.responses as any[]).map((resp: any, i: number) => (
+                            <div key={i} className="bg-blue-500/10 border border-blue-500/20 rounded p-2 text-xs text-blue-700 dark:text-blue-300">
+                              💬 {resp.message}
+                              <span className="ml-2 text-muted-foreground">{resp.sentAt ? format(new Date(resp.sentAt), 'dd/MM HH:mm') : ""}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <div className="flex flex-col sm:flex-row gap-2">
                         <Button size="sm" className="w-full sm:flex-1 min-h-[44px] bg-blue-600 hover:bg-blue-700" onClick={() => openModal(req, "replace")}>
                           <RefreshCcw className="w-4 h-4 mr-2" /> Tài khoản mới
                         </Button>
                         <Button size="sm" variant="outline" className="w-full sm:flex-1 min-h-[44px]" onClick={() => openModal(req, "refund")}>
                           <DollarSign className="w-4 h-4 mr-2" /> Hoàn tiền
+                        </Button>
+                        <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-violet-600 hover:bg-violet-500/10" onClick={() => openModal(req, "respond")}>
+                          <MessageSquareReply className="w-4 h-4 mr-2" /> Phản hồi
                         </Button>
                         <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject")}>
                           <XCircle className="w-4 h-4 mr-2" /> Từ chối
@@ -629,6 +694,34 @@ export default function Warranty() {
             <Button variant="outline" className="w-full sm:w-auto" onClick={() => { setModalType(null); setActiveAcc(null) }}>Hủy</Button>
             <Button variant="destructive" className="w-full sm:w-auto min-h-[44px]" onClick={handleResolve} disabled={isBusy}>
               {isBusy ? "Đang xử lý..." : "Xác nhận từ chối"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Respond Modal */}
+      <Dialog open={modalType === "respond"} onOpenChange={open => !open && (setModalType(null), setActiveAcc(null))}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Phản hồi khách hàng{activeAcc ? ` — ${activeAcc.email}` : ""}</DialogTitle>
+            <DialogDescription>Nội dung sẽ được gửi cho khách qua Telegram. Yêu cầu bảo hành vẫn giữ nguyên trạng thái.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Nội dung phản hồi <span className="text-destructive">*</span></Label>
+              <Textarea
+                value={respondMsg}
+                onChange={e => setRespondMsg(e.target.value)}
+                placeholder="VD: Chúng tôi đã nhận được yêu cầu và đang xem xét, sẽ phản hồi trong 24h..."
+                rows={5}
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => { setModalType(null); setActiveAcc(null) }}>Hủy</Button>
+            <Button className="w-full sm:w-auto min-h-[44px] bg-violet-600 hover:bg-violet-700" onClick={handleResolve} disabled={isBusy}>
+              <SendHorizonal className="w-4 h-4 mr-2" />
+              {isBusy ? "Đang gửi..." : "Gửi phản hồi"}
             </Button>
           </DialogFooter>
         </DialogContent>

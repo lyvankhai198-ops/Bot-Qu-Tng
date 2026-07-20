@@ -51002,6 +51002,38 @@ L\xFD do: ${reason}`;
   addLog("GROUP_REJECT", `${id}/${accId}: ${reason}`, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 t\u1EEB ch\u1ED1i" });
 });
+router2.post("/bot/warranty/:id/accounts/:accId/respond", requireAuth, async (req, res) => {
+  const { id, accId } = req.params;
+  const { message } = req.body ?? {};
+  if (!message || !String(message).trim()) {
+    res.status(400).json({ ok: false, message: "N\u1ED9i dung ph\u1EA3n h\u1ED3i kh\xF4ng \u0111\u01B0\u1EE3c r\u1ED7ng" });
+    return;
+  }
+  const requests = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r) => r.id === id && r.type === "group");
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
+    return;
+  }
+  const req_ = requests[idx];
+  const accIdx = (req_.accounts ?? []).findIndex((a) => a.id === accId);
+  if (accIdx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n con" });
+    return;
+  }
+  const acc = req_.accounts[accIdx];
+  const sentAt = now();
+  const responseEntry = { message: String(message).trim(), sentAt, adminId: "web-admin" };
+  const prevResponses = acc.responses ?? [];
+  requests[idx].accounts[accIdx] = { ...acc, responses: [...prevResponses, responseEntry] };
+  writeJson("warranty_requests", requests);
+  const teleMsg = `\u{1F4AC} <b>Ph\u1EA3n h\u1ED3i t\u1EEB admin (t\xE0i kho\u1EA3n <code>${acc.email}</code>):</b>
+
+${String(message).trim()}`;
+  const result = await sendTelegramMessage(req_.userId, teleMsg);
+  addLog("GROUP_RESPOND", `${id}/${accId}: ${String(message).trim().slice(0, 60)}`, "web-admin");
+  res.json({ ok: result.ok, message: result.ok ? "\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i cho kh\xE1ch" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
+});
 router2.post("/bot/warranty/:id/accounts/:accId/resend", requireAuth, async (req, res) => {
   const { id, accId } = req.params;
   const requests = readJson("warranty_requests", []) ?? [];
@@ -51251,6 +51283,32 @@ L\xFD do: ${reason}`;
   await sendTelegramMessage(req_.userId, msg);
   addLog("WARRANTY_REJECT", `${id}: ${reason}`, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 t\u1EEB ch\u1ED1i" });
+});
+router2.post("/bot/warranty/:id/respond", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { message } = req.body ?? {};
+  if (!message || !String(message).trim()) {
+    res.status(400).json({ ok: false, message: "N\u1ED9i dung ph\u1EA3n h\u1ED3i kh\xF4ng \u0111\u01B0\u1EE3c r\u1ED7ng" });
+    return;
+  }
+  const requests = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r) => r.id === id);
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
+    return;
+  }
+  const req_ = requests[idx];
+  const sentAt = now();
+  const responseEntry = { message: String(message).trim(), sentAt, adminId: "web-admin" };
+  const prevResponses = req_.responses ?? [];
+  requests[idx] = { ...req_, responses: [...prevResponses, responseEntry] };
+  writeJson("warranty_requests", requests);
+  const teleMsg = `\u{1F4AC} <b>Ph\u1EA3n h\u1ED3i t\u1EEB admin:</b>
+
+${String(message).trim()}`;
+  const result = await sendTelegramMessage(req_.userId, teleMsg);
+  addLog("WARRANTY_RESPOND", `${id}: ${String(message).trim().slice(0, 60)}`, "web-admin");
+  res.json({ ok: result.ok, message: result.ok ? "\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i cho kh\xE1ch" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
 });
 router2.get("/orders/lookup", requireAuth, (req, res) => {
   const query = String(req.query.query ?? "").trim();
