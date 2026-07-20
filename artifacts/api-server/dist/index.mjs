@@ -50144,10 +50144,10 @@ var grokPlugin = {
           playwrightLog: logs.join("\n")
         };
       }
-      if (/Executable doesn't exist|browserType\.launch/i.test(msg)) {
+      if (/Executable doesn't exist|browserType\.launch|Cannot find browser|browser.*not.*found|Failed to launch|spawn.*ENOENT/i.test(msg)) {
         return {
           code: "NETWORK_ERROR",
-          message: "Chromium ch\u01B0a \u0111\u01B0\u1EE3c c\xE0i \u0111\u1EB7t. Ch\u1EA1y: npx playwright install chromium --with-deps",
+          message: "Chromium ch\u01B0a \u0111\u01B0\u1EE3c c\xE0i / kh\xF4ng t\xECm th\u1EA5y binary. Ch\u1EA1y tr\xEAn VPS: cd artifacts/api-server && npx playwright install chromium --with-deps",
           responseTime,
           playwrightLog: logs.join("\n")
         };
@@ -50360,10 +50360,10 @@ var chatgptPlugin = {
           playwrightLog: logs.join("\n")
         };
       }
-      if (/Executable doesn't exist|browserType\.launch/i.test(msg)) {
+      if (/Executable doesn't exist|browserType\.launch|Cannot find browser|browser.*not.*found|Failed to launch|spawn.*ENOENT/i.test(msg)) {
         return {
           code: "NETWORK_ERROR",
-          message: "Chromium ch\u01B0a \u0111\u01B0\u1EE3c c\xE0i \u0111\u1EB7t. Ch\u1EA1y: npx playwright install chromium --with-deps",
+          message: "Chromium ch\u01B0a \u0111\u01B0\u1EE3c c\xE0i / kh\xF4ng t\xECm th\u1EA5y binary. Ch\u1EA1y tr\xEAn VPS: cd artifacts/api-server && npx playwright install chromium --with-deps",
           responseTime,
           playwrightLog: logs.join("\n")
         };
@@ -53303,9 +53303,10 @@ async function processJob(job) {
   let result;
   const plugin = getPlugin(job.type);
   if (!plugin) {
+    const available = listPlugins().map((p) => p.name).join(", ") || "ch\u01B0a c\xF3";
     result = {
       code: "NO_PLUGIN",
-      message: `Ch\u01B0a c\xF3 plugin ki\u1EC3m tra cho lo\u1EA1i "${job.type || "kh\xF4ng x\xE1c \u0111\u1ECBnh"}". Plugin hi\u1EC7n c\xF3: ${["grok"].join(", ")}`,
+      message: `Ch\u01B0a c\xF3 plugin cho lo\u1EA1i "${job.type || "?"}". H\u1ED7 tr\u1EE3: ${available}`,
       responseTime: null
     };
   } else {
