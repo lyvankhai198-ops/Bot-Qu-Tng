@@ -51,6 +51,17 @@ export interface CheckOptions {
    * Example: "__Secure-next-auth.session-token=eyJ...; other=val"
    */
   sessionCookie?: string;
+  /**
+   * HTTP/SOCKS proxy for Playwright browser launch.
+   * server format: "http://host:port" or "socks5://host:port"
+   * When set, Playwright routes all traffic through this proxy — bypasses
+   * Cloudflare datacenter IP blocks by using a residential proxy.
+   */
+  proxy?: {
+    server: string;
+    username?: string;
+    password?: string;
+  };
 }
 
 export interface CheckerPlugin {

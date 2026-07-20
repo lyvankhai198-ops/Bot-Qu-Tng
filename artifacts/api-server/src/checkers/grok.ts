@@ -313,8 +313,13 @@ const grokPlugin: CheckerPlugin = {
       const { chromium } = await import("playwright");
 
       log("Launching Chromium");
+      const launchProxy = options?.proxy?.server
+        ? { server: options.proxy.server, username: options.proxy.username, password: options.proxy.password }
+        : undefined;
+      if (launchProxy) log(`Using proxy: ${launchProxy.server}`);
       browser = await chromium.launch({
         headless: true,
+        proxy: launchProxy,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",

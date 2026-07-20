@@ -95,6 +95,53 @@ function HealthTab({ orderId, email }: { orderId: string; email: string }) {
   const [expandedLog, setExpandedLog] = useState<number | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Proxy config state
+  const [proxyServer, setProxyServer] = useState("")
+  const [proxyUsername, setProxyUsername] = useState("")
+  const [proxyPassword, setProxyPassword] = useState("")
+  const [proxySaving, setProxySaving] = useState(false)
+  const [proxyLoaded, setProxyLoaded] = useState(false)
+  const [showProxyConfig, setShowProxyConfig] = useState(false)
+
+  // Load proxy config once
+  useEffect(() => {
+    apiFetch("GET", "/bot/order-health/config").then((cfg: any) => {
+      setProxyServer(cfg?.proxyServer ?? "")
+      setProxyUsername(cfg?.proxyUsername ?? "")
+      setProxyPassword(cfg?.proxyPassword ?? "")
+      setProxyLoaded(true)
+    }).catch(() => setProxyLoaded(true))
+  }, [])
+
+  const handleSaveProxy = async () => {
+    setProxySaving(true)
+    try {
+      await apiFetch("PUT", "/bot/order-health/config", {
+        proxyServer: proxyServer.trim(),
+        proxyUsername: proxyUsername.trim(),
+        proxyPassword: proxyPassword.trim(),
+      })
+      toast({ title: "Đã lưu cấu hình proxy" })
+    } catch (e: any) {
+      toast({ title: "Lỗi lưu proxy", description: e.message, variant: "destructive" })
+    } finally {
+      setProxySaving(false)
+    }
+  }
+
+  const handleClearProxy = async () => {
+    setProxySaving(true)
+    try {
+      await apiFetch("PUT", "/bot/order-health/config", { proxyServer: "", proxyUsername: "", proxyPassword: "" })
+      setProxyServer(""); setProxyUsername(""); setProxyPassword("")
+      toast({ title: "Đã xóa proxy" })
+    } catch (e: any) {
+      toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    } finally {
+      setProxySaving(false)
+    }
+  }
+
   const loadHistory = useCallback(async () => {
     setLoading(true)
     try {
@@ -176,6 +223,62 @@ function HealthTab({ orderId, email }: { orderId: string; email: string }) {
           <p className="text-sm text-muted-foreground">
             {loading ? "Đang tải..." : "Chưa có kết quả kiểm tra. Bấm \"Kiểm tra lại\" để bắt đầu."}
           </p>
+        )}
+      </div>
+
+      {/* Proxy config (global setting) */}
+      <div className="rounded-lg border bg-muted/20 overflow-hidden">
+        <button
+          className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/40 transition-colors"
+          onClick={() => setShowProxyConfig(v => !v)}
+        >
+          <span className="flex items-center gap-2">
+            <Wifi className="h-4 w-4 text-blue-500" />
+            Cấu hình Proxy (dùng chung cho tất cả đơn Grok)
+            {proxyLoaded && proxyServer && (
+              <Badge variant="outline" className="text-xs text-green-700 border-green-300 bg-green-50 dark:bg-green-950/30 dark:text-green-400">✓ Đã bật</Badge>
+            )}
+          </span>
+          <span className="text-muted-foreground text-xs">{showProxyConfig ? "▲" : "▼"}</span>
+        </button>
+        {showProxyConfig && (
+          <div className="px-4 pb-4 space-y-3 border-t">
+            <p className="text-[11px] text-muted-foreground pt-3 leading-relaxed">
+              Dùng <strong>residential proxy</strong> (VD: Webshare.io) để bypass Cloudflare IP block — áp dụng tự động cho mọi đơn Grok khi check sức khoẻ. Format: <code className="bg-muted px-1 rounded">http://host:port</code>
+            </p>
+            <div className="grid gap-2">
+              <Label className="text-xs">Proxy Server</Label>
+              <Input
+                placeholder="http://p.webshare.io:80"
+                value={proxyServer}
+                onChange={e => setProxyServer(e.target.value)}
+                className="font-mono text-xs h-8"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="grid gap-1.5">
+                <Label className="text-xs">Username</Label>
+                <Input placeholder="username" value={proxyUsername} onChange={e => setProxyUsername(e.target.value)} className="text-xs h-8" />
+              </div>
+              <div className="grid gap-1.5">
+                <Label className="text-xs">Password</Label>
+                <Input type="password" placeholder="password" value={proxyPassword} onChange={e => setProxyPassword(e.target.value)} className="text-xs h-8" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={handleSaveProxy} disabled={proxySaving || !proxyLoaded}
+                className="text-blue-700 border-blue-300 hover:bg-blue-50 dark:text-blue-400 dark:border-blue-700">
+                {proxySaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Wifi className="h-3.5 w-3.5 mr-1" />}
+                Lưu Proxy
+              </Button>
+              {proxyServer && (
+                <Button size="sm" variant="ghost" onClick={handleClearProxy} disabled={proxySaving}
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                  <XCircle className="h-3.5 w-3.5 mr-1" /> Xóa Proxy
+                </Button>
+              )}
+            </div>
+          </div>
         )}
       </div>
 

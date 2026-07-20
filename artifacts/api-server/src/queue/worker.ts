@@ -33,14 +33,28 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getWorkerConfig(): { workerCount: number; timeoutMs: number } {
+function getWorkerConfig(): {
+  workerCount: number;
+  timeoutMs: number;
+  proxy?: { server: string; username?: string; password?: string };
+} {
   try {
     const h = readJson("order_health", { config: {} }) ?? { config: {} };
-    const n = Number((h.config ?? {}).workerCount ?? 2);
-    const t = Number((h.config ?? {}).timeoutMs ?? 60_000);
+    const cfg = h.config ?? {};
+    const n = Number(cfg.workerCount ?? 2);
+    const t = Number(cfg.timeoutMs ?? 60_000);
+    const proxyServer: string = (cfg.proxyServer ?? "").trim();
+    const proxy = proxyServer
+      ? {
+          server: proxyServer,
+          username: (cfg.proxyUsername ?? "").trim() || undefined,
+          password: (cfg.proxyPassword ?? "").trim() || undefined,
+        }
+      : undefined;
     return {
       workerCount: Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : 2,
       timeoutMs: Number.isFinite(t) && t >= 5_000 ? t : 120_000,
+      proxy,
     };
   } catch {
     return { workerCount: 2, timeoutMs: 60_000 };
@@ -95,12 +109,13 @@ async function processJob(job: HealthJob): Promise<void> {
     const sessionCookie: string | undefined =
       order?.grokSessionCookie ? String(order.grokSessionCookie) : undefined;
 
-    const { timeoutMs } = getWorkerConfig();
+    const { timeoutMs, proxy } = getWorkerConfig();
 
     try {
       result = await plugin.check(job.email, password, {
         timeoutMs,
         sessionCookie,
+        proxy,
       });
     } catch (err: any) {
       result = {
