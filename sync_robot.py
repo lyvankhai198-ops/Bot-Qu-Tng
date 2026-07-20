@@ -1054,40 +1054,29 @@ async def _click_hamburger(page) -> bool:
 
 async def _wait_for_sidebar(page) -> bool:
     """
-    Đợi sidebar thực sự xuất hiện sau khi click hamburger.
-    Kiểm tra bằng text nội dung sidebar hoặc kích thước drawer.
-    Trả True nếu sidebar đã mở.
+    Đợi sidebar/drawer NAV thực sự mở — CHỈ dùng text menu items thật sự.
+    KHÔNG dùng 'nav a', '[role=navigation] a' v.v. vì chúng khớp với
+    thanh nav cố định của trang (luôn tồn tại, kể cả khi drawer đóng).
+
+    Trả True nếu ít nhất một menu item visible, False nếu timeout.
     """
-    from playwright.async_api import TimeoutError as PwTimeout
-    sidebar_signals = [
-        'text=Đơn hàng',
-        'text=Sản phẩm',
-        'text=Cấu hình bot',
-        'text=Đổi mật khẩu',
-        'text=Chợ',
-        '[role="navigation"] a',
-        '[class*="sidebar" i] a',
-        '[class*="drawer" i] a',
-        'nav a',
-    ]
-    for sig in sidebar_signals:
-        try:
-            el = page.locator(sig).first
-            if await el.count() > 0 and await el.is_visible():
-                logger.info(f"[SYNC] Sidebar confirmed open via: {sig}")
-                return True
-        except Exception:
-            pass
-    # Thử chờ tối đa 3s cho bất kỳ signal nào
-    for sig in sidebar_signals[:5]:
-        try:
-            await page.locator(sig).first.wait_for(state="visible", timeout=3_000)
-            logger.info(f"[SYNC] Sidebar appeared: {sig}")
-            return True
-        except PwTimeout:
-            pass
-        except Exception:
-            pass
+    # Chỉ check các text của nav item — khi drawer mở thì mới visible
+    MENU_TEXTS = ["Đơn hàng", "Sản phẩm", "Cấu hình bot", "Đổi mật khẩu", "Chợ", "Dashboard"]
+    # Poll tối đa 5s (10 lần × 0.5s)
+    for tick in range(10):
+        for text in MENU_TEXTS:
+            try:
+                # Tìm visible <a> hoặc <li> hoặc <button> có text này
+                for sel in [f'a:has-text("{text}")', f'li:has-text("{text}")',
+                            f'button:has-text("{text}")', f'[role=menuitem]:has-text("{text}")']:
+                    el = page.locator(sel).first
+                    if await el.count() > 0 and await el.is_visible():
+                        logger.info(f"[SYNC] Sidebar open confirmed — '{text}' visible via {sel}")
+                        return True
+            except Exception:
+                pass
+        await asyncio.sleep(0.5)
+    logger.warning("[SYNC] Sidebar wait timeout — menu items not visible after 5s")
     return False
 
 
