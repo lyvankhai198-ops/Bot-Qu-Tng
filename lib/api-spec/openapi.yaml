@@ -1219,6 +1219,14 @@ components:
         notes:
           type: string
           nullable: true
+        password:
+          type: string
+          nullable: true
+          description: Mật khẩu đăng nhập tài khoản (dùng cho Health Check)
+        twoFA:
+          type: string
+          nullable: true
+          description: Mã 2FA / thông tin bổ sung
 
     WarrantyAccount:
       type: object
