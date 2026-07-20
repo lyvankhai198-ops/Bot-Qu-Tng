@@ -57,9 +57,8 @@ sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" "
   # ── Cài Chromium browser + system deps ───────────────────────────────────────
   python3 -m playwright install chromium --with-deps || true
 
-  # ── Tạo systemd service cho sync-robot nếu chưa có ──────────────────────────
-  if [ ! -f /etc/systemd/system/sync-robot.service ]; then
-    cat > /etc/systemd/system/sync-robot.service << 'UNIT'
+  # ── Tạo / cập nhật systemd service cho sync-robot ────────────────────────────
+  cat > /etc/systemd/system/sync-robot.service << 'UNIT'
 [Unit]
 Description=Bot Sync Robot
 After=network.target bot-api.service
@@ -69,7 +68,8 @@ Requires=bot-api.service
 Type=simple
 WorkingDirectory=/root/Bot-Qu-Tng
 Environment=DATA_DIR=/root/Bot-Qu-Tng/data
-Environment=API_BASE_URL=http://localhost:8080
+Environment=API_BASE_URL=http://localhost:8081
+Environment=SESSION_SECRET=Admin123
 ExecStart=/usr/bin/python3 /root/Bot-Qu-Tng/sync_robot.py
 Restart=always
 RestartSec=10
@@ -79,9 +79,8 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 UNIT
-    systemctl daemon-reload
-    systemctl enable sync-robot
-  fi
+  systemctl daemon-reload
+  systemctl enable sync-robot
 
   systemctl restart bot-api gift-bot sync-robot
   systemctl is-active bot-api gift-bot sync-robot
