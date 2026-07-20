@@ -21,7 +21,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters,
+    ChatMemberHandler, ContextTypes, filters,
 )
 from telegram.constants import ParseMode
 
@@ -520,17 +520,6 @@ def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     db.save_user(user.id, user.username, user.first_name)
-
-    # ── Gift box referral deep link: gboxr{creator_id}e{ev_timestamp} ──
-    args = context.args or []
-    if args:
-        m = re.match(r"^gboxr(\d+)e(\w+)$", args[0])
-        if m:
-            creator_id = int(m.group(1))
-            event_id   = f"gb_{m.group(2)}"
-            context.application.create_task(
-                _process_gift_box_referral(context, event_id, creator_id, user)
-            )
 
     await update.message.reply_text(
         "🌐 <b>Chọn ngôn ngữ / Choose language</b>",
@@ -2317,37 +2306,22 @@ def _get_active_gift_box_event() -> dict | None:
         return ev
     return None
 
-async def _process_gift_box_referral(
+async def _notify_gift_box_creator(
     context: ContextTypes.DEFAULT_TYPE,
     event_id: str,
     creator_id: int,
-    invitee,          # telegram User object of the newcomer
+    total: int,
+    required: int,
+    ev_name: str,
 ) -> None:
-    """Called when someone starts the bot via a gift-box referral link."""
-    if invitee.id == creator_id:
-        return  # self-invite, silently ignore
-
-    # Verify event is still active
-    ev = _get_active_gift_box_event()
-    if not ev or ev["id"] != event_id:
-        return
-
-    result = db.record_gift_box_referral(event_id, creator_id, invitee.id)
-    if not result.get("added"):
-        return  # already counted or duplicate
-
-    total    = result["total"]
-    required = int(ev.get("requiredInvites", 1))
-
-    # Notify creator of progress
+    """Send progress / unlock notification to the creator."""
     try:
         if total >= required and not db.is_gift_box_unlocked(event_id, creator_id):
             db.mark_gift_box_unlocked(event_id, creator_id)
-            ev_name = ev.get("name", "Ô Quà Bí Mật")
             msg = (
                 f"🎉 <b>Chúc mừng!</b>\n\n"
                 f"Bạn đã mời thành công <b>{required}</b> người.\n\n"
-                f"🎁 <b>{ev_name}</b> đã được mở khóa.\n"
+                f"🎁 <b>{ev_name}</b> đã được mở khóa."
             )
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("🎁 Nhận quà ngay", callback_data=f"gbox_open:{event_id}")
@@ -2356,39 +2330,88 @@ async def _process_gift_box_referral(
                 creator_id, msg, parse_mode=ParseMode.HTML, reply_markup=kb
             )
         else:
-            # Progress update (still locked)
             msg = (
                 f"👥 Cập nhật: bạn đã mời <b>{total}/{required}</b> người.\n"
                 f"Còn <b>{max(0, required - total)}</b> người nữa để mở khóa 🎁"
             )
             await context.bot.send_message(creator_id, msg, parse_mode=ParseMode.HTML)
     except Exception as e:
-        logger.warning(f"GiftBox referral notify error creator={creator_id}: {e}")
+        logger.warning(f"GiftBox notify error creator={creator_id}: {e}")
 
-async def _send_gift_box_locked(update_or_query, user_id: int, active: dict,
-                                 *, is_callback: bool = False) -> None:
-    """Send / edit the 'locked' message with invite link and progress."""
-    required     = int(active.get("requiredInvites", 1))
-    invite_count = db.get_gift_box_invite_count(active["id"], user_id)
+async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fires when someone joins a channel via our tracked invite link."""
+    member = update.chat_member
+    if not member:
+        return
 
-    bot_me       = await (update_or_query.get_bot() if is_callback else update_or_query._bot)
-    # Safer: use context bot via closure; just build from event_id
-    ev_ts        = active["id"].replace("gb_", "")
-    deep_param   = f"gboxr{user_id}e{ev_ts}"
-    bot_username = active.get("_bot_username", "")  # will be filled below if empty
+    old_status = member.old_chat_member.status
+    new_status = member.new_chat_member.status
 
-    msg = (
-        f"🔒 <b>Ô Quà Bí Mật đang bị khóa.</b>\n\n"
-        f"Để mở khóa, bạn cần mời ít nhất <b>{required}</b> người bạn tham gia "
-        f"thông qua liên kết riêng bên dưới.\n\n"
-        f"📨 <b>Link mời của bạn:</b>\n"
-        f"<code>https://t.me/{bot_username}?start={deep_param}</code>\n\n"
-        f"👥 Đã mời: <b>{invite_count}/{required}</b>"
+    # Only care about new joins (not already a member)
+    if new_status not in ("member", "administrator", "creator"):
+        return
+    if old_status in ("member", "administrator", "creator"):
+        return
+
+    invite_link_obj = member.invite_link
+    if not invite_link_obj:
+        return
+
+    link_url = invite_link_obj.invite_link
+    rec = db.lookup_gift_box_invite_link(link_url)
+    if not rec:
+        return  # Not our gift box link
+
+    event_id   = rec["event_id"]
+    creator_id = rec["creator_id"]
+    invitee_id = member.new_chat_member.user.id
+
+    if creator_id == invitee_id:
+        return  # Self-invite
+
+    ev = _get_active_gift_box_event()
+    if not ev or ev["id"] != event_id:
+        return
+
+    result = db.record_gift_box_referral(event_id, creator_id, invitee_id)
+    if not result.get("added"):
+        return  # Already counted
+
+    required = int(ev.get("requiredInvites", 1))
+    await _notify_gift_box_creator(
+        context, event_id, creator_id,
+        total=result["total"], required=required,
+        ev_name=ev.get("name", "Ô Quà Bí Mật"),
     )
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔄 Kiểm tra lại", callback_data=f"gbox_check:{active['id']}")
-    ]])
-    return msg, kb
+
+async def _get_or_create_gift_box_link(
+    context: ContextTypes.DEFAULT_TYPE,
+    event: dict,
+    user_id: int,
+) -> str | None:
+    """Return existing invite link or create a new one for this user+event."""
+    eid      = event["id"]
+    existing = db.get_gift_box_user_link(eid, user_id)
+    if existing:
+        return existing
+
+    channel_id = (event.get("channelId") or "").strip()
+    if not channel_id:
+        return None
+
+    try:
+        link_obj = await context.bot.create_chat_invite_link(
+            chat_id=channel_id,
+            name=f"gbox_{eid[-8:]}_{user_id}",
+            creates_join_request=False,
+        )
+        link_url = link_obj.invite_link
+        db.register_gift_box_invite_link(link_url, eid, user_id)
+        db.set_gift_box_user_link(eid, user_id, link_url)
+        return link_url
+    except Exception as e:
+        logger.error(f"GiftBox create_chat_invite_link error: {e}")
+        return None
 
 async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user   = update.effective_user
@@ -2437,18 +2460,23 @@ async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         unlocked = True
 
     if not unlocked:
-        # Show locked message with invite link
+        # Create (or reuse) a unique channel invite link for this user
+        invite_link  = await _get_or_create_gift_box_link(context, active, user.id)
         invite_count = db.get_gift_box_invite_count(eid, user.id)
-        ev_ts        = eid.replace("gb_", "")
-        bot_me       = await context.bot.get_me()
-        deep_param   = f"gboxr{user.id}e{ev_ts}"
-        invite_link  = f"https://t.me/{bot_me.username}?start={deep_param}"
+
+        if not invite_link:
+            await update.message.reply_text(
+                "⚠️ Sự kiện chưa cấu hình kênh mời.\nVui lòng liên hệ admin.",
+                reply_markup=main_keyboard(user.id),
+            )
+            return
+
         msg = (
             f"🔒 <b>Ô Quà Bí Mật đang bị khóa.</b>\n\n"
             f"Để mở khóa, bạn cần mời ít nhất <b>{required}</b> người bạn tham gia "
-            f"thông qua liên kết riêng bên dưới.\n\n"
+            f"kênh thông qua liên kết riêng bên dưới.\n\n"
             f"📨 <b>Link mời của bạn:</b>\n"
-            f"<code>{invite_link}</code>\n\n"
+            f"{invite_link}\n\n"
             f"👥 Đã mời: <b>{invite_count}/{required}</b>"
         )
         kb = InlineKeyboardMarkup([[
@@ -2522,16 +2550,14 @@ async def callback_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             ]])
         else:
             invite_count = db.get_gift_box_invite_count(eid, user.id)
-            ev_ts        = eid.replace("gb_", "")
-            bot_me       = await context.bot.get_me()
-            deep_param   = f"gboxr{user.id}e{ev_ts}"
-            invite_link  = f"https://t.me/{bot_me.username}?start={deep_param}"
+            invite_link  = await _get_or_create_gift_box_link(context, active, user.id)
+            link_text    = invite_link if invite_link else "⚠️ Chưa cấu hình kênh — liên hệ admin"
             msg = (
                 f"🔒 <b>Ô Quà Bí Mật đang bị khóa.</b>\n\n"
                 f"Để mở khóa, bạn cần mời ít nhất <b>{required}</b> người bạn tham gia "
-                f"thông qua liên kết riêng bên dưới.\n\n"
+                f"kênh thông qua liên kết riêng bên dưới.\n\n"
                 f"📨 <b>Link mời của bạn:</b>\n"
-                f"<code>{invite_link}</code>\n\n"
+                f"{link_text}\n\n"
                 f"👥 Đã mời: <b>{invite_count}/{required}</b>"
             )
             kb = InlineKeyboardMarkup([[
@@ -2843,6 +2869,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_check_join,    pattern=r"^check_join$"))
     app.add_handler(CallbackQueryHandler(callback_back_main,     pattern=r"^back_main$"))
     app.add_handler(CallbackQueryHandler(callback_gift_box,      pattern=r"^gbox[_:]"))
+    app.add_handler(ChatMemberHandler(handle_chat_member,        chat_member_types=ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
