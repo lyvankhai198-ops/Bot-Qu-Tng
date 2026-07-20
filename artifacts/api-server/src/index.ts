@@ -1,6 +1,5 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startWorker, stopWorker } from "./queue/worker.js";
 
 const rawPort = process.env["PORT"];
 
@@ -23,17 +22,4 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
-
-  // Start background health-check worker
-  startWorker();
-});
-
-// Graceful shutdown
-process.on("SIGTERM", () => {
-  stopWorker();
-  process.exit(0);
-});
-process.on("SIGINT", () => {
-  stopWorker();
-  process.exit(0);
 });

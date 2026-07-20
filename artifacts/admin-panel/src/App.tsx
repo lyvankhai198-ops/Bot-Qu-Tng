@@ -19,7 +19,6 @@ import Intro from "@/pages/intro";
 import Logs from "@/pages/logs";
 import RefundHistory from "@/pages/refund-history";
 import SyncRobot from "@/pages/sync-robot";
-import AccountHealth from "@/pages/account-health";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -76,7 +75,6 @@ function Router() {
       <Route path="/logs"><ProtectedRoute component={Logs} /></Route>
       <Route path="/refund-history"><ProtectedRoute component={RefundHistory} /></Route>
       <Route path="/sync-robot"><ProtectedRoute component={SyncRobot} /></Route>
-      <Route path="/account-health"><ProtectedRoute component={AccountHealth} /></Route>
       <Route component={NotFound} />
     </Switch>
   );
