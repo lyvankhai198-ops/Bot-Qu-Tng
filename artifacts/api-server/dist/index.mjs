@@ -50460,10 +50460,17 @@ var grokPlugin = {
       if (!pwInput) {
         const bt = (await bodyText(page)).slice(0, 600);
         log(`Password not found \u2014 body: ${bt}`);
-        if (/invalid|not found|no account|doesn't exist/i.test(bt)) {
-          return { code: "PASSWORD_INVALID", message: "Email kh\xF4ng t\u1ED3n t\u1EA1i", responseTime: elapsed(), playwrightLog: logs.join("\n") };
+        const shot = await screenshot64();
+        if (/permission.denied|403|forbidden/i.test(bt)) {
+          return { code: "UNKNOWN", message: "accounts.x.ai tr\u1EA3 403 khi ki\u1EC3m tra email \u2014 proxy IP b\u1ECB block \u1EDF API level ho\u1EB7c email kh\xF4ng t\u1ED3n t\u1EA1i", responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
         }
-        return { code: "UNKNOWN", message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 m\u1EADt kh\u1EA9u \u2014 URL: ${url.split("?")[0]}`, responseTime: elapsed(), playwrightLog: logs.join("\n") };
+        if (/invalid|not found|no account|doesn't exist|couldn.*find.*account/i.test(bt)) {
+          return { code: "PASSWORD_INVALID", message: "Email kh\xF4ng t\u1ED3n t\u1EA1i tr\xEAn accounts.x.ai", responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
+        }
+        if (/magic.link|check.*email|sent.*email|verify.*email/i.test(bt)) {
+          return { code: "UNKNOWN", message: "accounts.x.ai g\u1EEDi magic link thay v\xEC password \u2014 kh\xF4ng th\u1EC3 t\u1EF1 \u0111\u1ED9ng login", responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
+        }
+        return { code: "UNKNOWN", message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 m\u1EADt kh\u1EA9u sau khi nh\u1EADp email \u2014 URL: ${url.split("?")[0]}`, responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
       }
       log("Filling password");
       await pwInput.click();
