@@ -1256,6 +1256,18 @@ def record_gift_box_referral(event_id: str, creator_id: int, invitee_id: int) ->
     save_gift_box_invites(invites)
     return {"added": True, "total": len(rec["invitees"])}
 
+def get_gift_box_user_link(event_id: str, user_id: int) -> str | None:
+    """Return the stored channel invite link for this user+event, if any."""
+    return get_gift_box_invites().get(f"{event_id}:{user_id}", {}).get("link")
+
+def set_gift_box_user_link(event_id: str, user_id: int, link: str) -> None:
+    invites = get_gift_box_invites()
+    key = f"{event_id}:{user_id}"
+    if key not in invites:
+        invites[key] = {"invitees": [], "unlocked": False, "created_at": datetime.now().isoformat()}
+    invites[key]["link"] = link
+    save_gift_box_invites(invites)
+
 def mark_gift_box_unlocked(event_id: str, user_id: int) -> None:
     invites = get_gift_box_invites()
     key = f"{event_id}:{user_id}"
@@ -1264,6 +1276,19 @@ def mark_gift_box_unlocked(event_id: str, user_id: int) -> None:
     else:
         invites[key]["unlocked"] = True
     save_gift_box_invites(invites)
+
+# ─── Gift box invite link map (channel link URL → creator) ───────────────────
+
+def get_gift_box_link_map() -> dict:
+    return load("gift_box_link_map", {}) or {}
+
+def register_gift_box_invite_link(link_url: str, event_id: str, creator_id: int) -> None:
+    m = get_gift_box_link_map()
+    m[link_url] = {"event_id": event_id, "creator_id": creator_id}
+    save("gift_box_link_map", m)
+
+def lookup_gift_box_invite_link(link_url: str) -> dict | None:
+    return get_gift_box_link_map().get(link_url)
 
 # ─── Secret codes (Săn mã bí mật) ───────────────────────────────────────────
 

@@ -121,6 +121,7 @@ const DEFAULT_FORM = {
   buyersOnly: false,
   inviteRequired: true,
   requiredInvites: 1,
+  channelId: "",
   prizes: [] as GiftPrize[],
 }
 
@@ -183,6 +184,7 @@ export default function GiftBoxes() {
       buyersOnly: ev.buyersOnly,
       inviteRequired: ev.inviteRequired !== false,
       requiredInvites: ev.requiredInvites ?? 1,
+      channelId: ev.channelId ?? "",
       prizes: ev.prizes.map(p => ({ ...p })),
     })
     setDialogOpen(true)
@@ -527,15 +529,28 @@ export default function GiftBoxes() {
                 <Switch checked={form.inviteRequired} onCheckedChange={v => setForm(f => ({ ...f, inviteRequired: v }))} />
               </div>
               {form.inviteRequired && (
-                <div className="grid gap-2">
-                  <Label className="text-xs">Số người cần mời tối thiểu</Label>
-                  <Input
-                    type="number" min={1} max={100} className="h-9"
-                    value={form.requiredInvites}
-                    onChange={e => setForm(f => ({ ...f, requiredInvites: Number(e.target.value) }))}
-                  />
+                <div className="grid gap-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="grid gap-1">
+                      <Label className="text-xs">Số người cần mời tối thiểu</Label>
+                      <Input
+                        type="number" min={1} max={100} className="h-9"
+                        value={form.requiredInvites}
+                        onChange={e => setForm(f => ({ ...f, requiredInvites: Number(e.target.value) }))}
+                      />
+                    </div>
+                    <div className="grid gap-1">
+                      <Label className="text-xs">ID / username kênh đích</Label>
+                      <Input
+                        className="h-9 font-mono text-xs"
+                        placeholder="-100123456789 hoặc @kenh"
+                        value={form.channelId}
+                        onChange={e => setForm(f => ({ ...f, channelId: e.target.value.trim() }))}
+                      />
+                    </div>
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    Bot sẽ tự động gửi thông báo mở khóa khi đủ số lượng. Không tính: tự mời bản thân, người đã tham gia sự kiện trước.
+                    Bot tạo link mời riêng cho mỗi người vào <strong>kênh này</strong>. Bot phải là admin của kênh. Không tính: tự mời bản thân, người đã được credit trước đó.
                   </p>
                 </div>
               )}
