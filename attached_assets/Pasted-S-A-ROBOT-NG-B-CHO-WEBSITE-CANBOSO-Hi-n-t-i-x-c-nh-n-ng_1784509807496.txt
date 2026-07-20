@@ -1,0 +1,216 @@
+SỬA ROBOT ĐỒNG BỘ CHO WEBSITE CANBOSO
+
+Hiện tại đã xác nhận:
+
+- Đăng nhập hoạt động.
+- Robot có thể phát hiện phiên đăng nhập sẵn.
+- Không cần sửa phần login nữa.
+
+==========================
+VẤN ĐỀ
+==========================
+
+Website CANBOSO KHÔNG sử dụng URL riêng cho trang Đơn hàng.
+
+Khi người dùng mở "Đơn hàng":
+
+Thanh địa chỉ vẫn là
+
+https://canboso.com
+
+không đổi thành
+
+/orders
+
+hay
+
+/order
+
+hay
+
+/dashboard/orders
+
+Đây là website SPA (Single Page Application).
+
+Robot đang cố mở
+
+https://canboso.com/orders
+
+hoặc tự suy đoán URL.
+
+Đó là nguyên nhân thất bại.
+
+==========================
+YÊU CẦU SỬA
+==========================
+
+TUYỆT ĐỐI KHÔNG:
+
+- goto("/orders")
+- goto("/order")
+- ghép URL
+- đoán URL
+
+Robot chỉ được điều hướng bằng thao tác người dùng.
+
+Luồng đúng:
+
+1.
+
+Mở
+
+https://canboso.com
+
+2.
+
+Nếu đã đăng nhập thì giữ nguyên phiên.
+
+Nếu chưa đăng nhập thì đăng nhập.
+
+3.
+
+Chờ dashboard load hoàn toàn.
+
+Không dùng sleep cố định.
+
+Phải wait:
+
+- network idle
+- spinner biến mất
+- layout hoàn tất
+
+4.
+
+Tìm nút menu hamburger.
+
+Các selector cần thử:
+
+button
+
+button[aria-label]
+
+button svg
+
+button có icon menu
+
+role=button
+
+button chứa icon ba gạch
+
+5.
+
+Click menu.
+
+Nếu menu chưa mở:
+
+retry click tối đa 3 lần.
+
+6.
+
+Sau khi menu mở,
+
+KHÔNG kiểm tra URL.
+
+Phải tìm phần tử có text:
+
+"Đơn hàng"
+
+Thử:
+
+getByRole()
+
+getByText()
+
+locator("text=Đơn hàng")
+
+xpath chứa text
+
+div
+
+button
+
+a
+
+span
+
+li
+
+7.
+
+Click trực tiếp phần tử "Đơn hàng".
+
+Nếu click làm thay đổi nội dung nhưng URL vẫn là
+
+https://canboso.com
+
+thì coi là thành công.
+
+8.
+
+Xác nhận đã vào đúng trang bằng một trong các dấu hiệu:
+
+Tiêu đề:
+
+"Đơn hàng của bạn"
+
+hoặc
+
+nút
+
+"Tải xuống"
+
+hoặc
+
+bảng có cột
+
+"Mã đơn"
+
+KHÔNG xác nhận bằng URL.
+
+9.
+
+Sau đó:
+
+click
+
+"Tải xuống"
+
+10.
+
+Bắt download event.
+
+Đợi file XLSX tải xong.
+
+Sau đó mới import.
+
+==========================
+DEBUG
+==========================
+
+Nếu thất bại phải log:
+
+- URL
+- title
+- toàn bộ text menu
+- số lượng button
+- số lượng link
+- outerHTML của phần tử Đơn hàng
+- screenshot trước click
+- screenshot sau click
+- lý do thất bại
+
+==========================
+KHÔNG ĐƯỢC
+==========================
+
+Không reset database.
+
+Không reset session.
+
+Không sửa phần login.
+
+Không thay đổi chức năng khác.
+
+Chỉ sửa luồng điều hướng sang Đơn hàng và tải file XLSX.
+
+Robot phải hoạt động ngay cả khi website không thay đổi URL khi chuyển trang.

@@ -910,98 +910,164 @@ async def _wait_for_sidebar(page) -> bool:
 
 async def _find_and_navigate_order_item(page) -> bool:
     """
-    Tìm mục 'Đơn hàng' trong DOM, click, rồi chờ xác nhận bằng NỘI DUNG trang.
-    Trả True chỉ khi đã xác nhận đang ở trang Đơn hàng thật sự.
-    Website là SPA — URL có thể không đổi, xác nhận bằng content.
+    Tìm mục 'Đơn hàng' trong sidebar/menu, click, xác nhận bằng NỘI DUNG trang.
+    Trả True chỉ khi đã xác nhận đang ở trang Đơn hàng.
+    Website là SPA — URL không đổi, xác nhận bằng content.
+
+    Lưu ý: menu item có thể có text "Đơn hàng •" (chấm đỏ thông báo).
+    Tất cả matching đều dùng contains/startswith, không exact match toàn bộ string.
     """
-    target = "Đơn hàng"
     order_link = None
     order_href = None
+    order_outer_html = ""
 
-    # ── Tìm element "Đơn hàng" bằng nhiều cách ──────────────────────────────
-
-    # Cách 1: <a> có text chính xác "Đơn hàng"
+    # ── Cách 0: Tìm trong sidebar/nav trước (ưu tiên nhất) ─────────────────
+    # Sidebar là context chắc chắn chứa menu item, tránh nhầm với heading trang
     if not order_link:
         try:
-            el = page.locator("a").filter(has_text=re.compile(r"^Đơn hàng$", re.IGNORECASE)).first
-            if await el.count() > 0 and await el.is_visible():
-                order_link = el
+            nav_sel = 'nav,[role=navigation],[class*=sidebar],[class*=drawer],[class*=menu]'
+            nav = page.locator(nav_sel).first
+            if await nav.count() > 0:
+                # Tìm bất kỳ element con nào có text bắt đầu bằng "Đơn hàng"
+                for tag in ["a", "button", "li", "div", "span"]:
+                    el = nav.locator(tag).filter(
+                        has_text=re.compile(r"Đơn hàng", re.IGNORECASE)
+                    ).first
+                    if await el.count() > 0 and await el.is_visible():
+                        order_link = el
+                        logger.info(f"[SYNC] Tìm thấy 'Đơn hàng' trong nav — tag={tag}")
+                        break
         except Exception:
             pass
 
-    # Cách 2: role=link name="Đơn hàng"
+    # ── Cách 1: <a> có text bắt đầu bằng "Đơn hàng" (chấp nhận suffix "•" v.v.) ──
     if not order_link:
         try:
-            el = page.get_by_role("link", name="Đơn hàng").first
-            if await el.count() > 0 and await el.is_visible():
-                order_link = el
-        except Exception:
-            pass
-
-    # Cách 3: duyệt toàn bộ <a> và so sánh text sau normalize
-    if not order_link:
-        try:
-            all_a = page.locator("a")
+            all_a = page.locator("a").filter(has_text=re.compile(r"Đơn hàng", re.IGNORECASE))
             count = await all_a.count()
-            for i in range(min(count, 100)):
+            for i in range(min(count, 50)):
                 el = all_a.nth(i)
                 try:
                     txt = _normalize_text(await el.inner_text())
-                    if txt == target and await el.is_visible():
+                    # Lấy item ngắn gọn nhất (menu item), bỏ qua "Đơn hàng của bạn" (heading)
+                    if txt.startswith("Đơn hàng") and len(txt) <= 20 and await el.is_visible():
                         order_link = el
+                        logger.info(f"[SYNC] Tìm thấy <a> 'Đơn hàng' — text={txt!r}")
                         break
                 except Exception:
                     continue
         except Exception:
             pass
 
-    # Cách 4: get_by_text exact (bất kỳ tag nào)
+    # ── Cách 2: role=link / role=menuitem ────────────────────────────────────
+    if not order_link:
+        for role in ("link", "menuitem"):
+            try:
+                el = page.get_by_role(role, name=re.compile(r"Đơn hàng", re.IGNORECASE)).first
+                if await el.count() > 0 and await el.is_visible():
+                    order_link = el
+                    logger.info(f"[SYNC] Tìm thấy role={role} 'Đơn hàng'")
+                    break
+            except Exception:
+                continue
+
+    # ── Cách 3: get_by_text contains — tất cả tag, ưu tiên ngắn ─────────────
     if not order_link:
         try:
-            el = page.get_by_text(target, exact=True).first
-            if await el.count() > 0 and await el.is_visible():
-                order_link = el
+            els = page.get_by_text(re.compile(r"^Đơn hàng", re.IGNORECASE))
+            count = await els.count()
+            best = None
+            best_len = 9999
+            for i in range(min(count, 30)):
+                el = els.nth(i)
+                try:
+                    if not await el.is_visible():
+                        continue
+                    txt = _normalize_text(await el.inner_text())
+                    # Bỏ qua heading (h1/h2/h3) và text dài
+                    tag = await el.evaluate("el => el.tagName.toLowerCase()")
+                    if tag in ("h1", "h2", "h3"):
+                        continue
+                    if len(txt) < best_len:
+                        best_len = len(txt)
+                        best = el
+                except Exception:
+                    continue
+            if best:
+                order_link = best
+                logger.info(f"[SYNC] Tìm thấy qua get_by_text — len={best_len}")
         except Exception:
             pass
 
-    # Cách 5: button/div/li có text "Đơn hàng" (SPA có thể dùng div thay <a>)
+    # ── Cách 4: duyệt button/li/div/span có text chứa "Đơn hàng" + ngắn ────
     if not order_link:
         for tag in ["button", "li", "div", "span"]:
             try:
-                el = page.locator(tag).filter(
-                    has_text=re.compile(r"^Đơn hàng$", re.IGNORECASE)
-                ).first
-                if await el.count() > 0 and await el.is_visible():
-                    order_link = el
+                els = page.locator(tag).filter(
+                    has_text=re.compile(r"Đơn hàng", re.IGNORECASE)
+                )
+                count = await els.count()
+                for i in range(min(count, 30)):
+                    el = els.nth(i)
+                    try:
+                        txt = _normalize_text(await el.inner_text())
+                        if txt.startswith("Đơn hàng") and len(txt) <= 20 and await el.is_visible():
+                            order_link = el
+                            logger.info(f"[SYNC] Tìm thấy <{tag}> 'Đơn hàng' — text={txt!r}")
+                            break
+                    except Exception:
+                        continue
+                if order_link:
                     break
             except Exception:
                 continue
 
     if not order_link:
-        logger.warning(f"[SYNC] Không tìm thấy element 'Đơn hàng' trong DOM — URL={page.url}")
+        logger.warning(f"[SYNC] Không tìm thấy element 'Đơn hàng' — URL={page.url}")
         return False
 
-    # Đọc href thật (chỉ để log — không tự ghép URL)
+    # Đọc href + outerHTML để log (không dùng để navigate)
     try:
         order_href = await order_link.get_attribute("href")
     except Exception:
         pass
-    logger.info(f"[SYNC] Tìm thấy 'Đơn hàng' — href={order_href!r}")
+    try:
+        order_outer_html = (await order_link.evaluate("el => el.outerHTML"))[:300]
+    except Exception:
+        pass
+    logger.info(f"[SYNC] Tìm thấy 'Đơn hàng' — href={order_href!r} | html={order_outer_html!r}")
+
+    # ── Chụp screenshot TRƯỚC khi click ──────────────────────────────────────
+    try:
+        await page.screenshot(path=str(SCREENSHOTS_DIR / "before_click_order.png"), full_page=False)
+    except Exception:
+        pass
 
     # ── Click ────────────────────────────────────────────────────────────────
+    clicked = False
     try:
         await order_link.click()
-        logger.info("[SYNC] Đã click 'Đơn hàng'")
+        clicked = True
+        logger.info("[SYNC] Đã click 'Đơn hàng' (click)")
     except Exception as ex:
-        logger.warning(f"[SYNC] click() thất bại: {ex} — thử JS click")
+        logger.warning(f"[SYNC] click() thất bại: {ex}")
+
+    if not clicked:
         try:
             await order_link.evaluate("el => el.click()")
-            logger.info("[SYNC] Đã JS click 'Đơn hàng'")
+            clicked = True
+            logger.info("[SYNC] Đã click 'Đơn hàng' (JS click)")
         except Exception as ex2:
             logger.warning(f"[SYNC] JS click cũng thất bại: {ex2}")
 
-    # ── Chờ xác nhận bằng nội dung trang (SPA — không dựa vào URL) ───────────
-    # Các tín hiệu xuất hiện khi đã vào trang Đơn hàng:
+    # ── Chụp screenshot SAU khi click ────────────────────────────────────────
+    await asyncio.sleep(0.5)
+    try:
+        await page.screenshot(path=str(SCREENSHOTS_DIR / "after_click_order.png"), full_page=False)
+    except Exception:
+        pass
+
+    # ── Xác nhận bằng nội dung trang (SPA — KHÔNG kiểm tra URL) ─────────────
     ORDER_SIGNALS = [
         'text=Đơn hàng của bạn',
         'text=Tất cả đơn hàng',
@@ -1009,33 +1075,33 @@ async def _find_and_navigate_order_item(page) -> bool:
         'th:has-text("SẢN PHẨM")',
         'button:has-text("Tải xuống")',
         'a:has-text("Tải xuống")',
-        'h1:has-text("Đơn hàng")',
-        'h2:has-text("Đơn hàng")',
     ]
 
-    # Poll 10s
-    for tick in range(20):
+    for tick in range(20):  # poll 10s
         for sig in ORDER_SIGNALS:
             try:
                 el = page.locator(sig).first
                 if await el.count() > 0 and await el.is_visible():
-                    logger.info(f"[SYNC] ✅ Trang Đơn hàng xác nhận bằng: {sig!r}")
+                    logger.info(f"[SYNC] ✅ Trang Đơn hàng xác nhận: {sig!r} — URL={page.url}")
                     return True
             except Exception:
                 pass
         await asyncio.sleep(0.5)
 
-    # Lần cuối: chờ thêm 10s cho heading
+    # Lần cuối: wait thêm 10s
     try:
         await page.get_by_text("Đơn hàng của bạn", exact=False).wait_for(
             state="visible", timeout=10_000
         )
-        logger.info("[SYNC] ✅ Trang Đơn hàng xác nhận bằng heading (chờ thêm)")
+        logger.info(f"[SYNC] ✅ Trang Đơn hàng xác nhận: heading — URL={page.url}")
         return True
     except Exception:
         pass
 
-    logger.warning(f"[SYNC] Đã click 'Đơn hàng' nhưng nội dung trang chưa xác nhận — URL={page.url}")
+    logger.warning(
+        f"[SYNC] Click xong nhưng nội dung Đơn hàng không xuất hiện — "
+        f"URL={page.url} | title={await page.title()}"
+    )
     return False
 
 
