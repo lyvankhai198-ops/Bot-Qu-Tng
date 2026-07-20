@@ -50318,53 +50318,42 @@ var grokPlugin = {
         }
       }).catch(() => null);
       log(`OAuth URL from NextAuth: ${(oauthUrl || "null").slice(0, 200)}`);
+      const isAuthPage = (u) => u.includes("accounts.x.ai") || u.includes("x.com") || u.includes("twitter.com") || u.includes("accounts.x.com");
       let onXAuth = false;
-      if (oauthUrl && (oauthUrl.includes("x.com") || oauthUrl.includes("twitter.com") || oauthUrl.includes("accounts.x.com"))) {
-        log("Navigating to X.com OAuth page");
-        await gotoWithRetry(oauthUrl, "x.com-oauth");
-        url = page.url();
-        log(`X.com OAuth URL: ${url}`);
+      log("Navigating to grok.com/sign-in to trigger auth redirect");
+      try {
+        await page.goto("https://grok.com/sign-in", { waitUntil: "load", timeout: 25e3 });
+      } catch {
+        log("goto sign-in timed out, continuing");
+      }
+      await page.waitForTimeout(5e3);
+      url = page.url();
+      log(`After sign-in redirect \u2014 URL: ${url}`);
+      if (isAuthPage(url)) {
         onXAuth = true;
+        log("Arrived at auth page");
       } else {
-        log("OAuth API failed, trying UI click approach");
-        await page.waitForTimeout(2e3);
-        const clicked = await page.evaluate(() => {
-          const allEls = Array.from(document.querySelectorAll("*"));
-          const signIn = allEls.find((el) => {
-            const txt = (el.textContent || el.getAttribute("aria-label") || "").toLowerCase().trim();
-            return (txt === "sign in" || txt === "login" || txt === "log in") && (el.tagName === "BUTTON" || el.tagName === "A" || el.getAttribute("role") === "button");
-          });
-          if (signIn) {
-            signIn.click();
-            return true;
-          }
-          return false;
-        }).catch(() => false);
-        log(`UI click result: ${clicked}`);
-        await page.waitForTimeout(3e3);
+        log("Trying /api/auth/signin/twitter as fallback");
+        try {
+          await page.goto("https://grok.com/api/auth/signin/twitter", { waitUntil: "load", timeout: 25e3 });
+        } catch {
+        }
+        await page.waitForTimeout(5e3);
         url = page.url();
-        log(`After UI click \u2014 URL: ${url}`);
-        if (url.includes("x.com") || url.includes("twitter.com")) {
+        log(`After api/auth/signin/twitter \u2014 URL: ${url}`);
+        if (isAuthPage(url)) {
           onXAuth = true;
-        } else {
-          log("Trying direct /api/auth/signin/twitter navigation");
-          try {
-            await page.goto("https://grok.com/api/auth/signin/twitter", { waitUntil: "networkidle", timeout: 2e4 });
-          } catch {
-          }
-          await page.waitForTimeout(2e3);
-          url = page.url();
-          log(`After direct signin nav \u2014 URL: ${url}`);
-          if (url.includes("x.com") || url.includes("twitter.com") || url.includes("accounts.x.com")) {
-            onXAuth = true;
-          }
+          log("Arrived at auth page via NextAuth");
         }
       }
       if (!await checkAndHandleCF(4e4)) {
-        return { code: "CAPTCHA", message: "Cloudflare block t\u1EA1i X.com OAuth", responseTime: elapsed(), screenshotBase64: await screenshot64(), playwrightLog: logs.join("\n") };
+        return { code: "CAPTCHA", message: "Cloudflare block t\u1EA1i accounts.x.ai", responseTime: elapsed(), screenshotBase64: await screenshot64(), playwrightLog: logs.join("\n") };
       }
       url = page.url();
       log(`Current URL: ${url}`);
+      await page.waitForTimeout(4e3);
+      url = page.url();
+      log(`URL after extra wait: ${url}`);
       const allInputs = await page.evaluate(() => {
         return Array.from(document.querySelectorAll("input")).map((el) => ({
           type: el.type,

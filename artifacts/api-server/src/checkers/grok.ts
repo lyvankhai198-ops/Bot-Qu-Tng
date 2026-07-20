@@ -466,59 +466,56 @@ const grokPlugin: CheckerPlugin = {
 
       log(`OAuth URL from NextAuth: ${(oauthUrl || "null").slice(0, 200)}`);
 
-      // ── 3. Navigate tới X.com OAuth ──────────────────────────────────────────
+      // Helper: kiểm tra URL có phải trang auth không
+      const isAuthPage = (u: string) =>
+        u.includes("accounts.x.ai") || u.includes("x.com") ||
+        u.includes("twitter.com") || u.includes("accounts.x.com");
+
+      // ── 3. Đến trang auth ─────────────────────────────────────────────────────
       let onXAuth = false;
-      if (oauthUrl && (oauthUrl.includes("x.com") || oauthUrl.includes("twitter.com") || oauthUrl.includes("accounts.x.com"))) {
-        log("Navigating to X.com OAuth page");
-        await gotoWithRetry(oauthUrl, "x.com-oauth");
-        url = page.url() as string;
-        log(`X.com OAuth URL: ${url}`);
+
+      // Thử navigate trực tiếp qua grok.com/sign-in (redirect tới accounts.x.ai)
+      log("Navigating to grok.com/sign-in to trigger auth redirect");
+      try {
+        await page.goto("https://grok.com/sign-in", { waitUntil: "load", timeout: 25_000 });
+      } catch {
+        log("goto sign-in timed out, continuing");
+      }
+      // Đợi redirect chain hoàn thành
+      await page.waitForTimeout(5_000);
+      url = page.url() as string;
+      log(`After sign-in redirect — URL: ${url}`);
+
+      if (isAuthPage(url)) {
         onXAuth = true;
+        log("Arrived at auth page");
       } else {
-        // Fallback: click Sign in button trực tiếp trên trang grok.com
-        log("OAuth API failed, trying UI click approach");
-        await page.waitForTimeout(2_000);
-
-        // Thử tìm và click bằng JS eval (bypass visibility check)
-        const clicked = await page.evaluate(() => {
-          const allEls = Array.from(document.querySelectorAll("*"));
-          const signIn = allEls.find(el => {
-            const txt = (el.textContent || el.getAttribute("aria-label") || "").toLowerCase().trim();
-            return (txt === "sign in" || txt === "login" || txt === "log in") && (el.tagName === "BUTTON" || el.tagName === "A" || el.getAttribute("role") === "button");
-          });
-          if (signIn) { (signIn as HTMLElement).click(); return true; }
-          return false;
-        }).catch(() => false);
-        log(`UI click result: ${clicked}`);
-        await page.waitForTimeout(3_000);
+        // Fallback: thử /api/auth/signin/twitter (NextAuth)
+        log("Trying /api/auth/signin/twitter as fallback");
+        try {
+          await page.goto("https://grok.com/api/auth/signin/twitter", { waitUntil: "load", timeout: 25_000 });
+        } catch {}
+        await page.waitForTimeout(5_000);
         url = page.url() as string;
-        log(`After UI click — URL: ${url}`);
-
-        if (url.includes("x.com") || url.includes("twitter.com")) {
+        log(`After api/auth/signin/twitter — URL: ${url}`);
+        if (isAuthPage(url)) {
           onXAuth = true;
-        } else {
-          // Thử navigate trực tiếp tới NextAuth twitter signin
-          log("Trying direct /api/auth/signin/twitter navigation");
-          try {
-            await page.goto("https://grok.com/api/auth/signin/twitter", { waitUntil: "networkidle", timeout: 20_000 });
-          } catch {}
-          await page.waitForTimeout(2_000);
-          url = page.url() as string;
-          log(`After direct signin nav — URL: ${url}`);
-          if (url.includes("x.com") || url.includes("twitter.com") || url.includes("accounts.x.com")) {
-            onXAuth = true;
-          }
+          log("Arrived at auth page via NextAuth");
         }
       }
 
       // ── 4. Xử lý CF nếu có ───────────────────────────────────────────────────
       if (!await checkAndHandleCF(40_000)) {
-        return { code: "CAPTCHA", message: "Cloudflare block tại X.com OAuth", responseTime: elapsed(), screenshotBase64: await screenshot64(), playwrightLog: logs.join("\n") };
+        return { code: "CAPTCHA", message: "Cloudflare block tại accounts.x.ai", responseTime: elapsed(), screenshotBase64: await screenshot64(), playwrightLog: logs.join("\n") };
       }
 
-      // ── 5. Log trạng thái trang + tìm email input ────────────────────────────
+      // ── 5. Đợi SPA render + log trạng thái ────────────────────────────────────
       url = page.url() as string;
       log(`Current URL: ${url}`);
+      // Đợi thêm để SPA (accounts.x.ai) có thời gian render
+      await page.waitForTimeout(4_000);
+      url = page.url() as string;
+      log(`URL after extra wait: ${url}`);
 
       const allInputs = await page.evaluate(() => {
         return Array.from(document.querySelectorAll("input")).map(el => ({
