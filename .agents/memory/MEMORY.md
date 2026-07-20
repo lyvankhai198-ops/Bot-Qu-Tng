@@ -8,3 +8,4 @@
 - [Admin panel fetch pattern](admin-panel-fetch-pattern.md) — pages dùng raw fetch() + authHeader(), KHÔNG dùng apiClient.get/put/post
 - [Sync robot login & nav](sync-robot-login.md) — canboso.com SPA fixes: sec-ch-ua override, goto-root session check, wait_for_url after submit, no hamburger needed
 - [Order Health Check](order-health.md) — Health Check dùng orders.json làm nguồn dữ liệu; lưu kết quả vào order_health.json; ResultCode chuẩn hoá; routes tại /bot/orders/health/*
+- [Grok Cloudflare Block](grok-cloudflare-block.md) — VPS datacenter IP blocked by CF Managed Challenge on grok.com/auth/login; cookie-based check is the fix
