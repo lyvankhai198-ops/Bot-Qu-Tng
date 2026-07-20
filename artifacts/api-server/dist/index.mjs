@@ -50226,46 +50226,30 @@ var grokPlugin = {
       await ctx.addInitScript(STEALTH_SCRIPT);
       const page = await ctx.newPage();
       page.setDefaultTimeout(timeoutMs);
-      log("Opening grok.com");
-      await page.goto("https://grok.com", {
-        waitUntil: "domcontentloaded",
-        timeout: 3e4
-      });
-      await page.waitForTimeout(3e3);
+      const gotoWithRetry = async (target, label) => {
+        log(`goto ${label}: ${target}`);
+        try {
+          await page.goto(target, { waitUntil: "networkidle", timeout: 3e4 });
+        } catch {
+          log(`networkidle timeout for ${label}, continuing`);
+        }
+        await page.waitForTimeout(2500);
+      };
+      const screenshot64 = async () => {
+        try {
+          const buf = await page.screenshot({ type: "jpeg", quality: 60, timeout: 5e3 });
+          return buf.toString("base64");
+        } catch {
+          return void 0;
+        }
+      };
+      log("Opening grok.com/auth/signin");
+      await gotoWithRetry("https://grok.com/auth/signin", "auth/signin");
       let url = page.url();
-      log(`grok.com loaded \u2014 URL: ${url}`);
-      const alreadyAuth = url.includes("grok.com/auth") || url.includes("/login") || url.includes("/signin");
-      if (!alreadyAuth) {
-        const signInSels = [
-          'button:has-text("Sign in")',
-          'a:has-text("Sign in")',
-          'button:has-text("Log in")',
-          'a:has-text("Log in")',
-          'a[href*="sign-in"]',
-          'a[href*="login"]',
-          'a[href*="auth"]'
-        ];
-        let clicked = false;
-        for (const sel of signInSels) {
-          if (await isVisible(page, sel, 3e3)) {
-            log(`Clicking: ${sel}`);
-            await page.locator(sel).first().click();
-            await page.waitForTimeout(3e3);
-            clicked = true;
-            break;
-          }
-        }
-        if (!clicked) {
-          log("No sign-in button \u2192 going to /auth/login directly");
-          await page.goto("https://grok.com/auth/login", {
-            waitUntil: "domcontentloaded",
-            timeout: 2e4
-          });
-          await page.waitForTimeout(3e3);
-        }
+      log(`Loaded \u2014 URL: ${url}`);
+      if (!url.includes("/auth/") && !url.includes("/login") && !url.includes("/signin")) {
+        log("Redirected away from auth page \u2014 may already be logged in, checking subscription");
       }
-      url = page.url();
-      log(`At auth page \u2014 URL: ${url}`);
       {
         const bt = await bodyText(page);
         if (/Performing security verification|Just a moment|checking your browser|security service.*malicious bot/i.test(bt)) {
@@ -50274,8 +50258,9 @@ var grokPlugin = {
           if (!passed) {
             return {
               code: "CAPTCHA",
-              message: "Cloudflare bot protection kh\xF4ng th\u1EC3 bypass trong headless mode. VPS IP b\u1ECB block.",
+              message: "Cloudflare bot protection kh\xF4ng th\u1EC3 bypass. H\xE3y d\xF9ng residential proxy ho\u1EB7c session cookie.",
               responseTime: elapsed(),
+              screenshotBase64: await screenshot64(),
               playwrightLog: logs.join("\n")
             };
           }
@@ -50283,17 +50268,25 @@ var grokPlugin = {
           log(`After CF \u2014 URL: ${url}`);
         }
       }
+      await page.waitForSelector("input", { timeout: 12e3 }).catch(() => {
+        log("No <input> found after 12s \u2014 page may not have loaded form yet");
+      });
+      await page.waitForTimeout(1500);
       const emailBtnSels = [
         'button:has-text("Continue with email")',
         'button:has-text("Sign in with email")',
+        'button:has-text("Email")',
         'a:has-text("Continue with email")',
-        '[data-provider="email"]'
+        '[data-provider="email"]',
+        '[data-testid*="email"]'
       ];
       for (const sel of emailBtnSels) {
-        if (await isVisible(page, sel, 4e3)) {
-          log(`Clicking email login: ${sel}`);
+        if (await isVisible(page, sel, 3e3)) {
+          log(`Clicking email provider button: ${sel}`);
           await page.locator(sel).first().click();
           await page.waitForTimeout(2500);
+          await page.waitForSelector("input", { timeout: 8e3 }).catch(() => {
+          });
           break;
         }
       }
@@ -50309,6 +50302,7 @@ var grokPlugin = {
               code: "CAPTCHA",
               message: "Cloudflare block \u1EDF b\u01B0\u1EDBc ch\u1ECDn email login",
               responseTime: elapsed(),
+              screenshotBase64: await screenshot64(),
               playwrightLog: logs.join("\n")
             };
           }
@@ -50319,32 +50313,37 @@ var grokPlugin = {
         'input[name="email"]',
         'input[autocomplete="email"]',
         'input[placeholder*="email" i]',
+        'input[placeholder*="Email" ]',
+        'form input[type="text"]',
         'input[type="text"]'
       ];
       let emailInput = null;
       for (const sel of emailInputSels) {
         const el = page.locator(sel).first();
-        if (await el.isVisible({ timeout: 8e3 }).catch(() => false)) {
+        if (await el.isVisible({ timeout: 5e3 }).catch(() => false)) {
           emailInput = el;
           log(`Email input found: ${sel}`);
           break;
         }
       }
       if (!emailInput) {
-        const bt = (await bodyText(page)).slice(0, 600);
+        const bt = (await bodyText(page)).slice(0, 800);
         log(`Email input not found \u2014 body: ${bt}`);
+        const shot = await screenshot64();
         if (/Performing security verification|Just a moment|security service/i.test(bt)) {
           return {
             code: "CAPTCHA",
             message: "Cloudflare bot protection ch\u1EB7n \u2014 kh\xF4ng v\xE0o \u0111\u01B0\u1EE3c form \u0111\u0103ng nh\u1EADp",
             responseTime: elapsed(),
+            screenshotBase64: shot,
             playwrightLog: logs.join("\n")
           };
         }
         return {
           code: "UNKNOWN",
-          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 email \u2014 URL: ${url.split("?")[0]}`,
+          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 email \u2014 URL: ${url.split("?")[0]} | Page: ${bt.slice(0, 120)}`,
           responseTime: elapsed(),
+          screenshotBase64: shot,
           playwrightLog: logs.join("\n")
         };
       }
