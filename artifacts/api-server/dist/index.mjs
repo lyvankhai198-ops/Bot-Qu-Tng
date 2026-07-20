@@ -51231,7 +51231,7 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
   res.json({ added, skipped, errors });
 });
 router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
-  const { rows } = req.body ?? {};
+  const { rows, syncMode } = req.body ?? {};
   if (!Array.isArray(rows) || rows.length === 0) {
     res.status(400).json({ ok: false, message: "rows is required" });
     return;
@@ -51279,12 +51279,15 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
       const existingOrder = orders[orderId];
       if (existingOrder) {
         dupOrders++;
-        if (conflictAction === "skip") {
+        if (syncMode === "new_only" || conflictAction === "skip") {
           skippedCount++;
-          results.push({ rowIndex, status: "skipped", message: "M\xE3 \u0111\u01A1n \u0111\xE3 t\u1ED3n t\u1EA1i, b\u1ECF qua" });
+          results.push({ rowIndex, status: "skipped", message: syncMode === "new_only" ? "Ch\u1EBF \u0111\u1ED9 \u0111\u01A1n m\u1EDBi: b\u1ECF qua \u0111\u01A1n \u0111\xE3 t\u1ED3n t\u1EA1i" : "M\xE3 \u0111\u01A1n \u0111\xE3 t\u1ED3n t\u1EA1i, b\u1ECF qua" });
           continue;
         }
       }
+      const firstAcc = Array.isArray(accounts) ? accounts[0] : null;
+      const loginPassword = firstAcc?.password || "";
+      const loginTwoFA = firstAcc?.twoFA || "";
       const wd = Number(warrantyDays || 0);
       const ud = Number(usageDays || 0);
       const tp = Number(totalPrice || 0);
@@ -51304,6 +51307,9 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
         usageDays: ud || null,
         customerName: customerName || null,
         status: status || "active",
+        // Lưu mật khẩu tài khoản vào order để Health Check dùng
+        password: loginPassword || null,
+        twoFA: loginTwoFA || null,
         createdAt: existingOrder?.createdAt ?? now2(),
         updatedAt: now2()
       };
@@ -51319,6 +51325,8 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
         if (!ex.expiryDate && orderObj.expiryDate) ex.expiryDate = orderObj.expiryDate;
         if (!ex.warrantyExpiry && orderObj.warrantyExpiry) ex.warrantyExpiry = orderObj.warrantyExpiry;
         if (!ex.purchaseDate && orderObj.purchaseDate) ex.purchaseDate = orderObj.purchaseDate;
+        if (syncMode === "full" && loginPassword && !ex.password) ex.password = loginPassword;
+        if (syncMode === "full" && loginTwoFA && !ex.twoFA) ex.twoFA = loginTwoFA;
         orders[orderId] = ex;
       }
       if (!orderItems[orderId]) orderItems[orderId] = [];
