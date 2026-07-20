@@ -49945,6 +49945,136 @@ function trimOldJobs() {
 }
 
 // src/checkers/grok.ts
+async function checkWithCookie(cookie, email) {
+  const start = Date.now();
+  const logs = [];
+  const log = (msg) => {
+    logs.push(`[${Date.now() - start}ms] ${msg}`);
+    console.log(`[grok-cookie] ${msg}`);
+  };
+  const cookieHeader = cookie.includes("=") ? cookie : `__Secure-next-auth.session-token=${cookie}`;
+  const HEADERS = {
+    Cookie: cookieHeader,
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    Accept: "application/json, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    Referer: "https://grok.com/"
+  };
+  try {
+    log("GET /api/auth/session");
+    const r1 = await fetch("https://grok.com/api/auth/session", {
+      headers: HEADERS,
+      redirect: "follow"
+    });
+    log(`Status: ${r1.status}`);
+    if (r1.status === 401 || r1.status === 403) {
+      return {
+        code: "PASSWORD_INVALID",
+        message: "Session cookie h\u1EBFt h\u1EA1n ho\u1EB7c kh\xF4ng h\u1EE3p l\u1EC7 \u2014 c\u1EA7n l\u1EA5y cookie m\u1EDBi t\u1EEB tr\xECnh duy\u1EC7t",
+        responseTime: Date.now() - start,
+        playwrightLog: logs.join("\n")
+      };
+    }
+    const text1 = await r1.text();
+    log(`Session body: ${text1.slice(0, 600)}`);
+    if (!text1 || text1.trim() === "{}" || text1.trim() === "null" || text1.trim() === "") {
+      return {
+        code: "PASSWORD_INVALID",
+        message: "Session cookie kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c h\u1EBFt h\u1EA1n (response r\u1ED7ng) \u2014 c\u1EA7n c\u1EADp nh\u1EADt cookie m\u1EDBi",
+        responseTime: Date.now() - start,
+        playwrightLog: logs.join("\n")
+      };
+    }
+    let sess = null;
+    try {
+      sess = JSON.parse(text1);
+    } catch {
+    }
+    const loggedIn = !!(sess?.user || sess?.email || sess?.id || sess?.sub);
+    if (!loggedIn) {
+      return {
+        code: "PASSWORD_INVALID",
+        message: "Session cookie kh\xF4ng h\u1EE3p l\u1EC7 \u2014 c\u1EA7n \u0111\u0103ng nh\u1EADp l\u1EA1i v\xE0 l\u1EA5y cookie m\u1EDBi",
+        responseTime: Date.now() - start,
+        playwrightLog: logs.join("\n")
+      };
+    }
+    log(`Logged in: ${sess?.user?.email ?? sess?.email ?? "ok"}`);
+    const sessStr = JSON.stringify(sess);
+    const superMatch = sessStr.match(/(SuperGrok|super_grok|grok_plus|grokPlus|superGrok)/i);
+    if (superMatch) {
+      return {
+        code: "ACTIVE",
+        message: `Cookie h\u1EE3p l\u1EC7 \u2014 G\xF3i ${superMatch[0]} \u0111ang ho\u1EA1t \u0111\u1ED9ng`,
+        responseTime: Date.now() - start,
+        playwrightLog: logs.join("\n")
+      };
+    }
+    for (const path3 of ["/api/user/subscription", "/api/subscription", "/api/user", "/api/me"]) {
+      try {
+        log(`GET ${path3}`);
+        const r = await fetch(`https://grok.com${path3}`, { headers: HEADERS });
+        if (r.status === 200) {
+          const t = await r.text();
+          log(`${path3}: ${t.slice(0, 400)}`);
+          if (/super|SuperGrok|grok_plus|premium/i.test(t)) {
+            return {
+              code: "ACTIVE",
+              message: "Cookie h\u1EE3p l\u1EC7 \u2014 T\xE0i kho\u1EA3n c\xF3 g\xF3i SuperGrok",
+              responseTime: Date.now() - start,
+              playwrightLog: logs.join("\n")
+            };
+          }
+        }
+      } catch {
+      }
+    }
+    try {
+      log("GET grok.com HTML");
+      const r3 = await fetch("https://grok.com", {
+        headers: { ...HEADERS, Accept: "text/html,*/*" },
+        redirect: "follow"
+      });
+      const html = await r3.text();
+      log(`HTML (800): ${html.slice(0, 800)}`);
+      const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+      if (nextDataMatch) {
+        const nd = nextDataMatch[1];
+        log(`__NEXT_DATA__ (600): ${nd.slice(0, 600)}`);
+        if (/super|SuperGrok|grok_plus|subscription/i.test(nd)) {
+          return {
+            code: "ACTIVE",
+            message: "Cookie h\u1EE3p l\u1EC7 \u2014 G\xF3i SuperGrok (t\u1EEB app state)",
+            responseTime: Date.now() - start,
+            playwrightLog: logs.join("\n")
+          };
+        }
+      }
+      if (/SuperGrok|super_grok/i.test(html)) {
+        return {
+          code: "ACTIVE",
+          message: "Cookie h\u1EE3p l\u1EC7 \u2014 Ph\xE1t hi\u1EC7n g\xF3i SuperGrok tr\xEAn homepage",
+          responseTime: Date.now() - start,
+          playwrightLog: logs.join("\n")
+        };
+      }
+    } catch (err) {
+      log(`HTML fetch: ${err.message}`);
+    }
+    return {
+      code: "PACKAGE_LOST",
+      message: "Cookie h\u1EE3p l\u1EC7 (\u0111\xE3 \u0111\u0103ng nh\u1EADp) nh\u01B0ng kh\xF4ng ph\xE1t hi\u1EC7n g\xF3i SuperGrok",
+      responseTime: Date.now() - start,
+      playwrightLog: logs.join("\n")
+    };
+  } catch (err) {
+    const msg = err?.message ?? String(err);
+    if (/net::|ERR_|ECONNREFUSED/i.test(msg)) {
+      return { code: "NETWORK_ERROR", message: `L\u1ED7i m\u1EA1ng: ${msg.slice(0, 150)}`, responseTime: Date.now() - start, playwrightLog: logs.join("\n") };
+    }
+    return { code: "UNKNOWN", message: `Cookie check error: ${msg.slice(0, 200)}`, responseTime: Date.now() - start, playwrightLog: logs.join("\n") };
+  }
+}
 var STEALTH_SCRIPT = `
   // 1. Xo\xE1 webdriver flag
   Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -50019,6 +50149,9 @@ var grokPlugin = {
   id: "grok",
   name: "Grok AI (SuperGrok \u2014 grok.com)",
   async check(email, password, options = {}) {
+    if (options.sessionCookie) {
+      return checkWithCookie(options.sessionCookie, email);
+    }
     const timeoutMs = options.timeoutMs ?? 12e4;
     const start = Date.now();
     let browser = null;
@@ -51530,6 +51663,27 @@ router2.put("/bot/orders/:orderId", requireAuth, (req, res) => {
   writeJson2("orders", orders);
   addLog("UPDATE_ORDER", id, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 c\u1EADp nh\u1EADt" });
+});
+router2.put("/bot/orders/:orderId/grok-cookie", requireAuth, (req, res) => {
+  const orders = readJson2("orders", {}) ?? {};
+  const id = req.params.orderId;
+  if (!orders[id]) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng" });
+    return;
+  }
+  const cookie = String(req.body?.cookie ?? "").trim();
+  if (cookie) {
+    orders[id].grokSessionCookie = cookie;
+    orders[id].grokSessionCookieSavedAt = now2();
+    addLog("GROK_COOKIE_SAVE", id, "web-admin");
+  } else {
+    delete orders[id].grokSessionCookie;
+    orders[id].grokSessionCookieSavedAt = null;
+    addLog("GROK_COOKIE_CLEAR", id, "web-admin");
+  }
+  orders[id].updatedAt = now2();
+  writeJson2("orders", orders);
+  res.json({ ok: true, hasCookie: !!cookie, savedAt: orders[id].grokSessionCookieSavedAt ?? null });
 });
 router2.delete("/bot/orders/:orderId", requireAuth, (req, res) => {
   const orders = readJson2("orders", {}) ?? {};
@@ -53617,9 +53771,13 @@ async function processJob(job) {
     const orders = readJson("orders", {}) ?? {};
     const order = orders[job.orderId];
     const password = order?.password ?? "";
+    const sessionCookie = order?.grokSessionCookie ? String(order.grokSessionCookie) : void 0;
     const { timeoutMs } = getWorkerConfig();
     try {
-      result = await plugin.check(job.email, password, { timeoutMs });
+      result = await plugin.check(job.email, password, {
+        timeoutMs,
+        sessionCookie
+      });
     } catch (err) {
       result = {
         code: "UNKNOWN",

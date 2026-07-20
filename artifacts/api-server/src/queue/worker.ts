@@ -92,11 +92,16 @@ async function processJob(job: HealthJob): Promise<void> {
     const orders: Record<string, any> = readJson("orders", {}) ?? {};
     const order = orders[job.orderId];
     const password: string = order?.password ?? "";
+    const sessionCookie: string | undefined =
+      order?.grokSessionCookie ? String(order.grokSessionCookie) : undefined;
 
     const { timeoutMs } = getWorkerConfig();
 
     try {
-      result = await plugin.check(job.email, password, { timeoutMs });
+      result = await plugin.check(job.email, password, {
+        timeoutMs,
+        sessionCookie,
+      });
     } catch (err: any) {
       result = {
         code: "UNKNOWN",
