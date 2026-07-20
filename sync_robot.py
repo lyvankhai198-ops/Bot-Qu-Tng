@@ -254,7 +254,10 @@ def parse_accounts(val) -> list:
     if not s:
         return []
     lines = [l.strip() for l in s.split("\n") if l.strip()] if "\n" in s else [s]
-    return [a for a in (parse_single_account_line(l) for l in lines) if a]
+    # Chỉ giữ account có email hợp lệ (valid=True).
+    # Loại bỏ placeholder kiểu "Liên hệ admin để nhận hàng" (valid=False)
+    # để tránh lưu text rác vào order_items và gây dedup sai.
+    return [a for a in (parse_single_account_line(l) for l in lines) if a and a.get("valid")]
 
 def map_status(val) -> str:
     s = normalize_vn(str(val or ""))
@@ -302,13 +305,19 @@ def parse_symbols_from_name(name: str) -> dict:
     n = name.upper()
     is_bhf = bool(re.search(r'\bBHF\b', n))
 
-    # 1. Parse usage days: "30D", "7D", "3-5 Ngày", "30 Ngày" — lấy số lớn nhất trong range
+    # 1. Parse usage days từ nhiều đơn vị:
+    #    "30D", "7D", "3-5 Ngày", "30 Ngày", "3 Tháng" (1 tháng = 30 ngày)
     usage_days = 0
-    m = re.search(r'(\d+)(?:\s*[-–]\s*(\d+))?\s*(?:D\b|NGÀY)', n)
-    if m:
-        n1 = int(m.group(1))
-        n2 = int(m.group(2)) if m.group(2) else n1
-        usage_days = max(n1, n2)
+    # Ưu tiên tháng trước (để không bị nhầm với số ngày nhỏ trong chuỗi dài)
+    m_month = re.search(r'(\d+)\s*THÁNG', n)
+    if m_month:
+        usage_days = int(m_month.group(1)) * 30
+    else:
+        m = re.search(r'(\d+)(?:\s*[-–]\s*(\d+))?\s*(?:D\b|NGÀY)', n)
+        if m:
+            n1 = int(m.group(1))
+            n2 = int(m.group(2)) if m.group(2) else n1
+            usage_days = max(n1, n2)
 
     # 2. Parse warranty days
     warranty_days = 0

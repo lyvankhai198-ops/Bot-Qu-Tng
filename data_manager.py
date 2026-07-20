@@ -1143,7 +1143,11 @@ def calc_order_display(order: dict, settings: dict) -> dict:
         except Exception:
             pass
 
-    warranty_str = order.get("warrantyExpiry", "") or order.get("warrantyDate", "")
+    # warranty_ok: dùng warrantyExpiry nếu có, fallback về expiryDate
+    warranty_str = (
+        order.get("warrantyExpiry", "") or order.get("warrantyDate", "") or
+        order.get("expiryDate", "") or expiry_str or ""
+    )
     warranty_ok = None
     if warranty_str:
         try:
