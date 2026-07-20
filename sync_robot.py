@@ -1308,6 +1308,48 @@ async def _open_orders_page(page) -> None:
     logger.info(f"[SYNC] _open_orders_page start — URL={_guard_url}")
     await page.wait_for_load_state("domcontentloaded")
 
+    # ═══ DIAGNOSTIC: Dump DOM để hiểu layout thật của trang ══════════════
+    try:
+        dom_info = await page.evaluate("""() => {
+            const btns = Array.from(document.querySelectorAll('button,[role=button]'));
+            const btnInfo = btns.slice(0, 30).map(el => {
+                const r = el.getBoundingClientRect();
+                return {
+                    text: (el.innerText||'').trim().replace(/\\n/g,' ').slice(0,50),
+                    aria: (el.getAttribute('aria-label')||'').slice(0,40),
+                    cls:  el.className.slice(0,80),
+                    x: Math.round(r.x), y: Math.round(r.y),
+                    w: Math.round(r.width), h: Math.round(r.height)
+                };
+            });
+            const navEls = Array.from(document.querySelectorAll(
+                'nav,[role=navigation],[class*=sidebar],[class*=drawer],[class*=menu],[class*=sidenav]'
+            ));
+            const navInfo = navEls.slice(0, 6).map(el => ({
+                tag:  el.tagName,
+                cls:  el.className.slice(0,100),
+                text: (el.innerText||'').trim().replace(/\\n/g,' ').slice(0,300),
+                aria: (el.getAttribute('aria-label')||el.getAttribute('role')||'').slice(0,40)
+            }));
+            return { buttons: btnInfo, navElements: navInfo };
+        }""")
+        logger.info("[SYNC][DOM] ====== BUTTONS ======")
+        for b in dom_info.get('buttons', []):
+            logger.info(
+                f"[SYNC][DOM] btn pos=({b['x']:4},{b['y']:4}) "
+                f"size=({b['w']:3}x{b['h']:3}) "
+                f"text={b['text']!r:35} aria={b['aria']!r:25} cls={b['cls'][:60]}"
+            )
+        logger.info("[SYNC][DOM] ====== NAV ELEMENTS ======")
+        for n in dom_info.get('navElements', []):
+            logger.info(
+                f"[SYNC][DOM] nav <{n['tag']}> aria={n['aria']!r:20} "
+                f"cls={n['cls'][:60]} | text={n['text'][:200]!r}"
+            )
+    except Exception as _de:
+        logger.warning(f"[SYNC][DOM] dump failed: {_de}")
+    # ═════════════════════════════════════════════════════════════════════
+
     # ══════════════════════════════════════════════════════════════════════
     # BƯỚC 1: Click hamburger, chờ sidebar mở — retry tối đa 3 lần
     # ══════════════════════════════════════════════════════════════════════
