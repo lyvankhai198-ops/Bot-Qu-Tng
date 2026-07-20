@@ -1252,7 +1252,14 @@ router.post("/bot/warranty/:id/accounts/:accId/respond", requireAuth, async (req
   const sentAt = now();
   const responseEntry = { message: String(message).trim(), sentAt, adminId: "web-admin" };
   const prevResponses: any[] = acc.responses ?? [];
-  requests[idx].accounts[accIdx] = { ...acc, responses: [...prevResponses, responseEntry] };
+  // Chuyển sub-account và group sang "processing" khi phản hồi lần đầu
+  const newAccStatus = acc.status === "pending" ? "processing" : acc.status;
+  requests[idx].accounts[accIdx] = { ...acc, status: newAccStatus, responses: [...prevResponses, responseEntry] };
+  if (!req_.acknowledgedAt) {
+    requests[idx].acknowledgedAt = sentAt;
+    requests[idx].acknowledgedBy = "web-admin";
+  }
+  _recomputeGroupStatus(requests[idx]);
   writeJson("warranty_requests", requests);
   const teleMsg = `💬 <b>Phản hồi từ admin (tài khoản <code>${acc.email}</code>):</b>\n\n${String(message).trim()}`;
   const result = await sendTelegramMessage(req_.userId, teleMsg);
@@ -1532,7 +1539,10 @@ router.post("/bot/warranty/:id/respond", requireAuth, async (req: any, res: any)
   const sentAt = now();
   const responseEntry = { message: String(message).trim(), sentAt, adminId: "web-admin" };
   const prevResponses: any[] = req_.responses ?? [];
-  requests[idx] = { ...req_, responses: [...prevResponses, responseEntry] };
+  // Chuyển sang "processing" khi phản hồi lần đầu (nếu còn "pending")
+  const newStatus = req_.status === "pending" ? "processing" : req_.status;
+  const ackPatch = req_.acknowledgedAt ? {} : { acknowledgedAt: sentAt, acknowledgedBy: "web-admin" };
+  requests[idx] = { ...req_, ...ackPatch, status: newStatus, responses: [...prevResponses, responseEntry] };
   writeJson("warranty_requests", requests);
   const teleMsg = `💬 <b>Phản hồi từ admin:</b>\n\n${String(message).trim()}`;
   const result = await sendTelegramMessage(req_.userId, teleMsg);
