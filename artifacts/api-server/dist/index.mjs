@@ -49988,6 +49988,27 @@ router2.get("/bot/accounts", requireAuth, (_req, res) => {
   const accounts = (readJson("accounts", []) ?? []).map(normalizeAccount);
   res.json(accounts);
 });
+router2.get("/bot/stock-notify-settings", requireAuth, (_req, res) => {
+  const defaults = {
+    enabled: true,
+    message: "\u{1F381} Kho qu\xE0 v\u1EEBa \u0111\u01B0\u1EE3c b\u1ED5 sung!\n\nTruy c\u1EADp bot \u0111\u1EC3 nh\u1EADn qu\xE0 ngay nh\xE9!",
+    target: "no_received"
+  };
+  const stored = readJson("stock_notify_settings", {}) ?? {};
+  res.json({ ...defaults, ...stored });
+});
+router2.put("/bot/stock-notify-settings", requireAuth, (req, res) => {
+  const defaults = {
+    enabled: true,
+    message: "\u{1F381} Kho qu\xE0 v\u1EEBa \u0111\u01B0\u1EE3c b\u1ED5 sung!\n\nTruy c\u1EADp bot \u0111\u1EC3 nh\u1EADn qu\xE0 ngay nh\xE9!",
+    target: "no_received"
+  };
+  const stored = readJson("stock_notify_settings", {}) ?? {};
+  const updated = { ...defaults, ...stored, ...req.body };
+  writeJson("stock_notify_settings", updated);
+  addLog("STOCK_NOTIFY_SETTINGS_UPDATE", "", "web-admin");
+  res.json(updated);
+});
 router2.post("/bot/accounts", requireAuth, (req, res) => {
   const incoming = Array.isArray(req.body?.accounts) ? req.body.accounts : [];
   const accounts = (readJson("accounts", []) ?? []).map(normalizeAccount);
@@ -50002,6 +50023,18 @@ router2.post("/bot/accounts", requireAuth, (req, res) => {
   }
   writeJson("accounts", accounts);
   addLog("ADD_ACCOUNTS", `added=${added}`, "web-admin");
+  if (added > 0 && req.body?.notify !== false) {
+    const ns = readJson("stock_notify_settings", {}) ?? {};
+    const notifyEnabled = req.body?.notify === true || ns.enabled !== false;
+    if (notifyEnabled) {
+      const message = typeof req.body?.notifyMessage === "string" && req.body.notifyMessage.trim() ? req.body.notifyMessage.trim() : ns.message || "\u{1F381} Kho qu\xE0 v\u1EEBa \u0111\u01B0\u1EE3c b\u1ED5 sung!\n\nTruy c\u1EADp bot \u0111\u1EC3 nh\u1EADn qu\xE0 ngay nh\xE9!";
+      const target = ns.target || "no_received";
+      const pending = readJson("pending_broadcasts", []) ?? [];
+      pending.push({ id: `stock_${Date.now()}`, message, target, createdAt: now() });
+      writeJson("pending_broadcasts", pending);
+      addLog("STOCK_NOTIFY_QUEUED", `added=${added} target=${target}`, "web-admin");
+    }
+  }
   res.json({ added, total: accounts.length });
 });
 router2.put("/bot/accounts/:email", requireAuth, (req, res) => {
