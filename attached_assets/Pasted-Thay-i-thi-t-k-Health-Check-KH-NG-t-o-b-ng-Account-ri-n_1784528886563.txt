@@ -1,0 +1,172 @@
+Thay đổi thiết kế Health Check.
+
+KHÔNG tạo bảng Account riêng.
+
+KHÔNG nhập tài khoản thủ công.
+
+Nguồn dữ liệu duy nhất là DANH SÁCH ĐƠN HÀNG của Web Quà Tặng.
+
+==================================================
+
+Health Check sẽ lấy trực tiếp từ bảng Orders.
+
+Mỗi đơn hàng đã có:
+
+- Order ID
+- Email
+- Password
+- 2FA
+- Product
+- Customer
+- Purchase Date
+- Warranty Date
+- Expire Date
+
+Robot sử dụng chính dữ liệu này để kiểm tra.
+
+==================================================
+
+Thêm nút mới trong trang Đơn hàng:
+
+[Kiểm tra]
+
+Ngoài ra thêm nút:
+
+[Kiểm tra tất cả]
+
+==================================================
+
+Khi Admin bấm "Kiểm tra tất cả":
+
+- Lấy tất cả đơn hàng còn hiệu lực.
+- Đưa vào Queue.
+- Worker tự xử lý từng đơn.
+- Không chạy đồng thời toàn bộ.
+- Có thể cấu hình số Worker.
+
+==================================================
+
+Luồng hoạt động:
+
+Admin
+
+↓
+
+Bấm "Kiểm tra tất cả"
+
+↓
+
+Backend đọc toàn bộ đơn hàng
+
+↓
+
+Tạo Queue
+
+↓
+
+Worker
+
+↓
+
+Playwright
+
+↓
+
+Đăng nhập tài khoản
+
+↓
+
+Kiểm tra tình trạng
+
+↓
+
+Lưu kết quả
+
+↓
+
+Frontend cập nhật trạng thái
+
+==================================================
+
+Mỗi tài khoản cần kiểm tra:
+
+1. Có đăng nhập được không.
+
+2. Có còn đúng gói không.
+
+3. Có bị khóa không.
+
+4. Có yêu cầu Verify không.
+
+5. Có CAPTCHA không.
+
+6. Có lỗi mạng không.
+
+==================================================
+
+Chuẩn hóa kết quả:
+
+ACTIVE
+
+PACKAGE_LOST
+
+PASSWORD_INVALID
+
+ACCOUNT_BANNED
+
+ACCOUNT_LOCKED
+
+REQUIRE_EMAIL
+
+REQUIRE_PHONE
+
+CAPTCHA
+
+NETWORK_ERROR
+
+TIMEOUT
+
+UNKNOWN
+
+==================================================
+
+Sau khi kiểm tra xong.
+
+Cập nhật ngay vào đơn hàng:
+
+- Trạng thái tài khoản
+- Thời gian kiểm tra
+- Chi tiết kết quả
+
+==================================================
+
+Thêm tab "Health Check" trong trang chi tiết đơn hàng.
+
+Hiển thị:
+
+- Lần kiểm tra gần nhất
+- Trạng thái hiện tại
+- Lịch sử kiểm tra
+- Nhật ký Playwright
+- Nút "Kiểm tra lại"
+
+==================================================
+
+Nếu Playwright gặp lỗi.
+
+Tự động lưu:
+
+- Screenshot
+- Current URL
+- Console Log
+- Network Log
+
+==================================================
+
+Không sửa bất kỳ dữ liệu đơn hàng nào.
+
+Robot chỉ ĐỌC dữ liệu đơn hàng để kiểm tra và GHI kết quả kiểm tra.
+
+Không thay đổi email, password, 2FA hoặc thông tin đơn hàng.
+
+Thiết kế theo module để sau này có thể bổ sung nhiều Product Checker như ChatGPT, Grok, Gemini, Claude... mà không ảnh hưởng đến hệ thống hiện có.

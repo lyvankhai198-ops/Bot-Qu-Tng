@@ -4,10 +4,10 @@
  * Polls the job queue every POLL_MS milliseconds. On each tick it picks up to
  * `workerCount` (from health config, default 2) "queued" jobs, marks them
  * "running", runs the appropriate checker plugin, saves results to
- * account_health.json, and marks the job "done" or "failed".
+ * order_health.json, and marks the job "done" or "failed".
  *
- * Multiple jobs run concurrently (Promise.allSettled) so the effective
- * throughput is workerCount checks per POLL_MS + check duration.
+ * Data source: reads email, password, twoFA from orders.json using orderId.
+ * Results: saved to order_health.json, keyed by orderId.
  */
 
 import {
@@ -33,38 +33,44 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getWorkerCount(): number {
+function getWorkerConfig(): { workerCount: number; timeoutMs: number } {
   try {
-    const h = readJson("account_health", { config: {} }) ?? { config: {} };
+    const h = readJson("order_health", { config: {} }) ?? { config: {} };
     const n = Number((h.config ?? {}).workerCount ?? 2);
-    return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : 2;
+    const t = Number((h.config ?? {}).timeoutMs ?? 60_000);
+    return {
+      workerCount: Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : 2,
+      timeoutMs: Number.isFinite(t) && t >= 5_000 ? t : 60_000,
+    };
   } catch {
-    return 2;
+    return { workerCount: 2, timeoutMs: 60_000 };
   }
 }
 
 function saveHealthEntry(
-  accountId: string,
+  orderId: string,
   entry: {
     checkedAt: string;
-    status: string;
+    code: string;
     message: string;
     responseTime: number | null;
-    httpStatus: number | null;
     plugin: string;
+    screenshotBase64?: string;
+    playwrightLog?: string;
   },
 ) {
-  const h = readJson("account_health", { config: {}, checks: {} }) ?? {
+  const h = readJson("order_health", { config: {}, checks: {} }) ?? {
     config: {},
     checks: {},
   };
   if (!h.checks) h.checks = {};
-  if (!h.checks[accountId]) h.checks[accountId] = [];
-  h.checks[accountId].push(entry);
-  if (h.checks[accountId].length > MAX_HISTORY) {
-    h.checks[accountId] = h.checks[accountId].slice(-MAX_HISTORY);
+  if (!h.checks[orderId]) h.checks[orderId] = [];
+  h.checks[orderId].push(entry);
+  // Keep only the last MAX_HISTORY entries per order
+  if (h.checks[orderId].length > MAX_HISTORY) {
+    h.checks[orderId] = h.checks[orderId].slice(-MAX_HISTORY);
   }
-  writeJson("account_health", h);
+  writeJson("order_health", h);
 }
 
 // ── Core job processor ────────────────────────────────────────────────────────
@@ -76,48 +82,45 @@ async function processJob(job: HealthJob): Promise<void> {
 
   if (!plugin) {
     result = {
-      status: "no_plugin",
-      message: `Chưa có plugin kiểm tra cho loại tài khoản "${job.type || "không xác định"}". Plugin hiện có: ${
+      code: "NO_PLUGIN",
+      message: `Chưa có plugin kiểm tra cho loại "${job.type || "không xác định"}". Plugin hiện có: ${
         ["grok"].join(", ")
       }`,
       responseTime: null,
     };
   } else {
-    // Read current password from accounts (may have changed since enqueue)
-    const accounts: any[] = readJson("accounts", []) ?? [];
-    const acc = accounts.find((a: any) => a.id === job.accountId);
-    const password: string = acc?.password ?? "";
+    // Read current credentials from orders (may have changed since enqueue)
+    const orders: Record<string, any> = readJson("orders", {}) ?? {};
+    const order = orders[job.orderId];
+    const password: string = order?.password ?? "";
 
-    // Read timeout from health config
-    const h = readJson("account_health", { config: {} }) ?? { config: {} };
-    const timeoutMs = Number((h.config ?? {}).timeoutMs ?? 60_000);
+    const { timeoutMs } = getWorkerConfig();
 
     try {
       result = await plugin.check(job.email, password, { timeoutMs });
     } catch (err: any) {
       result = {
-        status: "error",
+        code: "UNKNOWN",
         message: `Plugin error: ${err?.message?.slice(0, 200) ?? String(err)}`,
         responseTime: null,
       };
     }
   }
 
-  // Map "no_plugin" → "error" for the health history (UI only knows healthy/unhealthy/error/manual)
-  const historyStatus =
-    result.status === "no_plugin" ? "error" : result.status;
-
-  saveHealthEntry(job.accountId, {
+  saveHealthEntry(job.orderId, {
     checkedAt: now(),
-    status: historyStatus,
+    code: result.code,
     message: result.message,
     responseTime: result.responseTime,
-    httpStatus: null,
     plugin: plugin?.id ?? "none",
+    screenshotBase64: result.screenshotBase64,
+    playwrightLog: result.playwrightLog,
   });
 
-  const finalStatus =
-    result.status === "healthy" || result.status === "unhealthy"
+  // ACTIVE and PACKAGE_LOST = done (check completed successfully)
+  // Everything else = failed (need attention)
+  const finalStatus: "done" | "failed" =
+    result.code === "ACTIVE" || result.code === "PACKAGE_LOST"
       ? "done"
       : "failed";
 
@@ -133,14 +136,12 @@ async function processJob(job: HealthJob): Promise<void> {
 // ── Tick ──────────────────────────────────────────────────────────────────────
 
 async function tick(): Promise<void> {
-  const workerCount = getWorkerCount();
+  const { workerCount } = getWorkerConfig();
   const alreadyRunning = countRunning();
   const slots = workerCount - alreadyRunning;
 
   if (slots <= 0) return;
 
-  // Pick up to `slots` queued jobs and mark them running atomically before
-  // launching async work, so the next iteration won't double-pick them.
   const toProcess: HealthJob[] = [];
   for (let i = 0; i < slots; i++) {
     const job = getNextQueued();
@@ -159,7 +160,7 @@ async function tick(): Promise<void> {
           status: "failed",
           finishedAt: now(),
           result: {
-            status: "error",
+            code: "UNKNOWN",
             message: `Unhandled: ${err?.message?.slice(0, 200) ?? String(err)}`,
             responseTime: null,
           },

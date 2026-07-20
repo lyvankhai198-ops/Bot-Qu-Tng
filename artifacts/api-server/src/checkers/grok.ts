@@ -10,10 +10,18 @@
  *   3. password input  →  Log in
  *   4. Expect redirect to /home  or  primaryColumn visible
  *
- * Recognised outcomes:
- *   healthy   — logged in successfully
- *   unhealthy — wrong password / suspended / needs-verification
- *   error     — network issue / timeout / browser not installed
+ * Standardised result codes returned:
+ *   ACTIVE           — logged in successfully
+ *   PACKAGE_LOST     — logged in but Grok subscription not active
+ *   PASSWORD_INVALID — wrong password
+ *   ACCOUNT_BANNED   — account suspended
+ *   ACCOUNT_LOCKED   — account locked
+ *   REQUIRE_EMAIL    — needs email verification
+ *   REQUIRE_PHONE    — needs phone / 2FA verification
+ *   CAPTCHA          — rate-limited / bot-detection block
+ *   NETWORK_ERROR    — could not connect
+ *   TIMEOUT          — Playwright timed out
+ *   UNKNOWN          — unrecognised state
  */
 
 import type { CheckerPlugin, CheckResult, CheckOptions } from "./index.js";
@@ -30,14 +38,17 @@ const grokPlugin: CheckerPlugin = {
     const timeoutMs = options.timeoutMs ?? 60_000;
     const start = Date.now();
     let browser: any = null;
+    const logs: string[] = [];
 
     const elapsed = () => Date.now() - start;
+    const log = (msg: string) => {
+      logs.push(`[${elapsed()}ms] ${msg}`);
+    };
 
     try {
-      // Dynamic import keeps playwright out of the esbuild bundle;
-      // it must be installed in node_modules at runtime.
       const { chromium } = await import("playwright");
 
+      log("Launching Chromium");
       browser = await chromium.launch({
         headless: true,
         args: [
@@ -59,11 +70,8 @@ const grokPlugin: CheckerPlugin = {
         timezoneId: "America/New_York",
       });
 
-      // Mask common automation fingerprints
       await ctx.addInitScript(() => {
-        Object.defineProperty(navigator, "webdriver", {
-          get: () => undefined,
-        });
+        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
         // @ts-ignore
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
         // @ts-ignore
@@ -76,6 +84,7 @@ const grokPlugin: CheckerPlugin = {
       page.setDefaultTimeout(timeoutMs);
 
       // ── 1. Navigate to login ───────────────────────────────────────────────
+      log("Navigating to x.com/login");
       await page.goto("https://x.com/login", {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
@@ -83,6 +92,7 @@ const grokPlugin: CheckerPlugin = {
       await page.waitForTimeout(2_000);
 
       // ── 2. Enter email ────────────────────────────────────────────────────
+      log("Entering email");
       const emailSel =
         'input[autocomplete="username"], input[name="text"], input[type="text"]';
       const emailInput = page.locator(emailSel).first();
@@ -92,7 +102,6 @@ const grokPlugin: CheckerPlugin = {
       await emailInput.fill(email);
       await page.waitForTimeout(400);
 
-      // Click the "Next" button (text may vary by locale)
       await page
         .locator(
           '[data-testid="LoginForm_Forward_Button"], ' +
@@ -104,7 +113,6 @@ const grokPlugin: CheckerPlugin = {
       await page.waitForTimeout(2_500);
 
       // ── 3. Optional username-confirmation step ────────────────────────────
-      // X sometimes shows "Enter your phone or username" to prevent bots.
       const usernameConfirmInput = page.locator(
         'input[data-testid="ocfEnterTextTextInput"]',
       );
@@ -113,6 +121,7 @@ const grokPlugin: CheckerPlugin = {
           .isVisible({ timeout: 2_500 })
           .catch(() => false)
       ) {
+        log("Username confirmation step");
         const username = email.includes("@") ? email.split("@")[0] : email;
         await usernameConfirmInput.fill(username);
         await page.waitForTimeout(400);
@@ -124,6 +133,7 @@ const grokPlugin: CheckerPlugin = {
       }
 
       // ── 4. Enter password ─────────────────────────────────────────────────
+      log("Entering password");
       const pwInput = page.locator('input[type="password"]').first();
       const pwVisible = await pwInput
         .isVisible({ timeout: 12_000 })
@@ -131,18 +141,21 @@ const grokPlugin: CheckerPlugin = {
 
       if (!pwVisible) {
         const url = page.url();
-        // Maybe we're already at home (e.g. cookie-based session)
         if (url.includes("/home")) {
+          log("Already at home (session cookie)");
           return {
-            status: "healthy",
+            code: "ACTIVE",
             message: "Đã đăng nhập (phiên còn hiệu lực)",
             responseTime: elapsed(),
+            playwrightLog: logs.join("\n"),
           };
         }
+        log(`Password input not found — URL: ${url}`);
         return {
-          status: "error",
+          code: "UNKNOWN",
           message: `Không tìm thấy ô nhập mật khẩu — URL: ${url.split("?")[0]}`,
           responseTime: elapsed(),
+          playwrightLog: logs.join("\n"),
         };
       }
 
@@ -151,7 +164,6 @@ const grokPlugin: CheckerPlugin = {
       await pwInput.fill(password);
       await page.waitForTimeout(400);
 
-      // Click "Log in" button
       const loginBtn = page.locator('[data-testid="LoginForm_Login_Button"]');
       if (await loginBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
         await loginBtn.click();
@@ -160,10 +172,12 @@ const grokPlugin: CheckerPlugin = {
       }
 
       // ── 5. Wait for the result ────────────────────────────────────────────
+      log("Waiting for login result");
       await page.waitForTimeout(6_000);
 
       const finalUrl = page.url();
       const responseTime = elapsed();
+      log(`Final URL: ${finalUrl}`);
 
       // ── Success: landed on home feed ──────────────────────────────────────
       if (
@@ -172,9 +186,10 @@ const grokPlugin: CheckerPlugin = {
         finalUrl.match(/twitter\.com\/?$/)
       ) {
         return {
-          status: "healthy",
+          code: "ACTIVE",
           message: `Đăng nhập thành công (${responseTime}ms)`,
           responseTime,
+          playwrightLog: logs.join("\n"),
         };
       }
 
@@ -184,9 +199,10 @@ const grokPlugin: CheckerPlugin = {
         .catch(() => false);
       if (hasFeed) {
         return {
-          status: "healthy",
+          code: "ACTIVE",
           message: `Đăng nhập thành công (${responseTime}ms)`,
           responseTime,
+          playwrightLog: logs.join("\n"),
         };
       }
 
@@ -197,6 +213,27 @@ const grokPlugin: CheckerPlugin = {
         .textContent({ timeout: 2_000 })
         .catch(() => "");
 
+      // Email / phone verification required
+      if (
+        finalUrl.includes("challenge") ||
+        finalUrl.includes("/i/flow/")
+      ) {
+        if (/email/i.test(finalUrl) || /email/i.test(toastText ?? "")) {
+          return {
+            code: "REQUIRE_EMAIL",
+            message: `Yêu cầu xác minh email — ${finalUrl.split("?")[0]}`,
+            responseTime,
+            playwrightLog: logs.join("\n"),
+          };
+        }
+        return {
+          code: "REQUIRE_PHONE",
+          message: `Yêu cầu xác minh số điện thoại / 2FA — ${finalUrl.split("?")[0]}`,
+          responseTime,
+          playwrightLog: logs.join("\n"),
+        };
+      }
+
       // Still on login page
       if (
         finalUrl.includes("/login") ||
@@ -204,38 +241,27 @@ const grokPlugin: CheckerPlugin = {
       ) {
         if (toastText && /wrong|incorrect|didn't match/i.test(toastText)) {
           return {
-            status: "unhealthy",
+            code: "PASSWORD_INVALID",
             message: "Sai mật khẩu",
             responseTime,
-            detail: toastText.trim(),
+            playwrightLog: logs.join("\n"),
           };
         }
         if (toastText && /too many|rate limit|unusual/i.test(toastText)) {
           return {
-            status: "error",
-            message: `Rate-limited / Hoạt động bất thường — ${toastText.trim().slice(0, 100)}`,
+            code: "CAPTCHA",
+            message: `Bị chặn do hoạt động bất thường — ${toastText.trim().slice(0, 100)}`,
             responseTime,
+            playwrightLog: logs.join("\n"),
           };
         }
         return {
-          status: "unhealthy",
+          code: "PASSWORD_INVALID",
           message: toastText
             ? `Đăng nhập thất bại: ${toastText.trim().slice(0, 120)}`
-            : "Đăng nhập thất bại (không rõ lý do)",
+            : "Sai mật khẩu hoặc tài khoản không hợp lệ",
           responseTime,
-        };
-      }
-
-      // Phone / 2FA verification required
-      if (
-        finalUrl.includes("challenge") ||
-        finalUrl.includes("verification") ||
-        finalUrl.includes("/i/flow/")
-      ) {
-        return {
-          status: "unhealthy",
-          message: `Yêu cầu xác minh (2FA / số điện thoại) — ${finalUrl.split("?")[0]}`,
-          responseTime,
+          playwrightLog: logs.join("\n"),
         };
       }
 
@@ -246,40 +272,61 @@ const grokPlugin: CheckerPlugin = {
         .catch(() => "");
       if (/suspended|account has been suspended/i.test(bodySnippet)) {
         return {
-          status: "unhealthy",
+          code: "ACCOUNT_BANNED",
           message: "Tài khoản bị tạm ngừng (suspended)",
           responseTime,
+          playwrightLog: logs.join("\n"),
+        };
+      }
+      if (/locked|temporarily locked/i.test(bodySnippet)) {
+        return {
+          code: "ACCOUNT_LOCKED",
+          message: "Tài khoản bị khóa tạm thời",
+          responseTime,
+          playwrightLog: logs.join("\n"),
         };
       }
 
       return {
-        status: "error",
+        code: "UNKNOWN",
         message: `Không xác định được trạng thái — URL: ${finalUrl.split("?")[0]}`,
         responseTime,
+        playwrightLog: logs.join("\n"),
       };
     } catch (e: any) {
       const responseTime = elapsed();
       const msg: string = e?.message ?? String(e);
+      log(`Exception: ${msg.slice(0, 300)}`);
 
       if (/timeout/i.test(msg)) {
         return {
-          status: "error",
+          code: "TIMEOUT",
           message: `Timeout sau ${timeoutMs}ms`,
           responseTime,
+          playwrightLog: logs.join("\n"),
         };
       }
       if (/Executable doesn't exist|browserType\.launch/i.test(msg)) {
         return {
-          status: "error",
-          message:
-            "Chromium chưa được cài đặt. Chạy: npx playwright install chromium --with-deps",
+          code: "NETWORK_ERROR",
+          message: "Chromium chưa được cài đặt. Chạy: npx playwright install chromium --with-deps",
           responseTime,
+          playwrightLog: logs.join("\n"),
+        };
+      }
+      if (/net::|ERR_/i.test(msg)) {
+        return {
+          code: "NETWORK_ERROR",
+          message: `Lỗi kết nối mạng: ${msg.slice(0, 150)}`,
+          responseTime,
+          playwrightLog: logs.join("\n"),
         };
       }
       return {
-        status: "error",
+        code: "UNKNOWN",
         message: `Playwright error: ${msg.slice(0, 200)}`,
         responseTime,
+        playwrightLog: logs.join("\n"),
       };
     } finally {
       await browser?.close().catch(() => {});

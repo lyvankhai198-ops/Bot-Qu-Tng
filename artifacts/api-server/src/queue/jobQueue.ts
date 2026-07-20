@@ -1,5 +1,5 @@
 /**
- * In-memory job queue for account health checks.
+ * In-memory job queue for order health checks.
  *
  * Jobs are persisted to data/health_jobs.json on every mutation so they
  * survive a server restart. On boot, any job left in "running" state is
@@ -19,9 +19,10 @@ export type JobStatus = "queued" | "running" | "done" | "failed";
 
 export interface HealthJob {
   id: string;
-  accountId: string;
+  /** orderId from orders.json */
+  orderId: string;
   email: string;
-  /** account.type — used to look up the correct checker plugin */
+  /** Plugin type key derived from productName — used to look up the checker plugin */
   type: string;
   status: JobStatus;
   createdAt: string;
@@ -32,11 +33,9 @@ export interface HealthJob {
 
 // ── Internal state ────────────────────────────────────────────────────────────
 
-/** Source of truth — always sync to disk on mutations */
 let jobs: HealthJob[] = [];
 let initialised = false;
 
-/** Keep at most this many finished jobs in memory/on disk */
 const MAX_DONE_JOBS = 300;
 
 function _persist() {
@@ -54,10 +53,10 @@ function _ensureInit() {
     j.status === "running"
       ? {
           ...j,
-          status: "failed",
+          status: "failed" as const,
           finishedAt: now(),
           result: {
-            status: "error",
+            code: "UNKNOWN" as const,
             message: "Server khởi động lại trong khi đang kiểm tra",
             responseTime: null,
           },
@@ -73,30 +72,30 @@ function _ensureInit() {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Enqueue an account for health checking.
- * If there is already a queued or running job for this account, return it
+ * Enqueue an order for health checking.
+ * If there is already a queued or running job for this orderId, return it
  * instead of creating a duplicate.
  */
-export function enqueue(account: {
-  id: string;
+export function enqueue(order: {
+  id: string;   // orderId
   email: string;
-  type: string;
+  type: string; // plugin type key
 }): HealthJob {
   _ensureInit();
 
-  // Dedup: don't pile up jobs for the same account
+  // Dedup: don't pile up jobs for the same order
   const existing = jobs.find(
     (j) =>
-      j.accountId === account.id &&
+      j.orderId === order.id &&
       (j.status === "queued" || j.status === "running"),
   );
   if (existing) return existing;
 
   const job: HealthJob = {
     id: crypto.randomUUID().slice(0, 12),
-    accountId: account.id,
-    email: account.email,
-    type: account.type ?? "",
+    orderId: order.id,
+    email: order.email,
+    type: order.type ?? "",
     status: "queued",
     createdAt: now(),
     startedAt: null,
@@ -132,17 +131,17 @@ export function updateJob(id: string, patch: Partial<HealthJob>) {
 
 /**
  * Return jobs, newest first.
- * Optionally filter by status and/or accountId.
+ * Optionally filter by status and/or orderId.
  */
 export function getJobs(filter?: {
   status?: string | string[];
-  accountId?: string;
+  orderId?: string;
 }): HealthJob[] {
   _ensureInit();
   let result = [...jobs];
 
-  if (filter?.accountId) {
-    result = result.filter((j) => j.accountId === filter.accountId);
+  if (filter?.orderId) {
+    result = result.filter((j) => j.orderId === filter.orderId);
   }
   if (filter?.status) {
     const statuses = Array.isArray(filter.status)
@@ -160,14 +159,14 @@ export function hasActiveJobs(): boolean {
   return jobs.some((j) => j.status === "queued" || j.status === "running");
 }
 
-/** Remove finished jobs from the queue (optionally scoped to one account). */
-export function clearDoneJobs(accountId?: string) {
+/** Remove finished jobs from the queue (optionally scoped to one orderId). */
+export function clearDoneJobs(orderId?: string) {
   _ensureInit();
-  if (accountId) {
+  if (orderId) {
     jobs = jobs.filter(
       (j) =>
         !(
-          j.accountId === accountId &&
+          j.orderId === orderId &&
           (j.status === "done" || j.status === "failed")
         ),
     );
