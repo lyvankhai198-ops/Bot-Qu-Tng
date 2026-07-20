@@ -58,15 +58,27 @@ sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" "
   python3 -m playwright install chromium --with-deps || true
 
   # ── Cài Node.js Playwright + Chromium (cho health-check worker) ──────────────
-  cd ${DEPLOY_PATH}/artifacts/api-server
-  # Đảm bảo playwright npm package có trong node_modules
-  if [ ! -d node_modules/playwright ]; then
-    npm install playwright 2>&1 | tail -3 || true
+  # npm install playwright trong api-server thất bại vì workspace: deps trong package.json
+  # → cài vào /tmp/pw_install rồi copy sang node_modules của api-server
+  PW_TARGET="${DEPLOY_PATH}/artifacts/api-server/node_modules"
+  if [ ! -d "${PW_TARGET}/playwright" ]; then
+    echo "Installing playwright npm package..."
+    rm -rf /tmp/pw_install && mkdir -p /tmp/pw_install
+    cd /tmp/pw_install
+    npm init -y > /dev/null 2>&1
+    npm install playwright playwright-core --no-package-lock 2>&1 | tail -5
+    mkdir -p "${PW_TARGET}"
+    cp -r /tmp/pw_install/node_modules/playwright "${PW_TARGET}/" 2>/dev/null || true
+    cp -r /tmp/pw_install/node_modules/playwright-core "${PW_TARGET}/" 2>/dev/null || true
+    echo "playwright package installed"
+    cd ${DEPLOY_PATH}
+  else
+    echo "playwright already in node_modules, skipping install"
   fi
-  # Cài browser binary — thử 2 lần, log đầy đủ lần đầu
+  # Cài browser binary
+  cd ${DEPLOY_PATH}/artifacts/api-server
   npx playwright install chromium --with-deps 2>&1 | tail -20 || \
     npx playwright install chromium 2>&1 | tail -10 || true
-  # Kiểm tra xem chromium đã cài chưa
   npx playwright --version 2>&1 | head -2 || true
   ls ~/.cache/ms-playwright/ 2>/dev/null | head -5 || true
   cd ${DEPLOY_PATH}

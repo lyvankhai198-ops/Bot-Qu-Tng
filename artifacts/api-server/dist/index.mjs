@@ -50034,9 +50034,23 @@ var grokPlugin = {
       url = page.url();
       log(`At X.com login \u2014 URL: ${url}`);
       if (url.includes("x.com") || url.includes("accounts.x.com")) {
-        const emailSel = 'input[autocomplete="username"], input[name="text"], input[type="text"]';
+        await page.waitForLoadState("domcontentloaded").catch(() => {
+        });
+        await page.waitForTimeout(3e3);
+        const cookieBtn = page.locator(
+          'button:has-text("Accept"), button:has-text("Allow"), [data-testid="cookie-accept"], button:has-text("Agree")'
+        ).first();
+        if (await cookieBtn.isVisible({ timeout: 3e3 }).catch(() => false)) {
+          log("Dismissing cookie/consent popup");
+          await cookieBtn.click().catch(() => {
+          });
+          await page.waitForTimeout(1500);
+        }
+        const bodySnippetBefore = await page.locator("body").innerHTML().catch(() => "").then((h) => h.slice(0, 300));
+        log(`Body HTML snippet: ${bodySnippetBefore}`);
+        const emailSel = 'input[autocomplete="username"], input[name="text"], input[type="text"], input[type="email"], [data-testid="LoginForm_InputContainer"] input';
         const emailInput = page.locator(emailSel).first();
-        await emailInput.waitFor({ state: "visible", timeout: 15e3 });
+        await emailInput.waitFor({ state: "visible", timeout: 3e4 });
         log("Entering email");
         await emailInput.click();
         await page.waitForTimeout(400);
@@ -53474,7 +53488,7 @@ function getWorkerConfig() {
     const t = Number((h.config ?? {}).timeoutMs ?? 6e4);
     return {
       workerCount: Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : 2,
-      timeoutMs: Number.isFinite(t) && t >= 5e3 ? t : 6e4
+      timeoutMs: Number.isFinite(t) && t >= 5e3 ? t : 12e4
     };
   } catch {
     return { workerCount: 2, timeoutMs: 6e4 };
