@@ -288,6 +288,45 @@ def fuzzy_match_product(name: str, products: list) -> str | None:
             best = p
     return best
 
+def parse_symbols_from_name(name: str) -> dict:
+    """
+    Trích xuất usageDays và warrantyDays từ ký hiệu trong tên sản phẩm.
+    Ví dụ:
+      "ChatGPT PLUS 30D BH 2 Ngày"  → usageDays=30, warrantyDays=2
+      "GROK SUPER 30D BHF"          → usageDays=30, warrantyDays=30 (BHF = full period)
+      "Supper Grok 3-5 Ngày BHF"    → usageDays=5,  warrantyDays=5
+      "Netflix 1D"                  → usageDays=1,  warrantyDays=1 (1D alone = BHF)
+    """
+    if not name:
+        return {"usageDays": 0, "warrantyDays": 0}
+    n = name.upper()
+    is_bhf = bool(re.search(r'\bBHF\b', n))
+
+    # 1. Parse usage days: "30D", "7D", "3-5 Ngày", "30 Ngày" — lấy số lớn nhất trong range
+    usage_days = 0
+    m = re.search(r'(\d+)(?:\s*[-–]\s*(\d+))?\s*(?:D\b|NGÀY)', n)
+    if m:
+        n1 = int(m.group(1))
+        n2 = int(m.group(2)) if m.group(2) else n1
+        usage_days = max(n1, n2)
+
+    # 2. Parse warranty days
+    warranty_days = 0
+    if is_bhf:
+        # BHF = bảo hành suốt thời hạn sử dụng
+        warranty_days = usage_days if usage_days else 0
+    else:
+        # "BH 2 Ngày", "BH 7D", "BH2D" ...
+        bh = re.search(r'BH\s*(\d+)\s*(?:NGÀY\b|D\b)', n)
+        if bh:
+            warranty_days = int(bh.group(1))
+
+    # 3. Nếu tên chỉ có "1D" / "2D" một mình (không có BH riêng) → coi như BHF ngắn
+    if usage_days > 0 and warranty_days == 0 and not re.search(r'\bBH\b', n):
+        warranty_days = usage_days
+
+    return {"usageDays": usage_days, "warrantyDays": warranty_days}
+
 def add_days_to_date(date_str: str, days: int) -> str | None:
     if not date_str or not days:
         return None
@@ -355,8 +394,21 @@ def parse_xlsx_to_rows(xlsx_path: str, known_products: list, existing_order_ids:
 
         product_name_mapped = fuzzy_match_product(product_name_raw, product_names)
         matched = next((p for p in known_products if p["name"] == product_name_mapped), None)
-        warranty_days = matched["warrantyDays"] if matched else 0
-        usage_days    = matched["usageDays"]    if matched else 0
+        if matched:
+            warranty_days = matched["warrantyDays"] or 0
+            usage_days    = matched["usageDays"]    or 0
+        else:
+            # Sản phẩm không khớp settings → parse ký hiệu từ tên gốc (30D, BHF, BH 2 Ngày...)
+            parsed_sym    = parse_symbols_from_name(product_name_raw)
+            warranty_days = parsed_sym["warrantyDays"]
+            usage_days    = parsed_sym["usageDays"]
+        # Nếu matched nhưng warrantyDays=0, fallback về parse ký hiệu
+        if matched and warranty_days == 0:
+            parsed_sym2 = parse_symbols_from_name(product_name_raw)
+            warranty_days = parsed_sym2["warrantyDays"] or 0
+            usage_days    = parsed_sym2["usageDays"]    or usage_days
+        # Tên hiển thị: dùng tên gốc khi không có trong settings (giữ đầy đủ thông tin)
+        effective_name = product_name_mapped or product_name_raw
 
         expiry_date      = add_days_to_date(original_delivered, usage_days)    if original_delivered and usage_days    else None
         warranty_end_date = add_days_to_date(original_delivered, warranty_days) if original_delivered and warranty_days else None
@@ -371,7 +423,7 @@ def parse_xlsx_to_rows(xlsx_path: str, known_products: list, existing_order_ids:
             "rowIndex":           len(parsed_rows),
             "orderCode":          order_code,
             "productNameRaw":     product_name_raw,
-            "productNameMapped":  product_name_mapped,
+            "productNameMapped":  effective_name,
             "quantity":           quantity,
             "totalPrice":         total_price,
             "unitPrice":          unit_price,
