@@ -2300,24 +2300,40 @@ async def _apply_gift_box_reward(user, prize: dict | None) -> str:
             return ""
     return ""
 
+def _parse_event_dt(s: str) -> datetime:
+    """Parse ISO-8601 string (with or without Z / offset) as a naive UTC datetime."""
+    s = s.strip()
+    # Remove trailing Z or +00:00 offset so fromisoformat works on Python 3.8–3.10
+    if s.endswith("Z"):
+        s = s[:-1]
+    elif s.endswith("+00:00"):
+        s = s[:-6]
+    # Trim milliseconds to 6 digits max (fromisoformat limit)
+    if "." in s:
+        head, frac = s.rsplit(".", 1)
+        s = f"{head}.{frac[:6]}"
+    return datetime.fromisoformat(s)
+
 def _get_active_gift_box_event() -> dict | None:
-    """Return the first active gift box event, or None."""
-    now_dt = datetime.now()
+    """Return the first enabled gift box event whose time window is currently active."""
+    now_utc = datetime.utcnow()          # naive UTC — matches stored ISO strings
     for ev in db.get_gift_boxes():
         if not ev.get("enabled"):
             continue
         s = (ev.get("startTime") or "").strip()
-        e = (ev.get("endTime") or "").strip()
-        try:
-            if s and now_dt < datetime.fromisoformat(s):
+        e = (ev.get("endTime")   or "").strip()
+        if s:
+            try:
+                if now_utc < _parse_event_dt(s):
+                    continue             # chưa đến giờ bắt đầu
+            except Exception:
+                continue                 # thời gian không hợp lệ → bỏ qua event
+        if e:
+            try:
+                if now_utc > _parse_event_dt(e):
+                    continue             # đã hết hạn
+            except Exception:
                 continue
-        except Exception:
-            pass
-        try:
-            if e and now_dt > datetime.fromisoformat(e):
-                continue
-        except Exception:
-            pass
         return ev
     return None
 
