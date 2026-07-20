@@ -52012,6 +52012,59 @@ router2.post("/bot/checkin/trigger", requireAuth, (_req, res) => {
   addLog("CHECKIN_TRIGGER_MANUAL", "", "web-admin");
   res.json({ ok: true, message: "Checkin notification queued" });
 });
+router2.get("/bot/secret-codes", requireAuth, (_req, res) => {
+  const codes = readJson("secret_codes", []) ?? [];
+  res.json(codes);
+});
+router2.post("/bot/secret-codes", requireAuth, (req, res) => {
+  const codes = readJson("secret_codes", []) ?? [];
+  const body = req.body ?? {};
+  const newCode = {
+    id: `sc_${Date.now()}`,
+    enabled: false,
+    code: (body.code ?? "").toUpperCase().trim(),
+    reward: body.reward ?? { type: "custom", label: "", value: "" },
+    maxWinners: body.maxWinners ?? 0,
+    startTime: body.startTime ?? "",
+    endTime: body.endTime ?? "",
+    membersOnly: body.membersOnly ?? false,
+    onePerUser: body.onePerUser !== false,
+    winMessage: body.winMessage ?? "\u{1F389} Ch\xFAc m\u1EEBng! B\u1EA1n nh\u1EADn \u0111\u01B0\u1EE3c:\n\u{1F381} {reward}",
+    exhaustedMessage: body.exhaustedMessage ?? "\u{1F614} M\xE3 \u0111\xE3 h\u1EBFt l\u01B0\u1EE3t nh\u1EADn. Theo d\xF5i bot \u0111\u1EC3 kh\xF4ng b\u1ECF l\u1EE1 s\u1EF1 ki\u1EC7n ti\u1EBFp theo!",
+    invalidMessage: body.invalidMessage ?? "\u274C M\xE3 kh\xF4ng h\u1EE3p l\u1EC7. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i.",
+    createdAt: now(),
+    winners: []
+  };
+  codes.push(newCode);
+  writeJson("secret_codes", codes);
+  addLog("SECRET_CODE_CREATE", `code=${newCode.code}`, "web-admin");
+  res.json(newCode);
+});
+router2.put("/bot/secret-codes/:id", requireAuth, (req, res) => {
+  const codes = readJson("secret_codes", []) ?? [];
+  const idx = codes.findIndex((c) => c.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Not found" });
+  const body = req.body ?? {};
+  if (body.code) body.code = String(body.code).toUpperCase().trim();
+  codes[idx] = { ...codes[idx], ...body, id: req.params.id, winners: codes[idx].winners ?? [] };
+  writeJson("secret_codes", codes);
+  addLog("SECRET_CODE_UPDATE", `id=${req.params.id} code=${codes[idx].code}`, "web-admin");
+  res.json(codes[idx]);
+});
+router2.delete("/bot/secret-codes/:id", requireAuth, (req, res) => {
+  let codes = readJson("secret_codes", []) ?? [];
+  const target = codes.find((c) => c.id === req.params.id);
+  codes = codes.filter((c) => c.id !== req.params.id);
+  writeJson("secret_codes", codes);
+  addLog("SECRET_CODE_DELETE", `id=${req.params.id} code=${target?.code ?? "?"}`, "web-admin");
+  res.json({ ok: true });
+});
+router2.get("/bot/secret-codes/:id/winners", requireAuth, (req, res) => {
+  const codes = readJson("secret_codes", []) ?? [];
+  const code = codes.find((c) => c.id === req.params.id);
+  if (!code) return res.status(404).json({ error: "Not found" });
+  res.json(code.winners ?? []);
+});
 router2.get("/bot/backup", requireAuth, (_req, res) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
   const backup = { exportedAt: now() };

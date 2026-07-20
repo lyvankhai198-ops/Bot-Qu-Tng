@@ -1135,6 +1135,81 @@ def clear_pending_broadcasts():
 
 # ─── Order display helper ─────────────────────────────────────────────────
 
+# ─── Secret codes (Săn mã bí mật) ───────────────────────────────────────────
+
+def get_secret_codes() -> list:
+    return load("secret_codes", [])
+
+def save_secret_codes(codes: list) -> None:
+    save("secret_codes", codes)
+
+def validate_secret_code(code_str: str, user_id: int, username: str, first_name: str, ip: str = "") -> dict:
+    """
+    Validate a secret code entry attempt.
+    Returns dict with:
+      status: "ok" | "not_found" | "disabled" | "not_started" | "expired"
+              | "exhausted" | "already_claimed"
+      code:   the matched code dict (present on all statuses except not_found)
+    On "ok", winner is recorded in the code's winners list.
+    """
+    codes = get_secret_codes()
+    now_dt = datetime.now()
+    code_upper = code_str.strip().upper()
+
+    matched = None
+    matched_idx = -1
+    for i, c in enumerate(codes):
+        if c.get("code", "").strip().upper() == code_upper:
+            matched = c
+            matched_idx = i
+            break
+
+    if matched is None:
+        return {"status": "not_found"}
+
+    if not matched.get("enabled", False):
+        return {"status": "disabled", "code": matched}
+
+    start_str = (matched.get("startTime") or "").strip()
+    if start_str:
+        try:
+            if now_dt < datetime.fromisoformat(start_str):
+                return {"status": "not_started", "code": matched}
+        except Exception:
+            pass
+
+    end_str = (matched.get("endTime") or "").strip()
+    if end_str:
+        try:
+            if now_dt > datetime.fromisoformat(end_str):
+                return {"status": "expired", "code": matched}
+        except Exception:
+            pass
+
+    winners = matched.get("winners", [])
+    max_w = matched.get("maxWinners", 0)
+    if max_w and len(winners) >= int(max_w):
+        return {"status": "exhausted", "code": matched}
+
+    if matched.get("onePerUser", True):
+        for w in winners:
+            if int(w.get("userId", 0)) == user_id:
+                return {"status": "already_claimed", "code": matched}
+
+    # Record winner
+    winners.append({
+        "userId": user_id,
+        "username": username or "",
+        "firstName": first_name or "",
+        "time": now_dt.isoformat(),
+        "ip": ip or "",
+    })
+    codes[matched_idx]["winners"] = winners
+    save_secret_codes(codes)
+    return {"status": "ok", "code": codes[matched_idx]}
+
+# ─── Order display helper ─────────────────────────────────────────────────
+
 def calc_order_display(order: dict, settings: dict) -> dict:
     """Calculate remaining days, warranty status, and refund estimate."""
     from datetime import datetime, date

@@ -1,0 +1,107 @@
+Thêm tính năng "Săn mã bí mật" cho Telegram Bot.
+
+KHÔNG reset database.
+KHÔNG ảnh hưởng các tính năng hiện có.
+
+==================================================
+WEB ADMIN
+==================================================
+
+Thêm menu mới:
+
+🎯 Săn mã bí mật
+
+Có các mục cấu hình:
+
+- Bật/Tắt sự kiện.
+- Mã bí mật.
+- Phần thưởng.
+- Số lượng người thắng tối đa.
+- Thời gian bắt đầu.
+- Thời gian kết thúc.
+- Chỉ áp dụng cho thành viên đã tham gia bot.
+- Giới hạn mỗi Telegram ID chỉ được nhận 1 lần.
+- Nội dung thông báo khi trúng.
+- Nội dung thông báo khi mã hết lượt.
+- Nội dung thông báo khi mã không hợp lệ.
+
+==================================================
+PHẦN THƯỞNG
+==================================================
+
+Admin có thể chọn:
+
+- Cộng điểm.
+- Cộng số dư ví.
+- Voucher.
+- Coupon.
+- Gia hạn bảo hành.
+- Thêm lượt quay.
+- Tài khoản miễn phí.
+- Hoặc nhập phần thưởng tùy chỉnh.
+
+==================================================
+BOT
+==================================================
+
+Khi sự kiện được bật.
+
+Người dùng nhập:
+
+/code ABC123
+
+hoặc
+
+ABC123
+
+Bot sẽ kiểm tra:
+
+- Mã có tồn tại không.
+- Đã bắt đầu chưa.
+- Đã hết hạn chưa.
+- Còn lượt nhận không.
+- Người này đã nhận chưa.
+
+Nếu hợp lệ:
+
+✅ Chúc mừng!
+
+Bạn nhận được:
+
+🎁 ...
+
+Sau đó tự động cộng thưởng.
+
+==================================================
+LỊCH SỬ
+==================================================
+
+Web lưu:
+
+- Telegram ID.
+- Username.
+- Mã đã nhập.
+- Thời gian.
+- Phần thưởng.
+- Địa chỉ IP (nếu có).
+
+==================================================
+THỐNG KÊ
+==================================================
+
+Hiển thị:
+
+- Tổng số người nhập.
+- Tổng số người trúng.
+- Tổng số lượt còn lại.
+- Danh sách người đã nhận.
+
+==================================================
+YÊU CẦU
+==================================================
+
+- Có thể tạo nhiều mã khác nhau.
+- Có thể bật/tắt từng mã độc lập.
+- Khi tắt, bot không nhận mã nữa.
+- Không cần sửa code mỗi lần tạo sự kiện.
+- Toàn bộ cấu hình thực hiện trên Web Admin.
