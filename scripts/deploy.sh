@@ -50,12 +50,18 @@ sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" "
     sed -i '/Environment=NODE_ENV=production/a Environment=DATA_DIR=${DEPLOY_PATH}/data' /etc/systemd/system/bot-api.service
     systemctl daemon-reload
   fi
-  # ── Cài openpyxl + playwright (--break-system-packages cho Ubuntu mới) ──────
+  # ── Cài openpyxl + playwright Python (--break-system-packages cho Ubuntu mới) ─
   pip3 install --break-system-packages -q openpyxl playwright || \
     pip3 install -q openpyxl playwright || true
 
-  # ── Cài Chromium browser + system deps ───────────────────────────────────────
+  # ── Cài Chromium cho Python Playwright ───────────────────────────────────────
   python3 -m playwright install chromium --with-deps || true
+
+  # ── Cài Node.js Playwright + Chromium (cho health-check worker) ──────────────
+  cd ${DEPLOY_PATH}/artifacts/api-server
+  npm install playwright --no-save 2>/dev/null || true
+  npx playwright install chromium --with-deps 2>&1 | tail -5 || true
+  cd ${DEPLOY_PATH}
 
   # ── Tạo / cập nhật systemd service cho sync-robot ────────────────────────────
   cat > /etc/systemd/system/sync-robot.service << 'UNIT'
