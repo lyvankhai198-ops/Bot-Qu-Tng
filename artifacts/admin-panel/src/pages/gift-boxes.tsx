@@ -137,6 +137,7 @@ export default function GiftBoxes() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [stats, setStats]           = useState<EventStats | null>(null)
   const [statsLoading, setStatsLoading] = useState(false)
+  const [, setTick] = useState(0)   // timer tick — forces re-render để badge cập nhật đúng giờ
 
   // ── Fetch ────────────────────────────────────────────────────────────────
   const fetchEvents = useCallback(async () => {
@@ -148,6 +149,12 @@ export default function GiftBoxes() {
   }, [])
 
   useEffect(() => { fetchEvents() }, [fetchEvents])
+
+  // Tick mỗi 30s để badge thời gian (Chưa bắt đầu / Đang chạy / Hết hạn) tự cập nhật
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   // ── Quick toggle ──────────────────────────────────────────────────────────
   const toggleEnabled = async (ev: GiftBoxEvent) => {
