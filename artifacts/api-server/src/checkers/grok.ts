@@ -4,25 +4,94 @@
  * Flow:
  *   1. Vào https://grok.com → click "Sign in"
  *   2. Chọn "Continue with email" (không dùng X OAuth)
- *   3. Nhập email → Next → nhập mật khẩu → Login
- *   4. Xử lý CAPTCHA (Cloudflare Turnstile) nếu xuất hiện — chờ auto-solve
- *   5. Sau khi đăng nhập thành công → reload grok.com
- *   6. Kiểm tra gói SuperGrok qua nhiều indicator
+ *   3. Nhập email → Next → nhập mật khẩu → submit
+ *   4. Xử lý Cloudflare Managed Challenge nếu xuất hiện
+ *   5. Sau login thành công → reload grok.com kiểm tra SuperGrok
  *
  * Result codes:
  *   ACTIVE           — đăng nhập OK, gói SuperGrok còn hiệu lực
  *   PACKAGE_LOST     — đăng nhập OK nhưng không có / hết SuperGrok
  *   PASSWORD_INVALID — sai mật khẩu
- *   ACCOUNT_BANNED   — tài khoản bị suspended
- *   ACCOUNT_LOCKED   — tài khoản bị khóa tạm thời
  *   REQUIRE_2FA      — cần xác minh 2FA / email
- *   CAPTCHA          — bị CAPTCHA chặn không thể tự giải
+ *   CAPTCHA          — Cloudflare block không thể bypass
  *   NETWORK_ERROR    — lỗi kết nối / Chromium chưa cài
  *   TIMEOUT          — hết thời gian
  *   UNKNOWN          — không xác định được
  */
 
 import type { CheckerPlugin, CheckResult, CheckOptions } from "./index.js";
+
+/** Script chèn vào mọi trang để qua bot-detection */
+const STEALTH_SCRIPT = `
+  // 1. Xoá webdriver flag
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  delete (navigator as any).__proto__.webdriver;
+
+  // 2. Chrome runtime giả
+  (window as any).chrome = {
+    app: { isInstalled: false, InstallState: { DISABLED:'disabled',INSTALLED:'installed',NOT_INSTALLED:'not_installed' }, RunningState: { CANNOT_RUN:'cannot_run',READY_TO_RUN:'ready_to_run',RUNNING:'running' } },
+    csi: function(){},
+    loadTimes: function(){},
+    runtime: { PlatformOs: { MAC:'mac',WIN:'win',ANDROID:'android',CROS:'cros',LINUX:'linux',OPENBSD:'openbsd' }, PlatformArch: { ARM:'arm',X86_32:'x86-32',X86_64:'x86-64' }, PlatformNaclArch: { ARM:'arm',X86_32:'x86-32',X86_64:'x86-64' }, RequestUpdateCheckStatus: { THROTTLED:'throttled',NO_UPDATE:'no_update',UPDATE_AVAILABLE:'update_available' }, OnInstalledReason: { INSTALL:'install',UPDATE:'update',CHROME_UPDATE:'chrome_update',SHARED_MODULE_UPDATE:'shared_module_update' }, OnRestartRequiredReason: { APP_UPDATE:'app_update',OS_UPDATE:'os_update',PERIODIC:'periodic' } },
+  };
+
+  // 3. Permissions API không bị detect
+  const origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+  (window.navigator.permissions as any).query = (parameters: any) =>
+    parameters.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
+      : origQuery(parameters);
+
+  // 4. Plugins giả
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+      const arr: any = [
+        { name:'Chrome PDF Plugin',    filename:'internal-pdf-viewer',  description:'Portable Document Format', length:1 },
+        { name:'Chrome PDF Viewer',    filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai', description:'',length:1 },
+        { name:'Native Client',        filename:'internal-nacl-plugin',  description:'',length:2 },
+      ];
+      arr.item   = (i: number) => arr[i];
+      arr.namedItem = (n: string) => arr.find((p: any) => p.name === n) ?? null;
+      arr.refresh   = () => {};
+      Object.setPrototypeOf(arr, PluginArray.prototype);
+      return arr;
+    },
+  });
+
+  // 5. Languages
+  Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
+
+  // 6. outerWidth / outerHeight khớp viewport
+  Object.defineProperty(window, 'outerWidth',  { get: () => window.innerWidth  + 16 });
+  Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 88 });
+
+  // 7. Xoá các biến Playwright/CDP
+  const toDelete = [
+    '__playwright','__pw_manual','__webdriver_evaluate','__selenium_evaluate',
+    '__fxdriver_evaluate','__driver_evaluate','__webdriver_script_func',
+    '__webdriver_script_fn','__webdriver_script_function',
+    '__selenium_unwrapped','__webdriverFunc','__lastWatirAlert',
+    '__lastWatirConfirm','__lastWatirPrompt','_WEBDRIVER_ELEM_CACHE',
+    'ChromeDriverw','cdc_adoQpoasnfa76pfcZLmcfl_Array',
+    'cdc_adoQpoasnfa76pfcZLmcfl_Promise','cdc_adoQpoasnfa76pfcZLmcfl_Symbol',
+  ];
+  for (const k of toDelete) {
+    try { delete (window as any)[k]; } catch {}
+  }
+
+  // 8. Iframe contentWindow không bị detect
+  try {
+    const origFrameGetter = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'contentWindow')!.get!;
+    Object.defineProperty(HTMLIFrameElement.prototype,'contentWindow',{
+      get() {
+        const w = origFrameGetter.call(this);
+        if (!w) return w;
+        Object.defineProperty(w.navigator, 'webdriver', { get: () => undefined });
+        return w;
+      }
+    });
+  } catch {}
+`;
 
 const grokPlugin: CheckerPlugin = {
   id: "grok",
@@ -41,22 +110,51 @@ const grokPlugin: CheckerPlugin = {
     const elapsed = () => Date.now() - start;
     const log = (msg: string) => {
       logs.push(`[${elapsed()}ms] ${msg}`);
-      console.log(`[grok-checker] ${msg}`);
+      console.log(`[grok] ${msg}`);
     };
 
-    const safeText = async (page: any, sel: string, t = 5_000) =>
-      page.locator(sel).first().textContent({ timeout: t }).catch(() => "");
+    const bodyText = async (page: any): Promise<string> =>
+      page.locator("body").innerText().catch(() => "");
 
-    const safeVisible = async (page: any, sel: string, t = 5_000) =>
+    const isVisible = async (page: any, sel: string, t = 5_000): Promise<boolean> =>
       page.locator(sel).first().isVisible({ timeout: t }).catch(() => false);
 
-    const bodyText = async (page: any) =>
-      page.locator("body").innerText().catch(() => "");
+    /** Đợi Cloudflare challenge tự giải — trả về true nếu qua được */
+    const waitCloudflare = async (page: any, maxMs: number): Promise<boolean> => {
+      const deadline = Date.now() + maxMs;
+      while (Date.now() < deadline) {
+        const bt = await bodyText(page);
+        const url = page.url() as string;
+        // Trang CF challenge
+        if (/Performing security verification|Just a moment|checking your browser|security service.*malicious bot/i.test(bt)) {
+          log(`Cloudflare challenge active — waiting (${Math.round((deadline - Date.now()) / 1000)}s left)`);
+          await page.waitForTimeout(4_000);
+          // Thỉnh thoảng CF cần reload
+          if (Date.now() + 4_000 < deadline) {
+            const stillCf = await bodyText(page);
+            if (/Performing security verification|Just a moment/i.test(stillCf)) {
+              // Thử reload trang một lần
+              if ((deadline - Date.now()) > 20_000) {
+                log("CF still active after 4s — reloading page");
+                await page.reload({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {});
+                await page.waitForTimeout(5_000);
+              }
+            }
+          }
+          continue;
+        }
+        // Đã qua challenge
+        return true;
+      }
+      // Hết giờ — kiểm tra lần cuối
+      const bt = await bodyText(page);
+      return !/Performing security verification|Just a moment|checking your browser/i.test(bt);
+    };
 
     try {
       const { chromium } = await import("playwright");
 
-      log("Launching Chromium (stealth mode)");
+      log("Launching Chromium");
       browser = await chromium.launch({
         headless: true,
         args: [
@@ -66,8 +164,11 @@ const grokPlugin: CheckerPlugin = {
           "--disable-gpu",
           "--disable-blink-features=AutomationControlled",
           "--window-size=1280,900",
-          "--disable-web-security",
-          "--allow-running-insecure-content",
+          "--disable-features=IsolateOrigins,site-per-process",
+          "--disable-site-isolation-trials",
+          "--disable-extensions",
+          "--no-first-run",
+          "--ignore-certificate-errors",
         ],
       });
 
@@ -80,72 +181,53 @@ const grokPlugin: CheckerPlugin = {
         timezoneId: "America/New_York",
         extraHTTPHeaders: {
           "Accept-Language": "en-US,en;q=0.9",
+          "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+          "sec-ch-ua-mobile": "?0",
+          "sec-ch-ua-platform": '"Windows"',
         },
       });
 
-      // Stealth: ẩn webdriver fingerprint
-      await ctx.addInitScript(() => {
-        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-        // @ts-ignore
-        window.chrome = { runtime: {} };
-        Object.defineProperty(navigator, "plugins", {
-          get: () => [1, 2, 3, 4, 5],
-        });
-        Object.defineProperty(navigator, "languages", {
-          get: () => ["en-US", "en"],
-        });
-      });
+      await ctx.addInitScript(STEALTH_SCRIPT);
 
       const page = await ctx.newPage();
-      // Không set defaultTimeout quá thấp — các bước sẽ dùng timeout riêng
       page.setDefaultTimeout(timeoutMs);
 
-      // ── 1. Vào grok.com ──────────────────────────────────────────────────────
-      log("Navigating to https://grok.com");
+      // ── 1. Mở grok.com ───────────────────────────────────────────────────────
+      log("Opening grok.com");
       await page.goto("https://grok.com", {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
       });
       await page.waitForTimeout(3_000);
 
-      let url = page.url();
-      log(`After grok.com load — URL: ${url}`);
+      let url = page.url() as string;
+      log(`grok.com loaded — URL: ${url}`);
 
-      // Nếu đã ở trang login (redirect tự động)
-      const atLoginAlready =
+      // ── 2. Đến trang đăng nhập ───────────────────────────────────────────────
+      const alreadyAuth =
         url.includes("grok.com/auth") ||
         url.includes("/login") ||
         url.includes("/signin");
 
-      if (!atLoginAlready) {
-        // Tìm nút Sign in / Log in trên trang chủ grok.com
+      if (!alreadyAuth) {
+        // Thử click nút Sign in
         const signInSels = [
-          'a[href*="sign-in"]',
-          'a[href*="login"]',
-          'a[href*="auth"]',
-          'button:has-text("Sign in")',
-          'button:has-text("Log in")',
-          'a:has-text("Sign in")',
-          'a:has-text("Log in")',
-          '[data-testid*="login"]',
-          '[data-testid*="signin"]',
+          'button:has-text("Sign in")', 'a:has-text("Sign in")',
+          'button:has-text("Log in")', 'a:has-text("Log in")',
+          'a[href*="sign-in"]', 'a[href*="login"]', 'a[href*="auth"]',
         ];
-
         let clicked = false;
         for (const sel of signInSels) {
-          const btn = page.locator(sel).first();
-          if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-            log(`Clicking sign-in via selector: ${sel}`);
-            await btn.click();
+          if (await isVisible(page, sel, 3_000)) {
+            log(`Clicking: ${sel}`);
+            await page.locator(sel).first().click();
             await page.waitForTimeout(3_000);
             clicked = true;
             break;
           }
         }
-
         if (!clicked) {
-          // Thử navigate trực tiếp đến trang auth của grok.com
-          log("Sign in button not found → navigating to /auth/login");
+          log("No sign-in button → going to /auth/login directly");
           await page.goto("https://grok.com/auth/login", {
             waitUntil: "domcontentloaded",
             timeout: 20_000,
@@ -154,67 +236,98 @@ const grokPlugin: CheckerPlugin = {
         }
       }
 
-      url = page.url();
-      log(`After sign-in navigation — URL: ${url}`);
+      url = page.url() as string;
+      log(`At auth page — URL: ${url}`);
 
-      // ── 2. Tìm và chọn "Continue with Email" (không dùng X OAuth) ────────────
-      // grok.com thường hiển thị nhiều lựa chọn đăng nhập
-      const emailLoginSels = [
+      // ── 3. Xử lý Cloudflare challenge ────────────────────────────────────────
+      {
+        const bt = await bodyText(page);
+        if (/Performing security verification|Just a moment|checking your browser|security service.*malicious bot/i.test(bt)) {
+          log("Cloudflare Managed Challenge detected — waiting up to 50s for auto-solve");
+          const passed = await waitCloudflare(page, 50_000);
+          if (!passed) {
+            return {
+              code: "CAPTCHA",
+              message: "Cloudflare bot protection không thể bypass trong headless mode. VPS IP bị block.",
+              responseTime: elapsed(),
+              playwrightLog: logs.join("\n"),
+            };
+          }
+          url = page.url() as string;
+          log(`After CF — URL: ${url}`);
+        }
+      }
+
+      // ── 4. Chọn "Continue with email" nếu có ─────────────────────────────────
+      const emailBtnSels = [
         'button:has-text("Continue with email")',
         'button:has-text("Sign in with email")',
-        'button:has-text("Email")',
         'a:has-text("Continue with email")',
-        'a:has-text("Sign in with email")',
         '[data-provider="email"]',
-        'button[type="button"]:has-text("email")',
       ];
-
-      let emailLoginClicked = false;
-      for (const sel of emailLoginSels) {
-        const btn = page.locator(sel).first();
-        if (await btn.isVisible({ timeout: 4_000 }).catch(() => false)) {
-          log(`Clicking email login option: ${sel}`);
-          await btn.click();
+      for (const sel of emailBtnSels) {
+        if (await isVisible(page, sel, 4_000)) {
+          log(`Clicking email login: ${sel}`);
+          await page.locator(sel).first().click();
           await page.waitForTimeout(2_500);
-          emailLoginClicked = true;
           break;
         }
       }
 
-      if (!emailLoginClicked) {
-        log("Email login button not found — may already be on email form");
-      }
-
-      url = page.url();
+      url = page.url() as string;
       log(`After email option — URL: ${url}`);
 
-      // ── 3. Điền email ────────────────────────────────────────────────────────
-      const emailSelectors = [
+      // Có thể lại gặp CF sau click
+      {
+        const bt = await bodyText(page);
+        if (/Performing security verification|Just a moment/i.test(bt)) {
+          log("CF challenge after email click — waiting 30s");
+          const passed = await waitCloudflare(page, 30_000);
+          if (!passed) {
+            return {
+              code: "CAPTCHA",
+              message: "Cloudflare block ở bước chọn email login",
+              responseTime: elapsed(),
+              playwrightLog: logs.join("\n"),
+            };
+          }
+        }
+      }
+
+      // ── 5. Nhập email ────────────────────────────────────────────────────────
+      const emailInputSels = [
         'input[type="email"]',
         'input[name="email"]',
         'input[autocomplete="email"]',
         'input[placeholder*="email" i]',
-        'input[placeholder*="Email" i]',
         'input[type="text"]',
       ];
 
       let emailInput: any = null;
-      for (const sel of emailSelectors) {
+      for (const sel of emailInputSels) {
         const el = page.locator(sel).first();
-        if (await el.isVisible({ timeout: 5_000 }).catch(() => false)) {
+        if (await el.isVisible({ timeout: 8_000 }).catch(() => false)) {
           emailInput = el;
-          log(`Found email input: ${sel}`);
+          log(`Email input found: ${sel}`);
           break;
         }
       }
 
       if (!emailInput) {
-        // Screenshot để debug
-        const bodySnip = (await bodyText(page)).slice(0, 500);
-        log(`Email input not found. Body: ${bodySnip}`);
+        const bt = (await bodyText(page)).slice(0, 600);
+        log(`Email input not found — body: ${bt}`);
+        // Kiểm tra CF lần nữa
+        if (/Performing security verification|Just a moment|security service/i.test(bt)) {
+          return {
+            code: "CAPTCHA",
+            message: "Cloudflare bot protection chặn — không vào được form đăng nhập",
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n"),
+          };
+        }
         return {
           code: "UNKNOWN",
-          message: `Không tìm thấy ô nhập email trên grok.com — URL: ${url.split("?")[0]}`,
+          message: `Không tìm thấy ô email — URL: ${url.split("?")[0]}`,
           responseTime: elapsed(),
           playwrightLog: logs.join("\n"),
         };
@@ -222,73 +335,47 @@ const grokPlugin: CheckerPlugin = {
 
       log("Filling email");
       await emailInput.click();
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(400);
       await emailInput.fill(email);
       await page.waitForTimeout(500);
 
-      // Click Next / Continue
-      const nextBtns = [
-        'button:has-text("Next")',
-        'button:has-text("Continue")',
-        'button[type="submit"]',
-        'input[type="submit"]',
+      // Next / Continue
+      const nextSels = [
+        'button:has-text("Next")', 'button:has-text("Continue")', 'button[type="submit"]',
       ];
-
       let nextClicked = false;
-      for (const sel of nextBtns) {
-        const btn = page.locator(sel).first();
-        if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-          log(`Clicking Next: ${sel}`);
-          await btn.click();
+      for (const sel of nextSels) {
+        if (await isVisible(page, sel, 3_000)) {
+          log(`Next: ${sel}`);
+          await page.locator(sel).first().click();
           nextClicked = true;
           break;
         }
       }
-      if (!nextClicked) {
-        log("Next button not found — pressing Enter");
-        await emailInput.press("Enter");
-      }
-
+      if (!nextClicked) await emailInput.press("Enter");
       await page.waitForTimeout(3_000);
-      url = page.url();
+
+      url = page.url() as string;
       log(`After email submit — URL: ${url}`);
 
-      // ── 4. Điền mật khẩu ────────────────────────────────────────────────────
-      const pwSelectors = [
-        'input[type="password"]',
-        'input[name="password"]',
-        'input[autocomplete="current-password"]',
-      ];
-
+      // ── 6. Nhập mật khẩu ────────────────────────────────────────────────────
       let pwInput: any = null;
-      for (const sel of pwSelectors) {
+      for (const sel of ['input[type="password"]', 'input[name="password"]', 'input[autocomplete="current-password"]']) {
         const el = page.locator(sel).first();
-        if (await el.isVisible({ timeout: 10_000 }).catch(() => false)) {
+        if (await el.isVisible({ timeout: 12_000 }).catch(() => false)) {
           pwInput = el;
-          log(`Found password input: ${sel}`);
+          log(`Password input found: ${sel}`);
           break;
         }
       }
 
       if (!pwInput) {
         const bt = (await bodyText(page)).slice(0, 600);
-        log(`Password input not found. Body: ${bt}`);
-
-        // Kiểm tra xem có thông báo lỗi không
+        log(`Password not found — body: ${bt}`);
         if (/invalid|not found|no account|doesn't exist/i.test(bt)) {
-          return {
-            code: "PASSWORD_INVALID",
-            message: "Email không tồn tại hoặc không hợp lệ",
-            responseTime: elapsed(),
-            playwrightLog: logs.join("\n"),
-          };
+          return { code: "PASSWORD_INVALID", message: "Email không tồn tại", responseTime: elapsed(), playwrightLog: logs.join("\n") };
         }
-        return {
-          code: "UNKNOWN",
-          message: `Không tìm thấy ô mật khẩu — URL: ${url.split("?")[0]}`,
-          responseTime: elapsed(),
-          playwrightLog: logs.join("\n"),
-        };
+        return { code: "UNKNOWN", message: `Không tìm thấy ô mật khẩu — URL: ${url.split("?")[0]}`, responseTime: elapsed(), playwrightLog: logs.join("\n") };
       }
 
       log("Filling password");
@@ -297,21 +384,16 @@ const grokPlugin: CheckerPlugin = {
       await pwInput.fill(password);
       await page.waitForTimeout(500);
 
-      // ── 5. Submit login ──────────────────────────────────────────────────────
-      const loginBtns = [
-        'button:has-text("Sign in")',
-        'button:has-text("Log in")',
-        'button:has-text("Login")',
-        'button[type="submit"]',
-        'input[type="submit"]',
+      // ── 7. Submit ────────────────────────────────────────────────────────────
+      const loginSels = [
+        'button:has-text("Sign in")', 'button:has-text("Log in")',
+        'button:has-text("Login")',   'button[type="submit"]',
       ];
-
       let loginClicked = false;
-      for (const sel of loginBtns) {
-        const btn = page.locator(sel).first();
-        if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-          log(`Clicking login button: ${sel}`);
-          await btn.click();
+      for (const sel of loginSels) {
+        if (await isVisible(page, sel, 3_000)) {
+          log(`Login button: ${sel}`);
+          await page.locator(sel).first().click();
           loginClicked = true;
           break;
         }
@@ -321,261 +403,165 @@ const grokPlugin: CheckerPlugin = {
         await pwInput.press("Enter");
       }
 
-      log("Waiting for login result (up to 30s)...");
+      log("Waiting for login result...");
       await page.waitForTimeout(5_000);
 
-      // ── 6. Xử lý CAPTCHA (Cloudflare Turnstile / hCaptcha) ──────────────────
-      // Turnstile thường tự giải trong headless nếu browser đủ stealth
-      // Chờ tối đa 30s để captcha tự solve
-      const captchaIndicators = [
-        'iframe[src*="challenges.cloudflare.com"]',
-        'iframe[src*="turnstile"]',
-        'iframe[src*="hcaptcha"]',
-        '[class*="captcha"]',
-        '[id*="captcha"]',
-        'input[name="cf-turnstile-response"]',
-      ];
-
-      let hasCaptcha = false;
-      for (const sel of captchaIndicators) {
-        if (await safeVisible(page, sel, 3_000)) {
-          hasCaptcha = true;
-          log(`CAPTCHA detected: ${sel} — waiting for auto-solve (30s)...`);
-          break;
-        }
-      }
-
-      if (hasCaptcha) {
-        // Chờ CAPTCHA tự giải và form submit
-        let captchaResolved = false;
-        for (let i = 0; i < 6; i++) {
-          await page.waitForTimeout(5_000);
-          url = page.url();
-          // Nếu đã redirect sang trang khác → captcha đã giải
-          if (!url.includes("/login") && !url.includes("/auth/login")) {
-            captchaResolved = true;
-            log(`CAPTCHA resolved — redirected to: ${url}`);
-            break;
+      // ── 8. Xử lý CAPTCHA / Turnstile sau submit ──────────────────────────────
+      {
+        const bt = await bodyText(page);
+        if (/Performing security verification|Just a moment|security service/i.test(bt)) {
+          log("CF challenge after submit — waiting 40s");
+          const passed = await waitCloudflare(page, 40_000);
+          if (!passed) {
+            return { code: "CAPTCHA", message: "Cloudflare block ở bước submit login", responseTime: elapsed(), playwrightLog: logs.join("\n") };
           }
-          // Thử click nút submit nếu captcha đã tích xong
-          const submitBtn = page.locator('button[type="submit"], button:has-text("Sign in"), button:has-text("Continue")').first();
-          if (await submitBtn.isEnabled({ timeout: 1_000 }).catch(() => false)) {
-            const isLoading = await submitBtn.getAttribute("data-loading").catch(() => null);
-            if (!isLoading) {
-              log(`Retrying submit after captcha (attempt ${i + 1})`);
-              await submitBtn.click().catch(() => {});
-              await page.waitForTimeout(3_000);
+          url = page.url() as string;
+          log(`After submit CF — URL: ${url}`);
+        }
+
+        // Turnstile trên form (iframe)
+        const hasTurnstile =
+          await isVisible(page, 'iframe[src*="challenges.cloudflare.com"]', 2_000) ||
+          await isVisible(page, 'iframe[src*="turnstile"]', 2_000);
+        if (hasTurnstile) {
+          log("Turnstile CAPTCHA on form — waiting up to 30s for auto-solve");
+          for (let i = 0; i < 6; i++) {
+            await page.waitForTimeout(5_000);
+            url = page.url() as string;
+            if (!url.includes("/login") && !url.includes("/auth")) break;
+            // Thử submit lại
+            const btn = page.locator('button[type="submit"]:not([disabled])').first();
+            if (await btn.isVisible({ timeout: 1_000 }).catch(() => false)) {
+              log(`Retrying submit (${i + 1})`);
+              await btn.click().catch(() => {});
             }
           }
         }
-
-        if (!captchaResolved) {
-          url = page.url();
-          if (url.includes("/login") || url.includes("/auth")) {
-            return {
-              code: "CAPTCHA",
-              message: "Grok.com yêu cầu CAPTCHA và không thể tự giải trong headless mode",
-              responseTime: elapsed(),
-              playwrightLog: logs.join("\n"),
-            };
-          }
-        }
       }
 
-      // ── 7. Kiểm tra kết quả đăng nhập ───────────────────────────────────────
-      url = page.url();
-      log(`After login attempt — URL: ${url}`);
-
-      // Chờ thêm để redirect hoàn tất
+      // Chờ redirect ra khỏi trang login
+      url = page.url() as string;
       if (url.includes("/login") || url.includes("/auth/login")) {
         try {
-          await page.waitForURL((u: string) => !u.includes("/login") && !u.includes("/auth/login"), { timeout: 15_000 });
-          url = page.url();
+          await page.waitForURL(
+            (u: string) => !u.includes("/login") && !u.includes("/auth/login"),
+            { timeout: 20_000 },
+          );
+          url = page.url() as string;
           log(`Redirected after login — URL: ${url}`);
         } catch {
-          url = page.url();
+          url = page.url() as string;
           log(`Still on login page — URL: ${url}`);
         }
       }
 
-      // Kiểm tra lỗi đăng nhập
-      const bt = await bodyText(page);
+      // ── 9. Kiểm tra lỗi đăng nhập ───────────────────────────────────────────
+      const afterBt = await bodyText(page);
       if (url.includes("/login") || url.includes("/auth/login")) {
-        if (/invalid.*password|wrong.*password|incorrect.*password|password.*incorrect/i.test(bt) ||
-            /invalid.*email|wrong.*email|email.*not.*found/i.test(bt)) {
-          return {
-            code: "PASSWORD_INVALID",
-            message: "Sai email hoặc mật khẩu",
-            responseTime: elapsed(),
-            playwrightLog: logs.join("\n"),
-          };
+        if (/invalid.*password|wrong.*password|incorrect.*password|password.*incorrect|incorrect.*email/i.test(afterBt)) {
+          return { code: "PASSWORD_INVALID", message: "Sai email hoặc mật khẩu", responseTime: elapsed(), playwrightLog: logs.join("\n") };
         }
-        if (/verify.*email|confirm.*email|check.*email/i.test(bt)) {
-          return {
-            code: "REQUIRE_2FA",
-            message: "Cần xác minh email",
-            responseTime: elapsed(),
-            playwrightLog: logs.join("\n"),
-          };
+        if (/verify.*email|confirm.*email|check.*email/i.test(afterBt)) {
+          return { code: "REQUIRE_2FA", message: "Cần xác minh email", responseTime: elapsed(), playwrightLog: logs.join("\n") };
         }
-        if (/two.factor|2fa|authenticator|verification code/i.test(bt)) {
-          return {
-            code: "REQUIRE_2FA",
-            message: "Cần xác minh 2FA",
-            responseTime: elapsed(),
-            playwrightLog: logs.join("\n"),
-          };
+        if (/two.factor|2fa|authenticator/i.test(afterBt)) {
+          return { code: "REQUIRE_2FA", message: "Cần xác minh 2FA", responseTime: elapsed(), playwrightLog: logs.join("\n") };
         }
-        return {
-          code: "UNKNOWN",
-          message: `Đăng nhập không thành công — vẫn ở trang login: ${url.split("?")[0]}`,
-          responseTime: elapsed(),
-          playwrightLog: logs.join("\n"),
-        };
+        if (/Performing security verification|Just a moment/i.test(afterBt)) {
+          return { code: "CAPTCHA", message: "Cloudflare block sau login", responseTime: elapsed(), playwrightLog: logs.join("\n") };
+        }
+        return { code: "UNKNOWN", message: `Login không thành công — URL: ${url.split("?")[0]}`, responseTime: elapsed(), playwrightLog: logs.join("\n") };
       }
 
-      // ── 8. Đã vào grok.com — reload và kiểm tra SuperGrok ───────────────────
-      log("Login successful — reloading grok.com to check subscription");
+      // ── 10. Reload grok.com và kiểm tra SuperGrok ────────────────────────────
+      log("Login OK — reloading grok.com to check subscription");
       await page.goto("https://grok.com", {
         waitUntil: "domcontentloaded",
         timeout: 20_000,
       });
       await page.waitForTimeout(4_000);
 
-      url = page.url();
+      url = page.url() as string;
       log(`After reload — URL: ${url}`);
 
-      // Kiểm tra có bị đá ra login không
-      if (url.includes("/login") || url.includes("/auth/login")) {
-        return {
-          code: "UNKNOWN",
-          message: "Đăng nhập bị reset sau reload — session không giữ được",
-          responseTime: elapsed(),
-          playwrightLog: logs.join("\n"),
-        };
+      if (url.includes("/login") || url.includes("/auth")) {
+        return { code: "UNKNOWN", message: "Session bị reset sau reload", responseTime: elapsed(), playwrightLog: logs.join("\n") };
       }
 
-      // ── 9. Phát hiện SuperGrok subscription ─────────────────────────────────
       let isSuper = false;
       let subscriptionPlan = "";
 
-      // a) Body text của trang chính
-      const pageBody = await bodyText(page);
-      log(`Body snippet (500): ${pageBody.slice(0, 500)}`);
-
-      if (/supergrok|super\s*grok|grok\s*super|SuperGrok/i.test(pageBody)) {
+      // a) Body text trang chủ
+      const homeBody = await bodyText(page);
+      log(`Home body (500): ${homeBody.slice(0, 500)}`);
+      if (/supergrok|super\s*grok|grok\s*super|SuperGrok/i.test(homeBody)) {
         isSuper = true;
         subscriptionPlan = "SuperGrok";
-        log("Found SuperGrok in page body");
+        log("Found SuperGrok in home body");
       }
 
-      // b) API session check
+      // b) Session API
       if (!isSuper) {
         try {
-          const sessionData: any = await page.evaluate(async () => {
+          const sess: any = await page.evaluate(async () => {
             const r = await fetch("/api/auth/session", { credentials: "include" }).catch(() => null);
             return r ? r.json().catch(() => null) : null;
           });
-          if (sessionData) {
-            const sessionStr = JSON.stringify(sessionData);
-            log(`Session API: ${sessionStr.slice(0, 400)}`);
-            if (/super|pro|premium|subscription|active/i.test(sessionStr)) {
+          if (sess) {
+            const s = JSON.stringify(sess);
+            log(`Session: ${s.slice(0, 400)}`);
+            if (/super|pro|premium|subscription/i.test(s)) {
               isSuper = true;
-              const m = sessionStr.match(/(SuperGrok|super_grok|grok_pro|grokPro|premium)/i);
-              if (m) subscriptionPlan = m[0];
-              log(`Found subscription in session: ${subscriptionPlan}`);
-            }
-          }
-        } catch (err: any) {
-          log(`Session API error: ${err?.message?.slice(0, 80)}`);
-        }
-      }
-
-      // c) Trang /settings
-      if (!isSuper) {
-        try {
-          log("Checking /settings for subscription info");
-          await page.goto("https://grok.com/settings", {
-            waitUntil: "domcontentloaded",
-            timeout: 15_000,
-          });
-          await page.waitForTimeout(3_000);
-
-          const settingsText = await bodyText(page);
-          log(`Settings body (800): ${settingsText.slice(0, 800)}`);
-
-          const planMatch = settingsText.match(
-            /(SuperGrok|Super\s*Grok|Grok\s*Super|annual|monthly|subscriber|Premium|Pro Plan)/i,
-          );
-          if (planMatch) {
-            subscriptionPlan = planMatch[0];
-            isSuper = true;
-            log(`Found subscription in settings: ${subscriptionPlan}`);
-          }
-
-          // Kiểm tra badge/class
-          const badges = await page
-            .locator('[class*="badge"], [class*="plan"], [class*="tier"], [class*="subscription"], [class*="premium"]')
-            .allTextContents()
-            .catch(() => [] as string[]);
-          if (badges.some((b: string) => /super|pro|premium/i.test(b))) {
-            isSuper = true;
-            subscriptionPlan = badges.find((b: string) => /super|pro|premium/i.test(b)) ?? "SuperGrok";
-            log(`Found subscription badge: ${subscriptionPlan}`);
-          }
-        } catch (err: any) {
-          log(`Settings error: ${err?.message?.slice(0, 80)}`);
-        }
-      }
-
-      // d) Quay về trang chính — kiểm tra sidebar / profile menu
-      if (!isSuper) {
-        try {
-          await page.goto("https://grok.com", {
-            waitUntil: "domcontentloaded",
-            timeout: 15_000,
-          });
-          await page.waitForTimeout(3_000);
-
-          const planSels = [
-            '[class*="SuperGrok"], [class*="supergrok"]',
-            'span:has-text("SuperGrok"), div:has-text("SuperGrok")',
-            '[data-testid*="plan"], [data-testid*="subscription"]',
-            'nav span, aside span',
-          ];
-          for (const sel of planSels) {
-            const texts = await page.locator(sel).allTextContents().catch(() => [] as string[]);
-            const hit = texts.find((t: string) => /super|pro/i.test(t));
-            if (hit) {
-              isSuper = true;
-              subscriptionPlan = hit.trim();
-              log(`Found via selector "${sel}": ${subscriptionPlan}`);
-              break;
-            }
-          }
-
-          // Profile menu
-          const profileBtn = page.locator(
-            '[data-testid="user-menu"], [aria-label*="menu" i], ' +
-            'button[aria-label*="profile" i], [data-testid*="avatar"]',
-          ).first();
-          if (!isSuper && await profileBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-            await profileBtn.click().catch(() => {});
-            await page.waitForTimeout(1_500);
-            const menuText = await bodyText(page);
-            if (/SuperGrok|super\s*grok|super\s*plan/i.test(menuText)) {
-              isSuper = true;
-              const m = menuText.match(/SuperGrok|super\s*grok|super\s*plan/i);
+              const m = s.match(/(SuperGrok|super_grok|grok_pro|premium)/i);
               subscriptionPlan = m?.[0] ?? "SuperGrok";
-              log(`Found SuperGrok in profile menu: ${subscriptionPlan}`);
+              log(`Found in session: ${subscriptionPlan}`);
             }
           }
-        } catch (err: any) {
-          log(`Home page check error: ${err?.message?.slice(0, 80)}`);
-        }
+        } catch {}
       }
 
-      // ── 10. Kết quả ──────────────────────────────────────────────────────────
+      // c) /settings
+      if (!isSuper) {
+        try {
+          await page.goto("https://grok.com/settings", { waitUntil: "domcontentloaded", timeout: 15_000 });
+          await page.waitForTimeout(3_000);
+          const st = await bodyText(page);
+          log(`Settings (800): ${st.slice(0, 800)}`);
+          const m = st.match(/(SuperGrok|Super\s*Grok|annual|monthly|subscriber|Premium|Pro\s*Plan)/i);
+          if (m) { isSuper = true; subscriptionPlan = m[0]; log(`Found in settings: ${subscriptionPlan}`); }
+          const badges = await page.locator('[class*="badge"],[class*="plan"],[class*="tier"],[class*="subscription"],[class*="premium"]')
+            .allTextContents().catch(() => [] as string[]);
+          const hit = badges.find((b: string) => /super|pro|premium/i.test(b));
+          if (hit) { isSuper = true; subscriptionPlan = hit; log(`Found badge: ${subscriptionPlan}`); }
+        } catch (err: any) { log(`Settings err: ${err?.message?.slice(0, 60)}`); }
+      }
+
+      // d) Sidebar / profile menu trên trang chủ
+      if (!isSuper) {
+        try {
+          await page.goto("https://grok.com", { waitUntil: "domcontentloaded", timeout: 15_000 });
+          await page.waitForTimeout(3_000);
+          for (const sel of [
+            '[class*="SuperGrok"],[class*="supergrok"]',
+            'span:has-text("SuperGrok"),div:has-text("SuperGrok")',
+            '[data-testid*="plan"],[data-testid*="subscription"]',
+          ]) {
+            const txts = await page.locator(sel).allTextContents().catch(() => [] as string[]);
+            const hit = txts.find((t: string) => /super|pro/i.test(t));
+            if (hit) { isSuper = true; subscriptionPlan = hit.trim(); log(`Found via ${sel}: ${subscriptionPlan}`); break; }
+          }
+          // Profile menu
+          const pBtn = page.locator('[data-testid="user-menu"],[aria-label*="menu" i],button[aria-label*="profile" i]').first();
+          if (!isSuper && await pBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+            await pBtn.click().catch(() => {});
+            await page.waitForTimeout(1_500);
+            const mt = await bodyText(page);
+            const m = mt.match(/SuperGrok|super\s*grok|super\s*plan/i);
+            if (m) { isSuper = true; subscriptionPlan = m[0]; log(`Found in profile menu: ${subscriptionPlan}`); }
+          }
+        } catch (err: any) { log(`Home check err: ${err?.message?.slice(0, 60)}`); }
+      }
+
       const finalTime = elapsed();
       if (isSuper) {
         return {
@@ -585,7 +571,6 @@ const grokPlugin: CheckerPlugin = {
           playwrightLog: logs.join("\n"),
         };
       }
-
       return {
         code: "PACKAGE_LOST",
         message: "Đăng nhập OK nhưng không phát hiện gói SuperGrok (hết hạn hoặc chưa đăng ký)",
@@ -597,37 +582,12 @@ const grokPlugin: CheckerPlugin = {
       const responseTime = elapsed();
       const msg: string = e?.message ?? String(e);
       log(`Exception: ${msg.slice(0, 300)}`);
-
-      if (/timeout/i.test(msg)) {
-        return {
-          code: "TIMEOUT",
-          message: `Timeout sau ${timeoutMs}ms`,
-          responseTime,
-          playwrightLog: logs.join("\n"),
-        };
+      if (/timeout/i.test(msg)) return { code: "TIMEOUT", message: `Timeout sau ${timeoutMs}ms`, responseTime, playwrightLog: logs.join("\n") };
+      if (/Executable doesn't exist|browserType\.launch|Cannot find browser|Failed to launch|spawn.*ENOENT|Cannot find package.*playwright/i.test(msg)) {
+        return { code: "NETWORK_ERROR", message: "Chromium/playwright chưa cài. Chạy: npx playwright install chromium --with-deps", responseTime, playwrightLog: logs.join("\n") };
       }
-      if (/Executable doesn't exist|browserType\.launch|Cannot find browser|browser.*not.*found|Failed to launch|spawn.*ENOENT|Cannot find package.*playwright/i.test(msg)) {
-        return {
-          code: "NETWORK_ERROR",
-          message: "Chromium / playwright chưa cài. Chạy: npx playwright install chromium --with-deps",
-          responseTime,
-          playwrightLog: logs.join("\n"),
-        };
-      }
-      if (/net::|ERR_/i.test(msg)) {
-        return {
-          code: "NETWORK_ERROR",
-          message: `Lỗi kết nối: ${msg.slice(0, 150)}`,
-          responseTime,
-          playwrightLog: logs.join("\n"),
-        };
-      }
-      return {
-        code: "UNKNOWN",
-        message: `Playwright error: ${msg.slice(0, 200)}`,
-        responseTime,
-        playwrightLog: logs.join("\n"),
-      };
+      if (/net::|ERR_/i.test(msg)) return { code: "NETWORK_ERROR", message: `Lỗi kết nối: ${msg.slice(0, 150)}`, responseTime, playwrightLog: logs.join("\n") };
+      return { code: "UNKNOWN", message: `Playwright error: ${msg.slice(0, 200)}`, responseTime, playwrightLog: logs.join("\n") };
     } finally {
       await browser?.close().catch(() => {});
     }
