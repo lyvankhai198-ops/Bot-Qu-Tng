@@ -21,7 +21,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ChatMemberHandler, ContextTypes, filters,
+    ChatMemberHandler, ChatJoinRequestHandler, ContextTypes, filters,
 )
 from telegram.constants import ParseMode
 
@@ -2353,8 +2353,52 @@ async def _notify_gift_box_creator(
     except Exception as e:
         logger.warning(f"GiftBox notify error creator={creator_id}: {e}")
 
+async def handle_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fires when someone requests to join via our tracked invite link (channel mode)."""
+    req = update.chat_join_request
+    if not req:
+        return
+
+    invitee_id      = req.from_user.id
+    invite_link_obj = req.invite_link
+
+    # Always approve the join request first so the user enters the channel
+    try:
+        await req.approve()
+    except Exception as e:
+        logger.warning(f"GiftBox approve join request error: {e}")
+
+    if not invite_link_obj:
+        return
+
+    link_url = invite_link_obj.invite_link
+    rec      = db.lookup_gift_box_invite_link(link_url)
+    if not rec:
+        return  # Not a gift-box tracked link
+
+    event_id   = rec["event_id"]
+    creator_id = rec["creator_id"]
+
+    if creator_id == invitee_id:
+        return  # Self-invite
+
+    ev = _get_active_gift_box_event()
+    if not ev or ev["id"] != event_id:
+        return
+
+    result = db.record_gift_box_referral(event_id, creator_id, invitee_id)
+    if not result.get("added"):
+        return  # Already counted
+
+    required = int(ev.get("requiredInvites", 1))
+    await _notify_gift_box_creator(
+        context, event_id, creator_id,
+        total=result["total"], required=required,
+        ev_name=ev.get("name", "Ô Quà Bí Mật"),
+    )
+
 async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fires when someone joins a channel via our tracked invite link."""
+    """Fires when someone joins a supergroup via our tracked invite link (group mode)."""
     member = update.chat_member
     if not member:
         return
@@ -2362,7 +2406,7 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     old_status = member.old_chat_member.status
     new_status = member.new_chat_member.status
 
-    # Only care about new joins (not already a member)
+    # Only care about new joins
     if new_status not in ("member", "administrator", "creator"):
         return
     if old_status in ("member", "administrator", "creator"):
@@ -2375,14 +2419,14 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     link_url = invite_link_obj.invite_link
     rec = db.lookup_gift_box_invite_link(link_url)
     if not rec:
-        return  # Not our gift box link
+        return
 
     event_id   = rec["event_id"]
     creator_id = rec["creator_id"]
     invitee_id = member.new_chat_member.user.id
 
     if creator_id == invitee_id:
-        return  # Self-invite
+        return
 
     ev = _get_active_gift_box_event()
     if not ev or ev["id"] != event_id:
@@ -2390,7 +2434,7 @@ async def handle_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     result = db.record_gift_box_referral(event_id, creator_id, invitee_id)
     if not result.get("added"):
-        return  # Already counted
+        return
 
     required = int(ev.get("requiredInvites", 1))
     await _notify_gift_box_creator(
@@ -2418,7 +2462,7 @@ async def _get_or_create_gift_box_link(
         link_obj = await context.bot.create_chat_invite_link(
             chat_id=channel_id,
             name=f"gbox_{eid[-8:]}_{user_id}",
-            creates_join_request=False,
+            creates_join_request=True,   # channel: dùng join request để nhận event
         )
         link_url = link_obj.invite_link
         db.register_gift_box_invite_link(link_url, eid, user_id)
@@ -2884,7 +2928,8 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_check_join,    pattern=r"^check_join$"))
     app.add_handler(CallbackQueryHandler(callback_back_main,     pattern=r"^back_main$"))
     app.add_handler(CallbackQueryHandler(callback_gift_box,      pattern=r"^gbox[_:]"))
-    app.add_handler(ChatMemberHandler(handle_chat_member,        chat_member_types=ChatMemberHandler.CHAT_MEMBER))
+    app.add_handler(ChatJoinRequestHandler(handle_chat_join_request))               # channel: join request
+    app.add_handler(ChatMemberHandler(handle_chat_member, chat_member_types=ChatMemberHandler.CHAT_MEMBER))  # supergroup
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
