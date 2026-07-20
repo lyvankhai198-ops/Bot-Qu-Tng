@@ -49,3 +49,15 @@ VPS_DEPLOY_PATH = "/root/Bot-Qu-Tng"
 VPS_HOST = "103.180.138.203"
 VPS_SERVICE = "gift-bot"
 VPS_USER = "root"
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 80
+
+[[ports]]
+localPort = 20130
+externalPort = 3000

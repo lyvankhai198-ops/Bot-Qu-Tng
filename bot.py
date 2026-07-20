@@ -9,6 +9,8 @@ import time
 import json as _json
 import urllib.request
 import urllib.error
+import random
+import string
 from datetime import datetime, timedelta, date
 from threading import Thread
 
@@ -47,7 +49,7 @@ def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([
         [t(L, "btn_support"), t(L, "btn_gift")],
         [t(L, "btn_check_order"), t(L, "btn_shop")],
-        [t(L, "btn_intro")],
+        [t(L, "btn_gift_box"), t(L, "btn_intro")],
     ], resize_keyboard=True)
 
 def back_keyboard(user_id: int) -> ReplyKeyboardMarkup:
@@ -1775,7 +1777,7 @@ async def handle_intro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # ─── Menu router ─────────────────────────────────────────────────────────────
 
 # All button keys used in menus — used to auto-detect language from button press
-_MENU_KEYS = ["btn_home", "btn_support", "btn_gift", "btn_check_order", "btn_shop", "btn_intro"]
+_MENU_KEYS = ["btn_home", "btn_support", "btn_gift", "btn_check_order", "btn_shop", "btn_intro", "btn_gift_box"]
 
 def detect_lang_from_text(text: str) -> str | None:
     """Return 'vi' or 'en' if text matches a known menu button, else None."""
@@ -1819,6 +1821,8 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await handle_shop(update, context)
     elif text in (t("vi", "btn_intro"), t("en", "btn_intro")):
         await handle_intro(update, context)
+    elif text in (t("vi", "btn_gift_box"), t("en", "btn_gift_box")):
+        await handle_gift_box(update, context)
     else:
         # Check conversation state
         state = db.get_user_state(user.id).get("conv_state")
@@ -2177,6 +2181,251 @@ async def callback_warranty_noop(update: Update, context: ContextTypes.DEFAULT_T
     """No-op handler for disabled inline buttons (e.g. '✅ Đã tiếp nhận')."""
     await update.callback_query.answer()
 
+# ─── Ô Quà Bí Mật ─────────────────────────────────────────────────────────────
+
+def _gbox_cols(total: int) -> int:
+    """Return column count for a square grid."""
+    import math
+    return max(1, int(math.isqrt(total)))
+
+def _gift_box_grid_keyboard(event: dict, user_id: int) -> InlineKeyboardMarkup:
+    boxes  = event.get("boxes", [])
+    total  = len(boxes)
+    cols   = _gbox_cols(total)
+    eid    = event["id"]
+    prizes = event.get("prizes", [])
+    prize_map = {p["id"]: p for p in prizes}
+
+    rows = []
+    for r in range(0, total, cols):
+        row = []
+        for i in range(r, min(r + cols, total)):
+            box = boxes[i]
+            if box.get("opened"):
+                p = prize_map.get(box.get("prizeId"))
+                is_lucky = not p or p.get("type") == "lucky"
+                if box.get("openedBy") == user_id:
+                    emoji = "🟨"
+                elif is_lucky:
+                    emoji = "✨"
+                else:
+                    emoji = "🎁"
+                row.append(InlineKeyboardButton(emoji, callback_data=f"gbox_view:{eid}:{i}"))
+            else:
+                row.append(InlineKeyboardButton("⬜", callback_data=f"gbox:{eid}:{i}"))
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+def _gift_box_header(event: dict, user_id: int, extra: str = "") -> str:
+    boxes   = event.get("boxes", [])
+    total   = len(boxes)
+    opened  = sum(1 for b in boxes if b.get("opened"))
+    max_p   = int(event.get("maxPicksPerUser", 1))
+    u_picks = sum(1 for b in boxes if b.get("openedBy") == user_id)
+    name    = event.get("name", "Ô Quà Bí Mật")
+    msg = (
+        f"🎁 <b>{name}</b>\n\n"
+        f"📦 Tổng: <b>{total}</b>  ✅ Đã mở: <b>{opened}</b>  ⬜ Còn: <b>{total - opened}</b>\n"
+    )
+    if max_p > 1:
+        msg += f"🎯 Bạn đã chọn: <b>{u_picks}/{max_p}</b> ô\n"
+    if extra:
+        msg += f"\n{extra}"
+    else:
+        msg += "\nChọn một ô để mở:"
+    return msg
+
+async def _apply_gift_box_reward(user, prize: dict | None) -> str:
+    """Apply the prize and return a short confirmation string."""
+    if not prize or prize.get("type") == "lucky":
+        return ""
+    ptype = prize.get("type", "custom")
+    label = prize.get("label", "")
+    value = prize.get("value", "")
+
+    if ptype == "points":
+        try:
+            pts = int(value)
+            db.add_gift_box_reward(user.id, "points", pts)
+            return f"✅ Đã cộng <b>{pts} điểm</b> vào tài khoản."
+        except Exception:
+            return ""
+    elif ptype == "balance":
+        try:
+            amt = float(value)
+            db.add_gift_box_reward(user.id, "balance", amt)
+            return f"✅ Đã cộng <b>{label or value}</b> vào ví."
+        except Exception:
+            return ""
+    elif ptype == "voucher":
+        code = "VCH" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        db.add_voucher(user.id, code, label, value)
+        return f"🎟 Mã voucher: <code>{code}</code>\n(Lưu lại để dùng khi thanh toán)"
+    elif ptype == "warranty":
+        try:
+            days = int(value)
+            return f"🛡 Bạn nhận <b>gia hạn bảo hành {days} ngày</b>.\nLiên hệ hỗ trợ để áp dụng."
+        except Exception:
+            return ""
+    elif ptype == "account":
+        acc = db.pop_account()
+        if acc:
+            db.mark_account_distributed(acc.get("email", ""), user.id)
+            info = f"📧 <code>{acc.get('email','')}</code> / 🔑 <code>{acc.get('password','')}</code>"
+            if acc.get("note"):
+                info += f"\n📝 {acc.get('note')}"
+            return f"🎉 Tài khoản của bạn:\n{info}"
+        return "⚠️ Kho tài khoản tạm hết. Vui lòng nhắn hỗ trợ để nhận thưởng."
+    elif ptype == "spin":
+        try:
+            n = int(value)
+            return f"🎰 Bạn nhận <b>{n} lượt quay</b>. Sẽ được cập nhật sớm!"
+        except Exception:
+            return ""
+    return ""
+
+async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    events = db.get_gift_boxes()
+    now_dt = datetime.now()
+
+    active = None
+    for ev in events:
+        if not ev.get("enabled"):
+            continue
+        s = (ev.get("startTime") or "").strip()
+        e = (ev.get("endTime") or "").strip()
+        try:
+            if s and now_dt < datetime.fromisoformat(s):
+                continue
+        except Exception:
+            pass
+        try:
+            if e and now_dt > datetime.fromisoformat(e):
+                continue
+        except Exception:
+            pass
+        active = ev
+        break
+
+    if not active:
+        await update.message.reply_text(
+            "⏰ Hiện tại không có sự kiện Ô Quà Bí Mật nào.\n\nHãy theo dõi bot để không bỏ lỡ! 🍀",
+            reply_markup=main_keyboard(user.id),
+        )
+        return
+
+    if active.get("membersOnly"):
+        ud = db.get_user(user.id)
+        if not (ud and ud.get("has_received_gift")):
+            await update.message.reply_text(
+                "❌ Sự kiện này chỉ dành cho thành viên đã nhận quà.",
+                reply_markup=main_keyboard(user.id),
+            )
+            return
+
+    if active.get("buyersOnly"):
+        orders = db.get_orders()
+        uid_str = str(user.id)
+        has_order = any(
+            str(o.get("userId") or o.get("user_id") or "") == uid_str
+            for o in orders.values()
+        )
+        if not has_order:
+            await update.message.reply_text(
+                "❌ Sự kiện này chỉ dành cho khách hàng đã mua hàng.",
+                reply_markup=main_keyboard(user.id),
+            )
+            return
+
+    msg = _gift_box_header(active, user.id)
+    kb  = _gift_box_grid_keyboard(active, user.id)
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+async def callback_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user  = query.from_user
+    data  = query.data  # "gbox:<eid>:<idx>" or "gbox_view:<eid>:<idx>"
+
+    parts  = data.split(":")
+    action = parts[0]
+    eid    = parts[1]
+    idx    = int(parts[2])
+
+    if action == "gbox_view":
+        events = db.get_gift_boxes()
+        ev = next((e for e in events if e["id"] == eid), None)
+        if not ev:
+            await query.answer("Sự kiện không tồn tại!", show_alert=True)
+            return
+        boxes = ev.get("boxes", [])
+        if idx >= len(boxes):
+            await query.answer("Ô không tồn tại!", show_alert=True)
+            return
+        box = boxes[idx]
+        prizes = {p["id"]: p for p in ev.get("prizes", [])}
+        p = prizes.get(box.get("prizeId"))
+        opener = box.get("openedByName", "Ai đó")
+        plabel = p.get("label", "Chúc may mắn") if p else "Chúc may mắn"
+        await query.answer(f"Ô {idx+1}: {opener} — {plabel}", show_alert=True)
+        return
+
+    # action == "gbox" — open the box
+    await query.answer()
+
+    result = db.open_gift_box(eid, idx, user.id, user.username or "", user.first_name or "")
+    status = result["status"]
+
+    if status == "already_opened":
+        await query.answer("❌ Ô này đã được mở rồi! Hãy chọn ô khác.", show_alert=True)
+        ev = next((e for e in db.get_gift_boxes() if e["id"] == eid), None)
+        if ev:
+            try:
+                await query.edit_message_reply_markup(_gift_box_grid_keyboard(ev, user.id))
+            except Exception:
+                pass
+        return
+
+    if status == "max_picks_reached":
+        max_p = result.get("max", 1)
+        await query.answer(f"⚠️ Bạn đã chọn đủ {max_p} ô rồi!", show_alert=True)
+        return
+
+    if status in ("event_ended", "not_found"):
+        await query.answer("❌ Sự kiện đã kết thúc.", show_alert=True)
+        return
+
+    if status != "ok":
+        await query.answer("❌ Có lỗi xảy ra. Vui lòng thử lại.", show_alert=True)
+        return
+
+    prize  = result.get("prize")
+    event  = result["event"]
+    is_lucky = not prize or prize.get("type") == "lucky"
+    extra  = await _apply_gift_box_reward(user, prize)
+
+    if is_lucky:
+        result_txt = (
+            f"😄 <b>Ô {idx+1}</b>: Chúc may mắn!\n\nHẹn gặp lại sự kiện sau. 🍀"
+        )
+    else:
+        plabel = prize.get("label", "Phần thưởng bí mật")
+        result_txt = (
+            f"🎉 <b>Ô {idx+1}</b>: Chúc mừng!\n"
+            f"Bạn nhận được: <b>🎁 {plabel}</b>"
+            + (f"\n\n{extra}" if extra else "")
+        )
+
+    msg = _gift_box_header(event, user.id, extra=result_txt)
+    kb  = _gift_box_grid_keyboard(event, user.id)
+    try:
+        await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb)
+    except Exception:
+        pass
+
+    plabel_log = prize.get("label", "lucky") if prize else "lucky"
+    db.add_log("GIFT_BOX_OPEN", f"user={user.id} event={eid} box={idx} prize={plabel_log}", str(user.id))
+
 # ─── Secret code handler ──────────────────────────────────────────────────────
 
 async def _process_secret_code(update: Update, context: ContextTypes.DEFAULT_TYPE, code_str: str) -> bool:
@@ -2373,6 +2622,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_multi_warranty,  pattern=r"^mw:"))
     app.add_handler(CallbackQueryHandler(callback_check_join,    pattern=r"^check_join$"))
     app.add_handler(CallbackQueryHandler(callback_back_main,     pattern=r"^back_main$"))
+    app.add_handler(CallbackQueryHandler(callback_gift_box,      pattern=r"^gbox[_:]"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 

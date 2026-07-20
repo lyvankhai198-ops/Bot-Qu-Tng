@@ -1,0 +1,130 @@
+Thêm tính năng "Ô Quà Bí Mật" vào Telegram Bot và Web Admin.
+
+KHÔNG reset database.
+KHÔNG ảnh hưởng các tính năng hiện có.
+
+==================================================
+WEB ADMIN
+==================================================
+
+Thêm menu mới:
+
+🎁 Ô Quà Bí Mật
+
+Admin có thể tạo sự kiện mới.
+
+Các cấu hình:
+
+- Tên sự kiện.
+- Bật / Tắt.
+- Thời gian bắt đầu.
+- Thời gian kết thúc.
+- Tổng số ô quà (9 / 16 / 25 / 36 / 49 / 64 / 100).
+- Mỗi người được chọn tối đa bao nhiêu ô.
+- Chỉ thành viên bot mới được tham gia (Bật/Tắt).
+- Chỉ người đã mua hàng mới được tham gia (Bật/Tắt).
+
+==================================================
+CẤU HÌNH PHẦN THƯỞNG
+==================================================
+
+Admin tạo danh sách phần thưởng.
+
+Ví dụ:
+
+🎁 Voucher 20K × 20
+
+🎁 100 điểm × 100
+
+🎁 Gia hạn bảo hành 7 ngày × 30
+
+🎁 01 tài khoản miễn phí × 2
+
+🎁 Chúc may mắn × Không giới hạn
+
+Hệ thống sẽ tự phân bố ngẫu nhiên vào các ô.
+
+Admin không cần tự gán từng ô.
+
+==================================================
+BOT
+==================================================
+
+Khi người dùng bấm:
+
+🎁 Ô Quà Bí Mật
+
+Bot hiển thị dạng lưới.
+
+Ví dụ:
+
+⬜ ⬜ ⬜ ⬜ ⬜
+
+⬜ ⬜ ⬜ ⬜ ⬜
+
+⬜ ⬜ ⬜ ⬜ ⬜
+
+⬜ ⬜ ⬜ ⬜ ⬜
+
+⬜ ⬜ ⬜ ⬜ ⬜
+
+Mỗi ô là một Inline Button.
+
+==================================================
+LUẬT CHƠI
+==================================================
+
+Người dùng chọn 1 ô.
+
+Sau khi chọn:
+
+- Không được chọn lại.
+- Ô sẽ mở ngay.
+
+Nếu trúng:
+
+🎉 Chúc mừng!
+
+Bạn nhận được:
+
+{reward}
+
+Nếu không trúng:
+
+😄 Chúc may mắn!
+
+Hẹn gặp lại sự kiện sau.
+
+==================================================
+ĐỒNG BỘ
+==================================================
+
+Nếu phần thưởng là:
+
+- Điểm → cộng tự động.
+- Ví → cộng tự động.
+- Voucher → tạo mã và lưu.
+- Gia hạn → cộng tự động.
+- Tài khoản miễn phí → lấy ngẫu nhiên từ kho "Quà tặng", đánh dấu đã phát và gửi ngay cho người nhận.
+
+==================================================
+THỐNG KÊ
+==================================================
+
+Web hiển thị:
+
+- Tổng số người tham gia.
+- Bao nhiêu ô đã mở.
+- Bao nhiêu ô còn lại.
+- Danh sách người trúng.
+- Danh sách phần thưởng đã phát.
+
+==================================================
+YÊU CẦU
+==================================================
+
+- Không cho 2 người mở cùng một ô.
+- Nếu hai người bấm cùng lúc, chỉ người đầu tiên thành công.
+- Dùng transaction để tránh phát trùng phần thưởng.
+- Khi sự kiện kết thúc, tự khóa tất cả ô còn lại.
+- Không ảnh hưởng hệ thống hiện tại.

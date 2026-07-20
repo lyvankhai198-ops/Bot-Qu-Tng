@@ -1135,6 +1135,97 @@ def clear_pending_broadcasts():
 
 # ─── Order display helper ─────────────────────────────────────────────────
 
+# ─── Gift boxes (Ô Quà Bí Mật) ───────────────────────────────────────────────
+
+import threading as _threading
+_gb_locks: dict = {}
+_gb_locks_mutex = _threading.Lock()
+
+def _get_gb_lock(event_id: str) -> _threading.Lock:
+    with _gb_locks_mutex:
+        if event_id not in _gb_locks:
+            _gb_locks[event_id] = _threading.Lock()
+        return _gb_locks[event_id]
+
+def get_gift_boxes() -> list:
+    return load("gift_boxes", [])
+
+def save_gift_boxes(events: list) -> None:
+    save("gift_boxes", events)
+
+def open_gift_box(event_id: str, box_index: int, user_id: int,
+                  username: str, first_name: str) -> dict:
+    """Thread-safe box opening. Returns status dict."""
+    lock = _get_gb_lock(event_id)
+    with lock:
+        events = get_gift_boxes()
+        ev_idx = next((i for i, e in enumerate(events) if e.get("id") == event_id), -1)
+        if ev_idx == -1:
+            return {"status": "not_found"}
+
+        event = events[ev_idx]
+        now_dt = datetime.now()
+
+        end_str = (event.get("endTime") or "").strip()
+        if end_str:
+            try:
+                if now_dt > datetime.fromisoformat(end_str):
+                    return {"status": "event_ended", "event": event}
+            except Exception:
+                pass
+
+        boxes = event.get("boxes", [])
+        if box_index < 0 or box_index >= len(boxes):
+            return {"status": "not_found"}
+
+        box = boxes[box_index]
+        if box.get("opened"):
+            return {"status": "already_opened"}
+
+        max_picks = int(event.get("maxPicksPerUser", 1))
+        user_picks = sum(1 for b in boxes if b.get("openedBy") == user_id)
+        if user_picks >= max_picks:
+            return {"status": "max_picks_reached", "max": max_picks}
+
+        prize_id = box.get("prizeId")
+        prizes = event.get("prizes", [])
+        prize = next((p for p in prizes if p.get("id") == prize_id), None)
+
+        boxes[box_index] = {
+            **box,
+            "opened": True,
+            "openedBy": user_id,
+            "openedByName": (first_name or username or str(user_id))[:20],
+            "openedAt": now_dt.isoformat(),
+        }
+        events[ev_idx]["boxes"] = boxes
+        save_gift_boxes(events)
+        return {"status": "ok", "prize": prize, "event": events[ev_idx]}
+
+def add_gift_box_reward(user_id: int, reward_type: str, amount: float) -> None:
+    rewards = load("gift_box_rewards", {})
+    uid = str(user_id)
+    if uid not in rewards:
+        rewards[uid] = {"points": 0, "balance": 0}
+    if reward_type == "points":
+        rewards[uid]["points"] = rewards[uid].get("points", 0) + amount
+    elif reward_type == "balance":
+        rewards[uid]["balance"] = rewards[uid].get("balance", 0) + amount
+    save("gift_box_rewards", rewards)
+
+def add_voucher(user_id: int, code: str, label: str, value: str) -> None:
+    vouchers = load("vouchers", [])
+    vouchers.append({
+        "id": str(uuid.uuid4())[:8],
+        "userId": user_id,
+        "code": code,
+        "label": label,
+        "value": value,
+        "createdAt": datetime.now().isoformat(),
+        "used": False,
+    })
+    save("vouchers", vouchers)
+
 # ─── Secret codes (Săn mã bí mật) ───────────────────────────────────────────
 
 def get_secret_codes() -> list:

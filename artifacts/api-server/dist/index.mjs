@@ -52012,6 +52012,117 @@ router2.post("/bot/checkin/trigger", requireAuth, (_req, res) => {
   addLog("CHECKIN_TRIGGER_MANUAL", "", "web-admin");
   res.json({ ok: true, message: "Checkin notification queued" });
 });
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+function assignBoxPrizes(totalBoxes, prizes) {
+  const pool = [];
+  let unlimitedId = null;
+  for (const p of prizes) {
+    const qty = Number(p.quantity ?? 0);
+    if (!qty) {
+      unlimitedId = p.id;
+    } else {
+      for (let i = 0; i < qty && pool.length < totalBoxes; i++) pool.push(p.id);
+    }
+  }
+  shuffleArray(pool);
+  const assigned = pool.slice(0, totalBoxes);
+  while (assigned.length < totalBoxes) assigned.push(unlimitedId ?? "__lucky__");
+  shuffleArray(assigned);
+  return assigned.map((prizeId, index) => ({
+    index,
+    prizeId,
+    opened: false,
+    openedBy: null,
+    openedByName: null,
+    openedAt: null
+  }));
+}
+function reassignBoxPrizes(totalBoxes, prizes, existing) {
+  const fresh = assignBoxPrizes(totalBoxes, prizes);
+  return fresh.map((nb, i) => existing?.[i]?.opened ? existing[i] : nb);
+}
+router2.get("/bot/gift-boxes", requireAuth, (_req, res) => {
+  res.json(readJson("gift_boxes", []) ?? []);
+});
+router2.post("/bot/gift-boxes", requireAuth, (req, res) => {
+  const events = readJson("gift_boxes", []) ?? [];
+  const body = req.body ?? {};
+  const prizes = Array.isArray(body.prizes) ? body.prizes.map((p, i) => ({
+    ...p,
+    id: p.id ?? `p_${Date.now()}_${i}`
+  })) : [];
+  const totalBoxes = Number(body.totalBoxes) || 25;
+  const newEvent = {
+    id: `gb_${Date.now()}`,
+    name: body.name || "S\u1EF1 ki\u1EC7n m\u1EDBi",
+    enabled: false,
+    startTime: body.startTime ?? "",
+    endTime: body.endTime ?? "",
+    totalBoxes,
+    maxPicksPerUser: Number(body.maxPicksPerUser) || 1,
+    membersOnly: body.membersOnly ?? false,
+    buyersOnly: body.buyersOnly ?? false,
+    prizes,
+    boxes: assignBoxPrizes(totalBoxes, prizes),
+    createdAt: now()
+  };
+  events.push(newEvent);
+  writeJson("gift_boxes", events);
+  addLog("GIFT_BOX_CREATE", `name=${newEvent.name} boxes=${totalBoxes}`, "web-admin");
+  res.json(newEvent);
+});
+router2.put("/bot/gift-boxes/:id", requireAuth, (req, res) => {
+  const events = readJson("gift_boxes", []) ?? [];
+  const idx = events.findIndex((e) => e.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Not found" });
+  const body = req.body ?? {};
+  const old = events[idx];
+  const newTotal = body.totalBoxes != null ? Number(body.totalBoxes) : old.totalBoxes;
+  const newPrizes = Array.isArray(body.prizes) ? body.prizes.map((p, i) => ({
+    ...p,
+    id: p.id ?? `p_${Date.now()}_${i}`
+  })) : old.prizes;
+  const needsReassign = body.prizes != null || body.totalBoxes != null && body.totalBoxes !== old.totalBoxes;
+  const boxes = needsReassign ? reassignBoxPrizes(newTotal, newPrizes, old.boxes) : old.boxes;
+  events[idx] = { ...old, ...body, id: req.params.id, prizes: newPrizes, boxes, totalBoxes: newTotal };
+  writeJson("gift_boxes", events);
+  addLog("GIFT_BOX_UPDATE", `id=${req.params.id}`, "web-admin");
+  res.json(events[idx]);
+});
+router2.delete("/bot/gift-boxes/:id", requireAuth, (req, res) => {
+  let events = readJson("gift_boxes", []) ?? [];
+  events = events.filter((e) => e.id !== req.params.id);
+  writeJson("gift_boxes", events);
+  addLog("GIFT_BOX_DELETE", `id=${req.params.id}`, "web-admin");
+  res.json({ ok: true });
+});
+router2.get("/bot/gift-boxes/:id/stats", requireAuth, (req, res) => {
+  const events = readJson("gift_boxes", []) ?? [];
+  const ev = events.find((e) => e.id === req.params.id);
+  if (!ev) return res.status(404).json({ error: "Not found" });
+  const boxes = ev.boxes ?? [];
+  const prizeMap = Object.fromEntries((ev.prizes ?? []).map((p) => [p.id, p]));
+  const openedBoxes = boxes.filter((b) => b.opened);
+  res.json({
+    totalBoxes: boxes.length,
+    openedBoxes: openedBoxes.length,
+    remainingBoxes: boxes.length - openedBoxes.length,
+    participants: new Set(openedBoxes.map((b) => b.openedBy)).size,
+    winners: openedBoxes.map((b) => ({
+      boxIndex: b.index,
+      openedBy: b.openedBy,
+      openedByName: b.openedByName,
+      openedAt: b.openedAt,
+      prize: prizeMap[b.prizeId] ?? null
+    }))
+  });
+});
 router2.get("/bot/secret-codes", requireAuth, (_req, res) => {
   const codes = readJson("secret_codes", []) ?? [];
   res.json(codes);
