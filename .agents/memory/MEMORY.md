@@ -7,3 +7,4 @@
 - [OCR image import](ocr-image-import.md) — OpenAI vision integration for order creation from screenshots; uses gpt-5.6-luna, endpoint POST /bot/orders/ocr-extract, body limit 20mb
 - [Admin panel fetch pattern](admin-panel-fetch-pattern.md) — pages dùng raw fetch() + authHeader(), KHÔNG dùng apiClient.get/put/post
 - [Sync robot login & nav](sync-robot-login.md) — canboso.com SPA fixes: sec-ch-ua override, goto-root session check, wait_for_url after submit, no hamburger needed
+- [Order Health Check](order-health.md) — Health Check dùng orders.json làm nguồn dữ liệu; lưu kết quả vào order_health.json; ResultCode chuẩn hoá; routes tại /bot/orders/health/*
