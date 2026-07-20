@@ -1831,6 +1831,9 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         elif state == "report_issue":
             await handle_report_issue_input(update, context)
         else:
+            # Check secret code before falling back to unknown-command reply
+            if await _process_secret_code(update, context, text):
+                return
             vi = L == "vi"
             if vi:
                 cmd_hint = (
@@ -2174,6 +2177,68 @@ async def callback_warranty_noop(update: Update, context: ContextTypes.DEFAULT_T
     """No-op handler for disabled inline buttons (e.g. '✅ Đã tiếp nhận')."""
     await update.callback_query.answer()
 
+# ─── Secret code handler ──────────────────────────────────────────────────────
+
+async def _process_secret_code(update: Update, context: ContextTypes.DEFAULT_TYPE, code_str: str) -> bool:
+    """Try to redeem a secret code. Returns True if the text was a known code (good or bad result).
+    Returns False if the text doesn't match any code at all (let caller handle it)."""
+    user = update.effective_user
+    # Only check if there are enabled codes to avoid file hit for every message
+    codes = db.get_secret_codes()
+    active = [c for c in codes if c.get("enabled")]
+    if not active:
+        return False
+
+    code_upper = code_str.strip().upper()
+    matched_cfg = next((c for c in active if c.get("code", "").strip().upper() == code_upper), None)
+    if not matched_cfg:
+        return False  # Not a known code — let menu_router handle normally
+
+    # Members-only gate
+    if matched_cfg.get("membersOnly", False):
+        udata = db.get_user(str(user.id)) or db.get_user(user.id)
+        if not (udata and udata.get("has_received_gift")):
+            msg = matched_cfg.get("invalidMessage") or "❌ Mã không hợp lệ. Vui lòng kiểm tra lại."
+            await update.message.reply_text(msg)
+            return True
+
+    result = db.validate_secret_code(code_str, user.id, user.username or "", user.first_name or "")
+    status = result["status"]
+    code = result.get("code", matched_cfg)
+
+    if status == "ok":
+        reward = code.get("reward", {})
+        reward_label = (reward.get("label") or reward.get("value") or "Phần thưởng đặc biệt").strip()
+        win_msg = (code.get("winMessage") or "🎉 Chúc mừng! Bạn nhận được:\n🎁 {reward}")
+        await update.message.reply_text(win_msg.replace("{reward}", reward_label))
+        db.add_log("SECRET_CODE_WIN", f"user={user.id} username={user.username} code={code_str.upper()}", str(user.id))
+        logger.info(f"Secret code redeemed: user={user.id} code={code_str.upper()}")
+    elif status == "exhausted":
+        msg = code.get("exhaustedMessage") or "😔 Mã đã hết lượt nhận."
+        await update.message.reply_text(msg)
+    elif status == "already_claimed":
+        await update.message.reply_text("⚠️ Bạn đã nhận phần thưởng từ mã này rồi!")
+    elif status in ("expired", "not_started", "disabled"):
+        msg = code.get("invalidMessage") or "❌ Mã không hợp lệ. Vui lòng kiểm tra lại."
+        await update.message.reply_text(msg)
+    # "not_found" won't reach here (we checked matched_cfg above)
+
+    return True
+
+async def cmd_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /code ABC123 command."""
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "Vui lòng nhập mã sau lệnh <code>/code</code>\nVí dụ: <code>/code ABC123</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    code_str = args[0].strip()
+    handled = await _process_secret_code(update, context, code_str)
+    if not handled:
+        await update.message.reply_text("❌ Mã không hợp lệ. Vui lòng kiểm tra lại.")
+
 # ─── Broadcast worker ─────────────────────────────────────────────────────────
 
 def _tg_send(token: str, chat_id: int, text: str) -> bool:
@@ -2300,6 +2365,7 @@ def main():
     app.add_handler(CommandHandler("gift",    cmd_gift))
     app.add_handler(CommandHandler("orders",  cmd_orders))
     app.add_handler(CommandHandler("order",   cmd_orders))   # alias
+    app.add_handler(CommandHandler("code",    cmd_code))
     app.add_handler(CallbackQueryHandler(callback_lang,          pattern=r"^lang:"))
     app.add_handler(CallbackQueryHandler(callback_order,         pattern=r"^order:"))
     app.add_handler(CallbackQueryHandler(callback_warranty_ack,  pattern=r"^warranty_ack:"))

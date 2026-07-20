@@ -2334,6 +2334,71 @@ router.post("/bot/checkin/trigger", requireAuth, (_req: any, res: any) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ── SECRET CODES (Săn mã bí mật) ─────────────────────────────────────────────
+
+// ── GET /bot/secret-codes ────────────────────────────────────────────────────
+router.get("/bot/secret-codes", requireAuth, (_req: any, res: any) => {
+  const codes = readJson("secret_codes", []) ?? [];
+  res.json(codes);
+});
+
+// ── POST /bot/secret-codes ───────────────────────────────────────────────────
+router.post("/bot/secret-codes", requireAuth, (req: any, res: any) => {
+  const codes: any[] = readJson("secret_codes", []) ?? [];
+  const body = req.body ?? {};
+  const newCode = {
+    id: `sc_${Date.now()}`,
+    enabled: false,
+    code: (body.code ?? "").toUpperCase().trim(),
+    reward: body.reward ?? { type: "custom", label: "", value: "" },
+    maxWinners: body.maxWinners ?? 0,
+    startTime: body.startTime ?? "",
+    endTime: body.endTime ?? "",
+    membersOnly: body.membersOnly ?? false,
+    onePerUser: body.onePerUser !== false,
+    winMessage: body.winMessage ?? "🎉 Chúc mừng! Bạn nhận được:\n🎁 {reward}",
+    exhaustedMessage: body.exhaustedMessage ?? "😔 Mã đã hết lượt nhận. Theo dõi bot để không bỏ lỡ sự kiện tiếp theo!",
+    invalidMessage: body.invalidMessage ?? "❌ Mã không hợp lệ. Vui lòng kiểm tra lại.",
+    createdAt: now(),
+    winners: [],
+  };
+  codes.push(newCode);
+  writeJson("secret_codes", codes);
+  addLog("SECRET_CODE_CREATE", `code=${newCode.code}`, "web-admin");
+  res.json(newCode);
+});
+
+// ── PUT /bot/secret-codes/:id ────────────────────────────────────────────────
+router.put("/bot/secret-codes/:id", requireAuth, (req: any, res: any) => {
+  const codes: any[] = readJson("secret_codes", []) ?? [];
+  const idx = codes.findIndex((c: any) => c.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Not found" });
+  const body = req.body ?? {};
+  if (body.code) body.code = String(body.code).toUpperCase().trim();
+  codes[idx] = { ...codes[idx], ...body, id: req.params.id, winners: codes[idx].winners ?? [] };
+  writeJson("secret_codes", codes);
+  addLog("SECRET_CODE_UPDATE", `id=${req.params.id} code=${codes[idx].code}`, "web-admin");
+  res.json(codes[idx]);
+});
+
+// ── DELETE /bot/secret-codes/:id ─────────────────────────────────────────────
+router.delete("/bot/secret-codes/:id", requireAuth, (req: any, res: any) => {
+  let codes: any[] = readJson("secret_codes", []) ?? [];
+  const target = codes.find((c: any) => c.id === req.params.id);
+  codes = codes.filter((c: any) => c.id !== req.params.id);
+  writeJson("secret_codes", codes);
+  addLog("SECRET_CODE_DELETE", `id=${req.params.id} code=${target?.code ?? "?"}`, "web-admin");
+  res.json({ ok: true });
+});
+
+// ── GET /bot/secret-codes/:id/winners ────────────────────────────────────────
+router.get("/bot/secret-codes/:id/winners", requireAuth, (req: any, res: any) => {
+  const codes: any[] = readJson("secret_codes", []) ?? [];
+  const code = codes.find((c: any) => c.id === req.params.id);
+  if (!code) return res.status(404).json({ error: "Not found" });
+  res.json(code.winners ?? []);
+});
+
 // BACKUP
 // ═══════════════════════════════════════════════════════════════════════════
 

@@ -18,6 +18,7 @@ import {
   Wallet,
   RefreshCw,
   CalendarCheck,
+  Target,
 } from "lucide-react"
 import { Button } from "./ui/button"
 
@@ -32,6 +33,7 @@ const navItems = [
   { href: "/receivers", label: "Đã nhận quà", icon: Gift },
   { href: "/refund-history", label: "Lịch sử hoàn tiền", icon: Wallet },
   { href: "/checkin", label: "Điểm danh", icon: CalendarCheck },
+  { href: "/secret-codes", label: "Săn mã bí mật", icon: Target },
   { href: "/sync-robot", label: "Robot Đồng Bộ", icon: RefreshCw },
   { href: "/logs", label: "Lịch sử hệ thống", icon: Activity },
   { href: "/settings", label: "Cài đặt", icon: SettingsIcon },
