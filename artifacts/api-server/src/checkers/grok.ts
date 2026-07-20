@@ -306,10 +306,10 @@ const grokPlugin: CheckerPlugin = {
           playwrightLog: logs.join("\n"),
         };
       }
-      if (/Executable doesn't exist|browserType\.launch/i.test(msg)) {
+      if (/Executable doesn't exist|browserType\.launch|Cannot find browser|browser.*not.*found|Failed to launch|spawn.*ENOENT/i.test(msg)) {
         return {
           code: "NETWORK_ERROR",
-          message: "Chromium chưa được cài đặt. Chạy: npx playwright install chromium --with-deps",
+          message: "Chromium chưa được cài / không tìm thấy binary. Chạy trên VPS: cd artifacts/api-server && npx playwright install chromium --with-deps",
           responseTime,
           playwrightLog: logs.join("\n"),
         };

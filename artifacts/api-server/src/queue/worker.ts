@@ -17,7 +17,7 @@ import {
   trimOldJobs,
 } from "./jobQueue.js";
 import type { HealthJob } from "./jobQueue.js";
-import { getPlugin } from "../checkers/index.js";
+import { getPlugin, listPlugins } from "../checkers/index.js";
 import type { CheckResult } from "../checkers/index.js";
 import { readJson, writeJson, now } from "../lib/dataUtils.js";
 
@@ -81,11 +81,10 @@ async function processJob(job: HealthJob): Promise<void> {
   const plugin = getPlugin(job.type);
 
   if (!plugin) {
+    const available = listPlugins().map(p => p.name).join(", ") || "chưa có";
     result = {
       code: "NO_PLUGIN",
-      message: `Chưa có plugin kiểm tra cho loại "${job.type || "không xác định"}". Plugin hiện có: ${
-        ["grok"].join(", ")
-      }`,
+      message: `Chưa có plugin cho loại "${job.type || "?"}". Hỗ trợ: ${available}`,
       responseTime: null,
     };
   } else {

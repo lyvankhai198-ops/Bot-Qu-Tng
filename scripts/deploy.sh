@@ -59,8 +59,16 @@ sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" "
 
   # ── Cài Node.js Playwright + Chromium (cho health-check worker) ──────────────
   cd ${DEPLOY_PATH}/artifacts/api-server
-  npm install playwright --no-save 2>/dev/null || true
-  npx playwright install chromium --with-deps 2>&1 | tail -5 || true
+  # Đảm bảo playwright npm package có trong node_modules
+  if [ ! -d node_modules/playwright ]; then
+    npm install playwright 2>&1 | tail -3 || true
+  fi
+  # Cài browser binary — thử 2 lần, log đầy đủ lần đầu
+  npx playwright install chromium --with-deps 2>&1 | tail -20 || \
+    npx playwright install chromium 2>&1 | tail -10 || true
+  # Kiểm tra xem chromium đã cài chưa
+  npx playwright --version 2>&1 | head -2 || true
+  ls ~/.cache/ms-playwright/ 2>/dev/null | head -5 || true
   cd ${DEPLOY_PATH}
 
   # ── Tạo / cập nhật systemd service cho sync-robot ────────────────────────────
