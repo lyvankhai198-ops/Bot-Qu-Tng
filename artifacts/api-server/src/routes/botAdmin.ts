@@ -870,18 +870,21 @@ router.post("/bot/warranty/:id/replacement", requireAuth, async (req: any, res: 
 
   // ── Write replacement chain record ──────────────────────────────────────────
   // Find the item that corresponds to the warranty request email and record the replacement
-  if (req_.orderId && req_.email) {
+  if (req_.orderId) {
     const orderItems: any = readJson("order_items", {}) ?? {};
     const itemList: any[] = orderItems[req_.orderId] ?? [];
     const prevEmailLower = (req_.email || "").toLowerCase();
-    const itemIdx = itemList.findIndex(
-      (it: any) => (it.original_account || it.email || "").toLowerCase() === prevEmailLower ||
-                   (it.current_account  || it.email || "").toLowerCase() === prevEmailLower
-    );
+    const itemIdx = prevEmailLower
+      ? itemList.findIndex(
+          (it: any) => (it.original_account || it.email || "").toLowerCase() === prevEmailLower ||
+                       (it.current_account  || it.email || "").toLowerCase() === prevEmailLower
+        )
+      : -1;
+
     if (itemIdx !== -1) {
+      // ── Case A: matching item found — update it ──────────────────────────
       const item = itemList[itemIdx];
       const repNumber = (item.current_replacement_number ?? 0) + 1;
-      // Write to account_replacements.json
       const allReps: any = readJson("account_replacements", {}) ?? {};
       if (!allReps[item.itemId]) allReps[item.itemId] = [];
       allReps[item.itemId].push({
@@ -901,7 +904,6 @@ router.post("/bot/warranty/:id/replacement", requireAuth, async (req: any, res: 
         status: "delivered",
       });
       writeJson("account_replacements", allReps);
-      // Update item
       itemList[itemIdx] = {
         ...item,
         current_account: email,
@@ -913,6 +915,51 @@ router.post("/bot/warranty/:id/replacement", requireAuth, async (req: any, res: 
       };
       orderItems[req_.orderId] = itemList;
       writeJson("order_items", orderItems);
+    } else {
+      // ── Case B: no matching item (order has no items or original email is empty)
+      //    Create a new order_item so the replacement email is searchable via bot ──
+      const newItemId = crypto.randomUUID().slice(0, 8).toUpperCase();
+      const order = orders[req_.orderId] ?? {};
+      const newItem: any = {
+        itemId: newItemId,
+        orderId: req_.orderId,
+        email: req_.email || email,
+        original_account: req_.email || "",
+        current_account: email,
+        current_password: password,
+        current_two_fa: twoFA || null,
+        current_replacement_number: 1,
+        original_delivered_at: order.purchaseDate || order.paymentAt || now(),
+        productName: order.productName || "",
+        warranty_days: order.warrantyDays || 0,
+        item_status: "active",
+        createdAt: now(),
+        updatedAt: now(),
+        _from_warranty_replacement: true,
+      };
+      itemList.push(newItem);
+      orderItems[req_.orderId] = itemList;
+      writeJson("order_items", orderItems);
+      // Also record in account_replacements
+      const allReps: any = readJson("account_replacements", {}) ?? {};
+      if (!allReps[newItemId]) allReps[newItemId] = [];
+      allReps[newItemId].push({
+        id: crypto.randomUUID().slice(0, 12),
+        orderId: req_.orderId,
+        orderItemId: newItemId,
+        previousAccount: req_.email || "",
+        newAccount: email,
+        newPassword: password,
+        newTwoFA: twoFA || null,
+        replacementNumber: 1,
+        deliveredAt: now(),
+        reason: note || "",
+        supportTicketId: id,
+        createdBy: "web-admin",
+        createdAt: now(),
+        status: "delivered",
+      });
+      writeJson("account_replacements", allReps);
     }
   }
 
