@@ -638,8 +638,21 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
 
     # 1b. Nếu website tự redirect ra khỏi trang login → đã đăng nhập sẵn
     if not any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
-        _step("Phát hiện phiên đăng nhập sẵn", True, f"URL: {page.url}")
-        return page.url
+        _log(f"[login] Redirect phát hiện — URL={page.url} — chờ SPA ổn định (networkidle)...")
+        # SPA có thể đang chạy auth-check ở background → chờ 3s networkidle
+        # để tránh false-positive (redirect ra rồi lại vào /login ngay sau đó)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5_000)
+        except Exception:
+            pass  # timeout OK — tiếp tục kiểm tra URL
+        # Re-verify: nếu SPA đã redirect trở lại /login thì phiên không hợp lệ
+        url_after_wait = page.url
+        if any(kw in url_after_wait.lower() for kw in _LOGIN_URL_KEYWORDS):
+            _log(f"[login] Phiên sẵn là false-positive — SPA redirect về {url_after_wait} sau khi chờ")
+            # Không return — tiếp tục flow đăng nhập bên dưới
+        else:
+            _step("Phát hiện phiên đăng nhập sẵn", True, f"URL: {url_after_wait}")
+            return url_after_wait
 
     # 2. Chờ form render
     _log("[login] Chờ form đăng nhập render...")
@@ -1496,54 +1509,97 @@ async def do_playwright_sync(config: dict) -> dict:
             # ════════════════════════════════════════════════════════
             # STEP 1: Đăng nhập
             # ════════════════════════════════════════════════════════
-            logger.info(f"[SYNC][STEP 1] Bắt đầu đăng nhập — account={account!r} url={site_url}")
+            logger.info(
+                f"[SYNC][STEP 1] Bắt đầu đăng nhập — "
+                f"ctx_id={_ctx_id} | page_id={_page_id} | "
+                f"account={account!r} | url={site_url}"
+            )
             try:
                 login_url_result = await loginAndWaitReady(page, config, source="sync")
                 _post_ck = await ctx.cookies()
                 logger.info(
-                    f"[SYNC][STEP 1] ✅ Login OK — URL={login_url_result} | "
-                    f"Cookies: {[c['name'] for c in _post_ck]}"
+                    f"[SYNC][STEP 1] ✅ Login OK — "
+                    f"ctx_id={_ctx_id} | page_id={id(page)} | "
+                    f"URL={login_url_result} | "
+                    f"Cookie count={len(_post_ck)} | "
+                    f"Cookie names={[c['name'] for c in _post_ck]}"
                 )
             except Exception as ex:
-                logger.error(f"[SYNC][STEP 1] ❌ Login FAILED: {ex}")
+                logger.error(
+                    f"[SYNC][STEP 1] ❌ Login FAILED — "
+                    f"ctx_id={_ctx_id} | page_id={id(page)} | error={ex}"
+                )
                 return {"login_ok": False, "download_ok": False, "path": None,
                         "dir": download_dir, "error": str(ex)}
 
             # ════════════════════════════════════════════════════════
-            # STEP 2: Detect session — luôn tiếp tục sang bước sau
-            # (loginAndWaitReady đã trả về → phiên hợp lệ, không return ở đây)
+            # STEP 2: Xác nhận session — log ID để phát hiện context mới
             # ════════════════════════════════════════════════════════
+            _step2_ck = await ctx.cookies()
             logger.info(
-                f"[SYNC][STEP 2] ✅ Session confirmed — URL={page.url} | "
+                f"[SYNC][STEP 2] ✅ Session confirmed — "
+                f"ctx_id={_ctx_id} | page_id={id(page)} | "
+                f"URL={page.url} | "
+                f"Cookie count={len(_step2_ck)} | "
                 f"title={await page.title()}"
             )
+            # Cảnh báo nếu cookie bị mất giữa STEP 1 và STEP 2
+            if len(_step2_ck) == 0:
+                logger.warning(
+                    f"[SYNC][STEP 2] ⚠️ Cookie count = 0 — session có thể đã mất. "
+                    f"URL={page.url}"
+                )
 
             # ════════════════════════════════════════════════════════
             # STEP 3: Navigate to Đơn hàng
             # ════════════════════════════════════════════════════════
-            logger.info(f"[SYNC][STEP 3] Bắt đầu điều hướng tới Đơn hàng — URL hiện tại={page.url}")
+            _step3_ck = await ctx.cookies()
+            logger.info(
+                f"[SYNC][STEP 3] Bắt đầu điều hướng tới Đơn hàng — "
+                f"ctx_id={_ctx_id} | page_id={id(page)} | "
+                f"URL={page.url} | Cookie count={len(_step3_ck)}"
+            )
+            # Phát hiện context/page bị thay đổi
+            if id(page) != _page_id:
+                logger.error(
+                    f"[SYNC][STEP 3] 🚨 PAGE ĐÃ THAY ĐỔI! "
+                    f"page_id ban đầu={_page_id} | page_id hiện tại={id(page)}"
+                )
             try:
                 await _open_orders_page(page)
-                logger.info(f"[SYNC][STEP 3] ✅ Navigate Orders OK — URL={page.url}")
+                logger.info(
+                    f"[SYNC][STEP 3] ✅ Navigate Orders OK — "
+                    f"ctx_id={_ctx_id} | page_id={id(page)} | URL={page.url}"
+                )
             except Exception as ex:
-                logger.error(f"[SYNC][STEP 3] ❌ Navigate Orders FAILED: {ex}")
+                logger.error(
+                    f"[SYNC][STEP 3] ❌ Navigate Orders FAILED — "
+                    f"ctx_id={_ctx_id} | page_id={id(page)} | "
+                    f"URL={page.url} | error={ex}"
+                )
                 return {"login_ok": True, "download_ok": False, "path": None,
                         "dir": download_dir, "error": str(ex)}
 
             # ════════════════════════════════════════════════════════
             # STEP 4: Download XLSX
             # ════════════════════════════════════════════════════════
-            logger.info(f"[SYNC][STEP 4] Bắt đầu tải XLSX — URL={page.url}")
+            logger.info(
+                f"[SYNC][STEP 4] Bắt đầu tải XLSX — "
+                f"ctx_id={_ctx_id} | page_id={id(page)} | URL={page.url}"
+            )
             try:
                 out_path = await _download_orders_xlsx(page, download_dir)
                 logger.info(f"[SYNC][STEP 4] ✅ Download XLSX OK — path={out_path}")
             except Exception as ex:
-                logger.error(f"[SYNC][STEP 4] ❌ Download XLSX FAILED: {ex}")
+                logger.error(
+                    f"[SYNC][STEP 4] ❌ Download XLSX FAILED — "
+                    f"ctx_id={_ctx_id} | page_id={id(page)} | error={ex}"
+                )
                 return {"login_ok": True, "download_ok": False, "path": None,
                         "dir": download_dir, "error": str(ex)}
 
         finally:
-            logger.info(f"[SYNC] Đóng browser")
+            logger.info(f"[SYNC] Đóng browser — ctx_id={_ctx_id} | page_id={_page_id}")
             await browser.close()
 
     # ════════════════════════════════════════════════════════
