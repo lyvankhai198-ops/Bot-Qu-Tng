@@ -52068,6 +52068,8 @@ router2.post("/bot/gift-boxes", requireAuth, (req, res) => {
     maxPicksPerUser: Number(body.maxPicksPerUser) || 1,
     membersOnly: body.membersOnly ?? false,
     buyersOnly: body.buyersOnly ?? false,
+    inviteRequired: body.inviteRequired !== false,
+    requiredInvites: Number(body.requiredInvites) || 1,
     prizes,
     boxes: assignBoxPrizes(totalBoxes, prizes),
     createdAt: now()
@@ -52090,7 +52092,9 @@ router2.put("/bot/gift-boxes/:id", requireAuth, (req, res) => {
   })) : old.prizes;
   const needsReassign = body.prizes != null || body.totalBoxes != null && body.totalBoxes !== old.totalBoxes;
   const boxes = needsReassign ? reassignBoxPrizes(newTotal, newPrizes, old.boxes) : old.boxes;
-  events[idx] = { ...old, ...body, id: req.params.id, prizes: newPrizes, boxes, totalBoxes: newTotal };
+  const inviteRequired = body.inviteRequired !== void 0 ? body.inviteRequired : old.inviteRequired;
+  const requiredInvites = body.requiredInvites !== void 0 ? Number(body.requiredInvites) : old.requiredInvites;
+  events[idx] = { ...old, ...body, id: req.params.id, prizes: newPrizes, boxes, totalBoxes: newTotal, inviteRequired, requiredInvites };
   writeJson("gift_boxes", events);
   addLog("GIFT_BOX_UPDATE", `id=${req.params.id}`, "web-admin");
   res.json(events[idx]);
