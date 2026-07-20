@@ -1,21 +1,22 @@
 /**
- * Grok AI checker — đăng nhập trực tiếp tại grok.com
+ * Grok AI checker — đăng nhập trực tiếp tại grok.com bằng email/mật khẩu
  *
  * Flow:
  *   1. Vào https://grok.com → click "Sign in"
- *   2. Redirect sang X.com OAuth → nhập email → (optional username) → mật khẩu
- *   3. Redirect về grok.com (đã đăng nhập)
- *   4. Kiểm tra gói SuperGrok: profile menu, sidebar, /settings
+ *   2. Chọn "Continue with email" (không dùng X OAuth)
+ *   3. Nhập email → Next → nhập mật khẩu → Login
+ *   4. Xử lý CAPTCHA (Cloudflare Turnstile) nếu xuất hiện — chờ auto-solve
+ *   5. Sau khi đăng nhập thành công → reload grok.com
+ *   6. Kiểm tra gói SuperGrok qua nhiều indicator
  *
  * Result codes:
- *   ACTIVE       — đăng nhập OK, gói SuperGrok còn hiệu lực
- *   PACKAGE_LOST — đăng nhập OK nhưng không có / hết SuperGrok
+ *   ACTIVE           — đăng nhập OK, gói SuperGrok còn hiệu lực
+ *   PACKAGE_LOST     — đăng nhập OK nhưng không có / hết SuperGrok
  *   PASSWORD_INVALID — sai mật khẩu
  *   ACCOUNT_BANNED   — tài khoản bị suspended
  *   ACCOUNT_LOCKED   — tài khoản bị khóa tạm thời
- *   REQUIRE_EMAIL    — cần xác minh email
- *   REQUIRE_PHONE    — cần xác minh số / 2FA
- *   CAPTCHA          — bị bot-detection chặn
+ *   REQUIRE_2FA      — cần xác minh 2FA / email
+ *   CAPTCHA          — bị CAPTCHA chặn không thể tự giải
  *   NETWORK_ERROR    — lỗi kết nối / Chromium chưa cài
  *   TIMEOUT          — hết thời gian
  *   UNKNOWN          — không xác định được
@@ -32,33 +33,30 @@ const grokPlugin: CheckerPlugin = {
     password: string,
     options: CheckOptions = {},
   ): Promise<CheckResult> {
-    const timeoutMs = options.timeoutMs ?? 90_000;
+    const timeoutMs = options.timeoutMs ?? 120_000;
     const start = Date.now();
     let browser: any = null;
     const logs: string[] = [];
 
     const elapsed = () => Date.now() - start;
-    const log = (msg: string) => logs.push(`[${elapsed()}ms] ${msg}`);
+    const log = (msg: string) => {
+      logs.push(`[${elapsed()}ms] ${msg}`);
+      console.log(`[grok-checker] ${msg}`);
+    };
 
-    // Helpers
-    const safeText = async (page: any, sel: string, t = 3_000) =>
-      page
-        .locator(sel)
-        .first()
-        .textContent({ timeout: t })
-        .catch(() => "");
+    const safeText = async (page: any, sel: string, t = 5_000) =>
+      page.locator(sel).first().textContent({ timeout: t }).catch(() => "");
 
-    const safeVisible = async (page: any, sel: string, t = 3_000) =>
-      page
-        .locator(sel)
-        .first()
-        .isVisible({ timeout: t })
-        .catch(() => false);
+    const safeVisible = async (page: any, sel: string, t = 5_000) =>
+      page.locator(sel).first().isVisible({ timeout: t }).catch(() => false);
+
+    const bodyText = async (page: any) =>
+      page.locator("body").innerText().catch(() => "");
 
     try {
       const { chromium } = await import("playwright");
 
-      log("Launching Chromium");
+      log("Launching Chromium (stealth mode)");
       browser = await chromium.launch({
         headless: true,
         args: [
@@ -68,13 +66,15 @@ const grokPlugin: CheckerPlugin = {
           "--disable-gpu",
           "--disable-blink-features=AutomationControlled",
           "--window-size=1280,900",
+          "--disable-web-security",
+          "--allow-running-insecure-content",
         ],
       });
 
       const ctx = await browser.newContext({
         userAgent:
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-          "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+          "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         viewport: { width: 1280, height: 900 },
         locale: "en-US",
         timezoneId: "America/New_York",
@@ -83,475 +83,516 @@ const grokPlugin: CheckerPlugin = {
         },
       });
 
+      // Stealth: ẩn webdriver fingerprint
       await ctx.addInitScript(() => {
         Object.defineProperty(navigator, "webdriver", { get: () => undefined });
         // @ts-ignore
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-        // @ts-ignore
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-        // @ts-ignore
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+        window.chrome = { runtime: {} };
+        Object.defineProperty(navigator, "plugins", {
+          get: () => [1, 2, 3, 4, 5],
+        });
+        Object.defineProperty(navigator, "languages", {
+          get: () => ["en-US", "en"],
+        });
       });
 
       const page = await ctx.newPage();
+      // Không set defaultTimeout quá thấp — các bước sẽ dùng timeout riêng
       page.setDefaultTimeout(timeoutMs);
 
       // ── 1. Vào grok.com ──────────────────────────────────────────────────────
-      log("Navigating to grok.com");
+      log("Navigating to https://grok.com");
       await page.goto("https://grok.com", {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
       });
-      await page.waitForTimeout(2_500);
+      await page.waitForTimeout(3_000);
 
       let url = page.url();
       log(`After grok.com load — URL: ${url}`);
 
-      // Nếu đã ở trang đăng nhập X thì bỏ qua bước click Sign in
-      const alreadyAtXLogin =
-        url.includes("x.com/i/oauth") ||
-        url.includes("x.com/login") ||
-        url.includes("accounts.x.com");
+      // Nếu đã ở trang login (redirect tự động)
+      const atLoginAlready =
+        url.includes("grok.com/auth") ||
+        url.includes("/login") ||
+        url.includes("/signin");
 
-      if (!alreadyAtXLogin) {
-        // Tìm nút Sign in / Log in
-        const signInSel =
-          'a[href*="sign-in"], a[href*="login"], ' +
-          'button:has-text("Sign in"), button:has-text("Log in"), ' +
-          'a:has-text("Sign in"), a:has-text("Log in")';
-
-        const signInBtn = page.locator(signInSel).first();
-        const hasSignIn = await signInBtn
-          .isVisible({ timeout: 8_000 })
-          .catch(() => false);
-
-        if (hasSignIn) {
-          log("Clicking Sign in button");
-          await signInBtn.click();
-          // Chờ redirect sang X OAuth
-          try {
-            await page.waitForURL(/x\.com|accounts\.x\.com/, {
-              timeout: 20_000,
-            });
-          } catch {
-            // Có thể popup, thử waitForNavigation
-            await page.waitForTimeout(3_000);
-          }
-        } else {
-          // Thử navigate thẳng đến OAuth endpoint
-          log("Sign in button not found — trying direct URL");
-          await page.goto(
-            "https://x.com/i/oauth2/authorize?client_id=U1RBST1OWkFnT1RFd09EWXlNelEzTmpJNk1UYzFNekk1TkRBd01EYzJPVGMzTWc9OjE6MA&code_challenge=challenge&code_challenge_method=plain&redirect_uri=https://grok.com/auth/callback&response_type=code&scope=tweet.read%20users.read%20offline.access&state=state",
-            { waitUntil: "domcontentloaded", timeout: 15_000 },
-          );
-          await page.waitForTimeout(2_000);
-        }
-
-        url = page.url();
-        log(`After sign-in click — URL: ${url}`);
-
-        // Nếu vẫn ở grok.com mà không redirect → thử navigate trực tiếp đến /auth
-        if (!url.includes("x.com")) {
-          await page.goto("https://grok.com/auth/login", {
-            waitUntil: "domcontentloaded",
-            timeout: 15_000,
-          });
-          await page.waitForTimeout(2_000);
-          url = page.url();
-          log(`Fallback auth URL: ${url}`);
-        }
-      }
-
-      // ── 2. Điền email trên X.com ─────────────────────────────────────────────
-      url = page.url();
-      log(`At X.com login — URL: ${url}`);
-
-      if (url.includes("x.com") || url.includes("accounts.x.com")) {
-        // Đợi trang load xong trước khi tìm input
-        await page.waitForLoadState("domcontentloaded").catch(() => {});
-        await page.waitForTimeout(3_000);
-
-        // Dismiss cookie consent nếu có
-        const cookieBtn = page.locator(
-          'button:has-text("Accept"), button:has-text("Allow"), ' +
-          '[data-testid="cookie-accept"], button:has-text("Agree")',
-        ).first();
-        if (await cookieBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-          log("Dismissing cookie/consent popup");
-          await cookieBtn.click().catch(() => {});
-          await page.waitForTimeout(1_500);
-        }
-
-        // Log HTML snippet để debug khi cần
-        const bodySnippetBefore = await page.locator("body").innerHTML().catch(() => "").then(h => h.slice(0, 300));
-        log(`Body HTML snippet: ${bodySnippetBefore}`);
-
-        const emailSel =
-          'input[autocomplete="username"], input[name="text"], ' +
-          'input[type="text"], input[type="email"], ' +
-          '[data-testid="LoginForm_InputContainer"] input';
-        const emailInput = page.locator(emailSel).first();
-        // Tăng timeout lên 30s — X.com OAuth có thể load chậm
-        await emailInput.waitFor({ state: "visible", timeout: 30_000 });
-
-        log("Entering email");
-        await emailInput.click();
-        await page.waitForTimeout(400);
-        await emailInput.fill(email);
-        await page.waitForTimeout(500);
-
-        // Click Next
-        const nextBtn = page.locator(
-          '[data-testid="LoginForm_Forward_Button"], ' +
-          'button:has-text("Next"), [role="button"]:has-text("Next")',
-        ).first();
-        await nextBtn.click();
-        await page.waitForTimeout(2_500);
-
-        // ── 3. Optional username-confirmation ──────────────────────────────────
-        const usernameInput = page.locator(
-          'input[data-testid="ocfEnterTextTextInput"]',
-        );
-        if (await usernameInput.isVisible({ timeout: 2_500 }).catch(() => false)) {
-          log("Username confirmation step");
-          const username = email.includes("@") ? email.split("@")[0] : email;
-          await usernameInput.fill(username);
-          await page.waitForTimeout(400);
-          await page
-            .locator('[data-testid="ocfEnterTextNextButton"]')
-            .click()
-            .catch(() => page.keyboard.press("Enter"));
-          await page.waitForTimeout(2_500);
-        }
-
-        // ── 4. Nhập mật khẩu ───────────────────────────────────────────────────
-        log("Entering password");
-        const pwInput = page.locator('input[type="password"]').first();
-        const pwVisible = await pwInput
-          .isVisible({ timeout: 12_000 })
-          .catch(() => false);
-
-        if (!pwVisible) {
-          url = page.url();
-          log(`Password input not visible — URL: ${url}`);
-
-          // Kiểm tra toast trước khi trả lỗi
-          const toast = await safeText(
-            page,
-            '[data-testid="toast"], [role="alert"]',
-          );
-          if (toast && /wrong|incorrect|didn't match/i.test(toast)) {
-            return {
-              code: "PASSWORD_INVALID",
-              message: "Sai mật khẩu",
-              responseTime: elapsed(),
-              playwrightLog: logs.join("\n"),
-            };
-          }
-          return {
-            code: "UNKNOWN",
-            message: `Không tìm thấy ô mật khẩu — URL: ${url.split("?")[0]}`,
-            responseTime: elapsed(),
-            playwrightLog: logs.join("\n"),
-          };
-        }
-
-        await pwInput.click();
-        await page.waitForTimeout(300);
-        await pwInput.fill(password);
-        await page.waitForTimeout(400);
-
-        const loginBtn = page.locator(
-          '[data-testid="LoginForm_Login_Button"]',
-        );
-        if (await loginBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-          await loginBtn.click();
-        } else {
-          await pwInput.press("Enter");
-        }
-
-        log("Waiting for X.com auth result");
-        await page.waitForTimeout(6_000);
-
-        // ── 5. Chờ redirect về grok.com ─────────────────────────────────────
-        url = page.url();
-        log(`After login submit — URL: ${url}`);
-
-        // Phân tích kết quả khi vẫn còn ở X.com
-        if (url.includes("x.com")) {
-          const toastText = await safeText(
-            page,
-            '[data-testid="toast"], [role="alert"]',
-          );
-          const bodySnippet = await page
-            .locator("body")
-            .innerText()
-            .catch(() => "");
-
-          if (url.includes("challenge") || url.includes("/i/flow/")) {
-            if (/email/i.test(url) || /email/i.test(toastText)) {
-              return {
-                code: "REQUIRE_EMAIL",
-                message: "Yêu cầu xác minh email",
-                responseTime: elapsed(),
-                playwrightLog: logs.join("\n"),
-              };
-            }
-            return {
-              code: "REQUIRE_PHONE",
-              message: "Yêu cầu xác minh số điện thoại / 2FA",
-              responseTime: elapsed(),
-              playwrightLog: logs.join("\n"),
-            };
-          }
-
-          if (url.includes("/login") || url.includes("i/flow/login")) {
-            if (
-              (toastText && /wrong|incorrect|didn't match/i.test(toastText)) ||
-              (bodySnippet && /wrong password|incorrect password/i.test(bodySnippet))
-            ) {
-              return {
-                code: "PASSWORD_INVALID",
-                message: "Sai mật khẩu",
-                responseTime: elapsed(),
-                playwrightLog: logs.join("\n"),
-              };
-            }
-            if (toastText && /too many|rate limit|unusual/i.test(toastText)) {
-              return {
-                code: "CAPTCHA",
-                message: `Bị chặn: ${toastText.trim().slice(0, 100)}`,
-                responseTime: elapsed(),
-                playwrightLog: logs.join("\n"),
-              };
-            }
-            return {
-              code: "PASSWORD_INVALID",
-              message: toastText
-                ? `Đăng nhập thất bại: ${toastText.trim().slice(0, 120)}`
-                : "Sai mật khẩu hoặc tài khoản không hợp lệ",
-              responseTime: elapsed(),
-              playwrightLog: logs.join("\n"),
-            };
-          }
-
-          if (/suspended|account has been suspended/i.test(bodySnippet)) {
-            return {
-              code: "ACCOUNT_BANNED",
-              message: "Tài khoản X bị suspended",
-              responseTime: elapsed(),
-              playwrightLog: logs.join("\n"),
-            };
-          }
-          if (/locked|temporarily locked/i.test(bodySnippet)) {
-            return {
-              code: "ACCOUNT_LOCKED",
-              message: "Tài khoản X bị khóa tạm thời",
-              responseTime: elapsed(),
-              playwrightLog: logs.join("\n"),
-            };
-          }
-
-          // Có thể cần xác nhận OAuth (Authorize App)
-          const authorizeBtn = page.locator(
-            'button:has-text("Authorize"), [data-testid*="authorize"], ' +
-            'button:has-text("Allow")',
-          ).first();
-          if (
-            await authorizeBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-          ) {
-            log("Clicking OAuth Authorize");
-            await authorizeBtn.click();
-            await page.waitForTimeout(5_000);
-            url = page.url();
-            log(`After authorize — URL: ${url}`);
-          }
-        }
-
-        // Chờ thêm để redirect về grok.com
-        if (!url.includes("grok.com")) {
-          try {
-            await page.waitForURL(/grok\.com/, { timeout: 15_000 });
-            url = page.url();
-            log(`Redirected to grok.com — URL: ${url}`);
-          } catch {
-            url = page.url();
-            log(`Still not at grok.com — URL: ${url}`);
-          }
-        }
-      }
-
-      // ── 6. Kiểm tra đã đăng nhập vào grok.com chưa ──────────────────────────
-      url = page.url();
-      const responseTime = elapsed();
-
-      if (!url.includes("grok.com")) {
-        log(`Login did not reach grok.com — final URL: ${url}`);
-        return {
-          code: "UNKNOWN",
-          message: `Không redirect được về grok.com — URL: ${url.split("?")[0]}`,
-          responseTime,
-          playwrightLog: logs.join("\n"),
-        };
-      }
-
-      log("Now at grok.com — checking subscription");
-      await page.waitForTimeout(3_000); // Cho UI render
-
-      // ── 7. Kiểm tra SuperGrok subscription ──────────────────────────────────
-      // Thử nhiều indicator khác nhau
-
-      // a) Kiểm tra toàn bộ page body text
-      const pageBody = await page.locator("body").innerText().catch(() => "");
-      log(`Body snippet (first 500): ${pageBody.slice(0, 500)}`);
-
-      const hasSuperGrokInBody =
-        /supergrok|super grok|super\s*plan|pro\s*plan|grok\s*pro|grok\s*super|SuperGrok/i.test(
-          pageBody,
-        );
-
-      // b) Thử navigate đến trang subscription / profile
-      let subscriptionPlan = "";
-      let isSuper = false;
-
-      try {
-        log("Checking /settings for subscription");
-        await page.goto("https://grok.com/settings", {
-          waitUntil: "domcontentloaded",
-          timeout: 15_000,
-        });
-        await page.waitForTimeout(2_500);
-
-        const settingsBody = await page.locator("body").innerText().catch(() => "");
-        log(`Settings body (first 800): ${settingsBody.slice(0, 800)}`);
-
-        // Tìm plan name trong settings
-        const superMatch = settingsBody.match(
-          /(SuperGrok|Super Grok|Grok Pro|Grok Super|Super\s*Plan|Pro\s*Plan|annual|monthly|subscriber)/i,
-        );
-        if (superMatch) {
-          subscriptionPlan = superMatch[0];
-          isSuper = true;
-          log(`Found subscription indicator in settings: ${subscriptionPlan}`);
-        }
-
-        // Tìm các badge / tag
-        const badges = await page
-          .locator('[class*="badge"], [class*="plan"], [class*="tier"], [class*="subscription"]')
-          .allTextContents()
-          .catch(() => [] as string[]);
-        log(`Badges: ${JSON.stringify(badges.slice(0, 10))}`);
-        if (badges.some((b) => /super|pro/i.test(b))) {
-          isSuper = true;
-          subscriptionPlan = badges.find((b) => /super|pro/i.test(b)) ?? "SuperGrok";
-        }
-      } catch (err: any) {
-        log(`Settings navigation error: ${err?.message?.slice(0, 100)}`);
-      }
-
-      // c) Quay về trang chính và kiểm tra sidebar / header
-      try {
-        await page.goto("https://grok.com", {
-          waitUntil: "domcontentloaded",
-          timeout: 15_000,
-        });
-        await page.waitForTimeout(2_500);
-
-        // Kiểm tra các element chứa plan info
-        const planSels = [
-          '[data-testid*="plan"], [data-testid*="subscription"], [data-testid*="tier"]',
-          '[class*="SuperGrok"], [class*="supergrok"], [class*="super-grok"]',
-          'span:has-text("SuperGrok"), span:has-text("Super Grok")',
-          'div:has-text("SuperGrok")',
-          '[aria-label*="SuperGrok"], [title*="SuperGrok"]',
-          // Profile / avatar khu vực thường hiện plan
-          'nav span, aside span, header span',
+      if (!atLoginAlready) {
+        // Tìm nút Sign in / Log in trên trang chủ grok.com
+        const signInSels = [
+          'a[href*="sign-in"]',
+          'a[href*="login"]',
+          'a[href*="auth"]',
+          'button:has-text("Sign in")',
+          'button:has-text("Log in")',
+          'a:has-text("Sign in")',
+          'a:has-text("Log in")',
+          '[data-testid*="login"]',
+          '[data-testid*="signin"]',
         ];
 
-        for (const sel of planSels) {
-          const els = await page
-            .locator(sel)
-            .allTextContents()
-            .catch(() => [] as string[]);
-          const matched = els.filter((t) => /super|pro/i.test(t));
-          if (matched.length > 0) {
-            isSuper = true;
-            subscriptionPlan = matched[0].trim();
-            log(`Found via selector "${sel}": ${subscriptionPlan}`);
+        let clicked = false;
+        for (const sel of signInSels) {
+          const btn = page.locator(sel).first();
+          if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+            log(`Clicking sign-in via selector: ${sel}`);
+            await btn.click();
+            await page.waitForTimeout(3_000);
+            clicked = true;
             break;
           }
         }
 
-        // d) Thử kiểm tra qua API endpoint nội bộ
-        try {
-          const resp = await page.evaluate(async () => {
-            const r = await fetch("/api/auth/session", {
-              credentials: "include",
-            }).catch(() => null);
-            if (!r) return null;
-            return r.json().catch(() => null);
+        if (!clicked) {
+          // Thử navigate trực tiếp đến trang auth của grok.com
+          log("Sign in button not found → navigating to /auth/login");
+          await page.goto("https://grok.com/auth/login", {
+            waitUntil: "domcontentloaded",
+            timeout: 20_000,
           });
-          if (resp) {
-            log(`Session API: ${JSON.stringify(resp).slice(0, 300)}`);
-            const respStr = JSON.stringify(resp);
-            if (/super|pro/i.test(respStr)) {
-              isSuper = true;
-              const m = respStr.match(/(SuperGrok|super_grok|grok_super|grokPro)/i);
-              if (m) subscriptionPlan = m[0];
-            }
-          }
-        } catch {
-          // Ignore
+          await page.waitForTimeout(3_000);
         }
-
-        // e) Thử feature-gating: SuperGrok thường có higher message limits hoặc image gen
-        // Kiểm tra nếu "SuperGrok" badge hiển thị trong profile menu
-        const profileBtn = page.locator(
-          '[data-testid="user-menu"], [aria-label="Account menu"], ' +
-          'button[aria-label*="profile"], [data-testid*="avatar"]',
-        ).first();
-        if (await profileBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-          await profileBtn.click().catch(() => {});
-          await page.waitForTimeout(1_500);
-
-          const menuText = await page.locator("body").innerText().catch(() => "");
-          if (/SuperGrok|super grok|super plan/i.test(menuText)) {
-            isSuper = true;
-            const m = menuText.match(/SuperGrok|super grok|super plan/i);
-            if (m) subscriptionPlan = m[0];
-            log(`Found SuperGrok in profile menu: ${subscriptionPlan}`);
-          }
-        }
-      } catch (err: any) {
-        log(`Home page check error: ${err?.message?.slice(0, 100)}`);
       }
 
-      // f) Fallback: kiểm tra body text từ lần đầu vào grok.com sau login
-      if (!isSuper && hasSuperGrokInBody) {
-        isSuper = true;
-        subscriptionPlan = "SuperGrok";
-        log("Found SuperGrok indicator in initial page body");
+      url = page.url();
+      log(`After sign-in navigation — URL: ${url}`);
+
+      // ── 2. Tìm và chọn "Continue with Email" (không dùng X OAuth) ────────────
+      // grok.com thường hiển thị nhiều lựa chọn đăng nhập
+      const emailLoginSels = [
+        'button:has-text("Continue with email")',
+        'button:has-text("Sign in with email")',
+        'button:has-text("Email")',
+        'a:has-text("Continue with email")',
+        'a:has-text("Sign in with email")',
+        '[data-provider="email"]',
+        'button[type="button"]:has-text("email")',
+      ];
+
+      let emailLoginClicked = false;
+      for (const sel of emailLoginSels) {
+        const btn = page.locator(sel).first();
+        if (await btn.isVisible({ timeout: 4_000 }).catch(() => false)) {
+          log(`Clicking email login option: ${sel}`);
+          await btn.click();
+          await page.waitForTimeout(2_500);
+          emailLoginClicked = true;
+          break;
+        }
       }
 
-      // ── 8. Kết quả cuối ──────────────────────────────────────────────────────
-      const finalResponseTime = elapsed();
+      if (!emailLoginClicked) {
+        log("Email login button not found — may already be on email form");
+      }
 
-      if (isSuper) {
+      url = page.url();
+      log(`After email option — URL: ${url}`);
+
+      // ── 3. Điền email ────────────────────────────────────────────────────────
+      const emailSelectors = [
+        'input[type="email"]',
+        'input[name="email"]',
+        'input[autocomplete="email"]',
+        'input[placeholder*="email" i]',
+        'input[placeholder*="Email" i]',
+        'input[type="text"]',
+      ];
+
+      let emailInput: any = null;
+      for (const sel of emailSelectors) {
+        const el = page.locator(sel).first();
+        if (await el.isVisible({ timeout: 5_000 }).catch(() => false)) {
+          emailInput = el;
+          log(`Found email input: ${sel}`);
+          break;
+        }
+      }
+
+      if (!emailInput) {
+        // Screenshot để debug
+        const bodySnip = (await bodyText(page)).slice(0, 500);
+        log(`Email input not found. Body: ${bodySnip}`);
         return {
-          code: "ACTIVE",
-          message: `Đăng nhập OK — Gói ${subscriptionPlan || "SuperGrok"} còn hiệu lực`,
-          responseTime: finalResponseTime,
+          code: "UNKNOWN",
+          message: `Không tìm thấy ô nhập email trên grok.com — URL: ${url.split("?")[0]}`,
+          responseTime: elapsed(),
           playwrightLog: logs.join("\n"),
         };
       }
 
-      // Đã đăng nhập thành công vào grok.com nhưng không phát hiện SuperGrok
+      log("Filling email");
+      await emailInput.click();
+      await page.waitForTimeout(300);
+      await emailInput.fill(email);
+      await page.waitForTimeout(500);
+
+      // Click Next / Continue
+      const nextBtns = [
+        'button:has-text("Next")',
+        'button:has-text("Continue")',
+        'button[type="submit"]',
+        'input[type="submit"]',
+      ];
+
+      let nextClicked = false;
+      for (const sel of nextBtns) {
+        const btn = page.locator(sel).first();
+        if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+          log(`Clicking Next: ${sel}`);
+          await btn.click();
+          nextClicked = true;
+          break;
+        }
+      }
+      if (!nextClicked) {
+        log("Next button not found — pressing Enter");
+        await emailInput.press("Enter");
+      }
+
+      await page.waitForTimeout(3_000);
+      url = page.url();
+      log(`After email submit — URL: ${url}`);
+
+      // ── 4. Điền mật khẩu ────────────────────────────────────────────────────
+      const pwSelectors = [
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[autocomplete="current-password"]',
+      ];
+
+      let pwInput: any = null;
+      for (const sel of pwSelectors) {
+        const el = page.locator(sel).first();
+        if (await el.isVisible({ timeout: 10_000 }).catch(() => false)) {
+          pwInput = el;
+          log(`Found password input: ${sel}`);
+          break;
+        }
+      }
+
+      if (!pwInput) {
+        const bt = (await bodyText(page)).slice(0, 600);
+        log(`Password input not found. Body: ${bt}`);
+
+        // Kiểm tra xem có thông báo lỗi không
+        if (/invalid|not found|no account|doesn't exist/i.test(bt)) {
+          return {
+            code: "PASSWORD_INVALID",
+            message: "Email không tồn tại hoặc không hợp lệ",
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n"),
+          };
+        }
+        return {
+          code: "UNKNOWN",
+          message: `Không tìm thấy ô mật khẩu — URL: ${url.split("?")[0]}`,
+          responseTime: elapsed(),
+          playwrightLog: logs.join("\n"),
+        };
+      }
+
+      log("Filling password");
+      await pwInput.click();
+      await page.waitForTimeout(300);
+      await pwInput.fill(password);
+      await page.waitForTimeout(500);
+
+      // ── 5. Submit login ──────────────────────────────────────────────────────
+      const loginBtns = [
+        'button:has-text("Sign in")',
+        'button:has-text("Log in")',
+        'button:has-text("Login")',
+        'button[type="submit"]',
+        'input[type="submit"]',
+      ];
+
+      let loginClicked = false;
+      for (const sel of loginBtns) {
+        const btn = page.locator(sel).first();
+        if (await btn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+          log(`Clicking login button: ${sel}`);
+          await btn.click();
+          loginClicked = true;
+          break;
+        }
+      }
+      if (!loginClicked) {
+        log("Login button not found — pressing Enter");
+        await pwInput.press("Enter");
+      }
+
+      log("Waiting for login result (up to 30s)...");
+      await page.waitForTimeout(5_000);
+
+      // ── 6. Xử lý CAPTCHA (Cloudflare Turnstile / hCaptcha) ──────────────────
+      // Turnstile thường tự giải trong headless nếu browser đủ stealth
+      // Chờ tối đa 30s để captcha tự solve
+      const captchaIndicators = [
+        'iframe[src*="challenges.cloudflare.com"]',
+        'iframe[src*="turnstile"]',
+        'iframe[src*="hcaptcha"]',
+        '[class*="captcha"]',
+        '[id*="captcha"]',
+        'input[name="cf-turnstile-response"]',
+      ];
+
+      let hasCaptcha = false;
+      for (const sel of captchaIndicators) {
+        if (await safeVisible(page, sel, 3_000)) {
+          hasCaptcha = true;
+          log(`CAPTCHA detected: ${sel} — waiting for auto-solve (30s)...`);
+          break;
+        }
+      }
+
+      if (hasCaptcha) {
+        // Chờ CAPTCHA tự giải và form submit
+        let captchaResolved = false;
+        for (let i = 0; i < 6; i++) {
+          await page.waitForTimeout(5_000);
+          url = page.url();
+          // Nếu đã redirect sang trang khác → captcha đã giải
+          if (!url.includes("/login") && !url.includes("/auth/login")) {
+            captchaResolved = true;
+            log(`CAPTCHA resolved — redirected to: ${url}`);
+            break;
+          }
+          // Thử click nút submit nếu captcha đã tích xong
+          const submitBtn = page.locator('button[type="submit"], button:has-text("Sign in"), button:has-text("Continue")').first();
+          if (await submitBtn.isEnabled({ timeout: 1_000 }).catch(() => false)) {
+            const isLoading = await submitBtn.getAttribute("data-loading").catch(() => null);
+            if (!isLoading) {
+              log(`Retrying submit after captcha (attempt ${i + 1})`);
+              await submitBtn.click().catch(() => {});
+              await page.waitForTimeout(3_000);
+            }
+          }
+        }
+
+        if (!captchaResolved) {
+          url = page.url();
+          if (url.includes("/login") || url.includes("/auth")) {
+            return {
+              code: "CAPTCHA",
+              message: "Grok.com yêu cầu CAPTCHA và không thể tự giải trong headless mode",
+              responseTime: elapsed(),
+              playwrightLog: logs.join("\n"),
+            };
+          }
+        }
+      }
+
+      // ── 7. Kiểm tra kết quả đăng nhập ───────────────────────────────────────
+      url = page.url();
+      log(`After login attempt — URL: ${url}`);
+
+      // Chờ thêm để redirect hoàn tất
+      if (url.includes("/login") || url.includes("/auth/login")) {
+        try {
+          await page.waitForURL((u: string) => !u.includes("/login") && !u.includes("/auth/login"), { timeout: 15_000 });
+          url = page.url();
+          log(`Redirected after login — URL: ${url}`);
+        } catch {
+          url = page.url();
+          log(`Still on login page — URL: ${url}`);
+        }
+      }
+
+      // Kiểm tra lỗi đăng nhập
+      const bt = await bodyText(page);
+      if (url.includes("/login") || url.includes("/auth/login")) {
+        if (/invalid.*password|wrong.*password|incorrect.*password|password.*incorrect/i.test(bt) ||
+            /invalid.*email|wrong.*email|email.*not.*found/i.test(bt)) {
+          return {
+            code: "PASSWORD_INVALID",
+            message: "Sai email hoặc mật khẩu",
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n"),
+          };
+        }
+        if (/verify.*email|confirm.*email|check.*email/i.test(bt)) {
+          return {
+            code: "REQUIRE_2FA",
+            message: "Cần xác minh email",
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n"),
+          };
+        }
+        if (/two.factor|2fa|authenticator|verification code/i.test(bt)) {
+          return {
+            code: "REQUIRE_2FA",
+            message: "Cần xác minh 2FA",
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n"),
+          };
+        }
+        return {
+          code: "UNKNOWN",
+          message: `Đăng nhập không thành công — vẫn ở trang login: ${url.split("?")[0]}`,
+          responseTime: elapsed(),
+          playwrightLog: logs.join("\n"),
+        };
+      }
+
+      // ── 8. Đã vào grok.com — reload và kiểm tra SuperGrok ───────────────────
+      log("Login successful — reloading grok.com to check subscription");
+      await page.goto("https://grok.com", {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+      await page.waitForTimeout(4_000);
+
+      url = page.url();
+      log(`After reload — URL: ${url}`);
+
+      // Kiểm tra có bị đá ra login không
+      if (url.includes("/login") || url.includes("/auth/login")) {
+        return {
+          code: "UNKNOWN",
+          message: "Đăng nhập bị reset sau reload — session không giữ được",
+          responseTime: elapsed(),
+          playwrightLog: logs.join("\n"),
+        };
+      }
+
+      // ── 9. Phát hiện SuperGrok subscription ─────────────────────────────────
+      let isSuper = false;
+      let subscriptionPlan = "";
+
+      // a) Body text của trang chính
+      const pageBody = await bodyText(page);
+      log(`Body snippet (500): ${pageBody.slice(0, 500)}`);
+
+      if (/supergrok|super\s*grok|grok\s*super|SuperGrok/i.test(pageBody)) {
+        isSuper = true;
+        subscriptionPlan = "SuperGrok";
+        log("Found SuperGrok in page body");
+      }
+
+      // b) API session check
+      if (!isSuper) {
+        try {
+          const sessionData: any = await page.evaluate(async () => {
+            const r = await fetch("/api/auth/session", { credentials: "include" }).catch(() => null);
+            return r ? r.json().catch(() => null) : null;
+          });
+          if (sessionData) {
+            const sessionStr = JSON.stringify(sessionData);
+            log(`Session API: ${sessionStr.slice(0, 400)}`);
+            if (/super|pro|premium|subscription|active/i.test(sessionStr)) {
+              isSuper = true;
+              const m = sessionStr.match(/(SuperGrok|super_grok|grok_pro|grokPro|premium)/i);
+              if (m) subscriptionPlan = m[0];
+              log(`Found subscription in session: ${subscriptionPlan}`);
+            }
+          }
+        } catch (err: any) {
+          log(`Session API error: ${err?.message?.slice(0, 80)}`);
+        }
+      }
+
+      // c) Trang /settings
+      if (!isSuper) {
+        try {
+          log("Checking /settings for subscription info");
+          await page.goto("https://grok.com/settings", {
+            waitUntil: "domcontentloaded",
+            timeout: 15_000,
+          });
+          await page.waitForTimeout(3_000);
+
+          const settingsText = await bodyText(page);
+          log(`Settings body (800): ${settingsText.slice(0, 800)}`);
+
+          const planMatch = settingsText.match(
+            /(SuperGrok|Super\s*Grok|Grok\s*Super|annual|monthly|subscriber|Premium|Pro Plan)/i,
+          );
+          if (planMatch) {
+            subscriptionPlan = planMatch[0];
+            isSuper = true;
+            log(`Found subscription in settings: ${subscriptionPlan}`);
+          }
+
+          // Kiểm tra badge/class
+          const badges = await page
+            .locator('[class*="badge"], [class*="plan"], [class*="tier"], [class*="subscription"], [class*="premium"]')
+            .allTextContents()
+            .catch(() => [] as string[]);
+          if (badges.some((b: string) => /super|pro|premium/i.test(b))) {
+            isSuper = true;
+            subscriptionPlan = badges.find((b: string) => /super|pro|premium/i.test(b)) ?? "SuperGrok";
+            log(`Found subscription badge: ${subscriptionPlan}`);
+          }
+        } catch (err: any) {
+          log(`Settings error: ${err?.message?.slice(0, 80)}`);
+        }
+      }
+
+      // d) Quay về trang chính — kiểm tra sidebar / profile menu
+      if (!isSuper) {
+        try {
+          await page.goto("https://grok.com", {
+            waitUntil: "domcontentloaded",
+            timeout: 15_000,
+          });
+          await page.waitForTimeout(3_000);
+
+          const planSels = [
+            '[class*="SuperGrok"], [class*="supergrok"]',
+            'span:has-text("SuperGrok"), div:has-text("SuperGrok")',
+            '[data-testid*="plan"], [data-testid*="subscription"]',
+            'nav span, aside span',
+          ];
+          for (const sel of planSels) {
+            const texts = await page.locator(sel).allTextContents().catch(() => [] as string[]);
+            const hit = texts.find((t: string) => /super|pro/i.test(t));
+            if (hit) {
+              isSuper = true;
+              subscriptionPlan = hit.trim();
+              log(`Found via selector "${sel}": ${subscriptionPlan}`);
+              break;
+            }
+          }
+
+          // Profile menu
+          const profileBtn = page.locator(
+            '[data-testid="user-menu"], [aria-label*="menu" i], ' +
+            'button[aria-label*="profile" i], [data-testid*="avatar"]',
+          ).first();
+          if (!isSuper && await profileBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+            await profileBtn.click().catch(() => {});
+            await page.waitForTimeout(1_500);
+            const menuText = await bodyText(page);
+            if (/SuperGrok|super\s*grok|super\s*plan/i.test(menuText)) {
+              isSuper = true;
+              const m = menuText.match(/SuperGrok|super\s*grok|super\s*plan/i);
+              subscriptionPlan = m?.[0] ?? "SuperGrok";
+              log(`Found SuperGrok in profile menu: ${subscriptionPlan}`);
+            }
+          }
+        } catch (err: any) {
+          log(`Home page check error: ${err?.message?.slice(0, 80)}`);
+        }
+      }
+
+      // ── 10. Kết quả ──────────────────────────────────────────────────────────
+      const finalTime = elapsed();
+      if (isSuper) {
+        return {
+          code: "ACTIVE",
+          message: `Đăng nhập OK — Gói ${subscriptionPlan || "SuperGrok"} còn hiệu lực`,
+          responseTime: finalTime,
+          playwrightLog: logs.join("\n"),
+        };
+      }
+
       return {
         code: "PACKAGE_LOST",
-        message: "Đăng nhập OK nhưng không phát hiện gói SuperGrok (có thể đã hết hạn hoặc chưa đăng ký)",
-        responseTime: finalResponseTime,
+        message: "Đăng nhập OK nhưng không phát hiện gói SuperGrok (hết hạn hoặc chưa đăng ký)",
+        responseTime: finalTime,
         playwrightLog: logs.join("\n"),
       };
+
     } catch (e: any) {
       const responseTime = elapsed();
       const msg: string = e?.message ?? String(e);
@@ -565,15 +606,10 @@ const grokPlugin: CheckerPlugin = {
           playwrightLog: logs.join("\n"),
         };
       }
-      if (
-        /Executable doesn't exist|browserType\.launch|Cannot find browser|browser.*not.*found|Failed to launch|spawn.*ENOENT/i.test(
-          msg,
-        )
-      ) {
+      if (/Executable doesn't exist|browserType\.launch|Cannot find browser|browser.*not.*found|Failed to launch|spawn.*ENOENT|Cannot find package.*playwright/i.test(msg)) {
         return {
           code: "NETWORK_ERROR",
-          message:
-            "Chromium chưa cài / không tìm thấy binary. VPS: cd artifacts/api-server && npx playwright install chromium --with-deps",
+          message: "Chromium / playwright chưa cài. Chạy: npx playwright install chromium --with-deps",
           responseTime,
           playwrightLog: logs.join("\n"),
         };
