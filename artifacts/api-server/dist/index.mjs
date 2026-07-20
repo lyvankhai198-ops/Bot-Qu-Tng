@@ -50372,15 +50372,30 @@ var grokPlugin = {
         })).filter((e) => e.text);
       }).catch(() => []);
       log(`Page text elements: ${JSON.stringify(anyText.slice(0, 12))}`);
+      const loginWithEmailSels = [
+        'button:has-text("Login with email")',
+        'button:has-text("Continue with email")',
+        'button:has-text("Sign in with email")',
+        '[data-testid*="email"]'
+      ];
+      for (const sel of loginWithEmailSels) {
+        if (await isVisible(page, sel, 5e3)) {
+          log(`Clicking "${sel}" to reveal email input`);
+          await page.locator(sel).first().click();
+          await page.waitForTimeout(2500);
+          await page.waitForSelector("input", { timeout: 8e3 }).catch(() => {
+          });
+          break;
+        }
+      }
+      url = page.url();
+      log(`After login-with-email click \u2014 URL: ${url}`);
       const emailInputSels = [
         'input[type="email"]',
         'input[name="email"]',
-        'input[name="text"]',
-        // X.com dùng name="text" cho username/email
         'input[autocomplete="email"]',
         'input[autocomplete="username"]',
         'input[placeholder*="email" i]',
-        'input[placeholder*="phone" i]',
         'input[type="text"]'
       ];
       let emailInput = null;

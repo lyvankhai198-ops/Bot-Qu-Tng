@@ -534,15 +534,35 @@ const grokPlugin: CheckerPlugin = {
       }).catch(() => [] as any[]);
       log(`Page text elements: ${JSON.stringify(anyText.slice(0, 12))}`);
 
-      // ── 6. Điền email (trên X.com hoặc grok.com) ────────────────────────────
+      // ── 6. Trên accounts.x.ai: click "Login with email" trước ────────────────
+      // accounts.x.ai hiển thị các nút social login TRƯỚC, email input chỉ xuất hiện sau khi click
+      const loginWithEmailSels = [
+        'button:has-text("Login with email")',
+        'button:has-text("Continue with email")',
+        'button:has-text("Sign in with email")',
+        '[data-testid*="email"]',
+      ];
+      for (const sel of loginWithEmailSels) {
+        if (await isVisible(page, sel, 5_000)) {
+          log(`Clicking "${sel}" to reveal email input`);
+          await page.locator(sel).first().click();
+          await page.waitForTimeout(2_500);
+          // Đợi email input xuất hiện sau click
+          await page.waitForSelector('input', { timeout: 8_000 }).catch(() => {});
+          break;
+        }
+      }
+
+      url = page.url() as string;
+      log(`After login-with-email click — URL: ${url}`);
+
+      // ── 7. Tìm email input ────────────────────────────────────────────────────
       const emailInputSels = [
         'input[type="email"]',
         'input[name="email"]',
-        'input[name="text"]',           // X.com dùng name="text" cho username/email
         'input[autocomplete="email"]',
         'input[autocomplete="username"]',
         'input[placeholder*="email" i]',
-        'input[placeholder*="phone" i]',
         'input[type="text"]',
       ];
 
