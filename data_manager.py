@@ -588,6 +588,17 @@ def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
     wd = item.get("warranty_days") or order.get("warrantyDays") or 0
     warranty_days = int(wd) if wd else 0
 
+    # ── Warranty type detection from product name ──────────────────────────
+    # KBH = Không Bảo Hành (no warranty at all)
+    # XD  = X-day warranty override (e.g. "1D", "2D" in product name)
+    _pname_upper = (item.get("productName") or order.get("productName") or "").upper()
+    _is_kbh = bool(re.search(r'\bKBH\b', _pname_upper))
+    # XD override applies only to non-KBH products
+    if not _is_kbh:
+        _day_m = re.search(r'(?<!\d)(\d{1,2})D\b', _pname_upper)
+        if _day_m:
+            warranty_days = int(_day_m.group(1))
+
     # warranty_end_date: use stored value if present, else compute
     warranty_end = None
     stored_end = item.get("warranty_end_date") or ""
@@ -632,11 +643,17 @@ def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
     elif order.get("status") == "refunded":
         can_report = False
 
+    # KBH = Không Bảo Hành — no warranty regardless of dates
+    if _is_kbh:
+        can_report      = False
+        warranty_status = "no_warranty"
+        remaining_days  = None
+
     # Pro-rated refund
     refund_amount = 0
     price = order.get("price", 0) or 0
     refund_formula = settings.get("refund_formula", "remaining_days")
-    if remaining_days and remaining_days > 0 and price and warranty_days:
+    if not _is_kbh and remaining_days and remaining_days > 0 and price and warranty_days:
         if refund_formula == "remaining_days":
             refund_amount = round(price * remaining_days / warranty_days)
         elif refund_formula == "custom":
@@ -650,6 +667,7 @@ def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
         "warrantyEndDate": warranty_end.isoformat() if warranty_end else None,
         "originalDeliveredAt": start_str or None,
         "warrantyDays": warranty_days,
+        "isKBH": _is_kbh,
     }
 
 def migrate_order_items_to_chain() -> int:
@@ -1143,6 +1161,10 @@ def calc_order_display(order: dict, settings: dict) -> dict:
         except Exception:
             pass
 
+    # KBH detection for legacy/order-level path
+    _pname_kbh = (order.get("productName") or "").upper()
+    _is_kbh_ord = bool(re.search(r'\bKBH\b', _pname_kbh))
+
     # warranty_ok: dùng warrantyExpiry nếu có, fallback về expiryDate
     warranty_str = (
         order.get("warrantyExpiry", "") or order.get("warrantyDate", "") or
@@ -1155,6 +1177,10 @@ def calc_order_display(order: dict, settings: dict) -> dict:
             warranty_ok = warranty_date >= today
         except Exception:
             pass
+
+    # KBH overrides: no warranty regardless of dates
+    if _is_kbh_ord:
+        warranty_ok = False
 
     # Refund calculation
     refund_amount = None
@@ -1180,4 +1206,5 @@ def calc_order_display(order: dict, settings: dict) -> dict:
     result["_remaining_days"] = remaining_days
     result["_warranty_ok"] = warranty_ok
     result["_refund_amount"] = refund_amount
+    result["_is_kbh"] = _is_kbh_ord
     return result

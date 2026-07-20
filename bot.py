@@ -238,6 +238,16 @@ def _fmt_order(L: str, order: dict, settings: dict,
                 "⚠️ <i>Order is missing warranty data. Please contact support.</i>"
             )
             lines.append(warn)
+        elif w_status == "no_warranty":
+            # KBH — không bảo hành, chỉ hiển thị giá và trạng thái hoạt động
+            lines.append(f"🚫 {'Trạng thái BH' if vi else 'Warranty status'}: <b>{'Không Bảo Hành (KBH)' if vi else 'No Warranty (KBH)'}</b>")
+            lines.append(f"💰 {'Giá mua' if vi else 'Price'}: {price_str}")
+            _item_ref = item.get("item_status") == "refunded" if item else False
+            _ord_ref  = order.get("status") == "refunded"
+            if _item_ref or _ord_ref:
+                lines.append(f"📊 {'Trạng thái' if vi else 'Status'}: {'Đã hoàn tiền' if vi else 'Refunded'}")
+            else:
+                lines.append(f"📊 {'Trạng thái' if vi else 'Status'}: {'Đang hoạt động' if vi else 'Active'}")
         else:
             warranty_icon = "✅" if can_report else "❌"
             warranty_label = t(L, "warranty_valid") if can_report else t(L, "warranty_expired")
@@ -349,22 +359,28 @@ def _fmt_order(L: str, order: dict, settings: dict,
 
     vi = L == "vi"
     resolved_expiry = data.get("_resolved_expiry_date") or (order.get("expiryDate") or "")[:10]
+    is_kbh_leg = data.get("_is_kbh", False)
     warranty_icon = ""
-    if warranty_ok is True:
+    if is_kbh_leg:
+        warranty_icon = "🚫 "
+    elif warranty_ok is True:
         warranty_icon = "✅ "
     elif warranty_ok is False:
         warranty_icon = "❌ "
+    warranty_display = ("Không Bảo Hành (KBH)" if vi else "No Warranty (KBH)") if is_kbh_leg else warranty_str
     lines_leg = [f"<b>📦 {'THÔNG TIN ĐƠN HÀNG' if vi else 'ORDER INFORMATION'}</b>\n"]
     lines_leg.append(f"🏷 {'Mã đơn' if vi else 'Order'}: <code>{order.get('orderId','')}</code>")
     lines_leg.append(f"📧 {'Email' if vi else 'Email'}: <code>{order.get('email','')}</code>")
     lines_leg.append(f"📦 {'Sản phẩm' if vi else 'Product'}: <b>{order.get('productName','')}</b>")
     lines_leg.append(f"📅 {'Ngày mua' if vi else 'Purchase date'}: {(order.get('purchaseDate') or '')[:10] or 'N/A'}")
     lines_leg.append(f"📅 {'Ngày hết hạn' if vi else 'Expiry date'}: {resolved_expiry or 'N/A'}")
-    lines_leg.append(f"⌛ {'Còn lại' if vi else 'Remaining'}: {remaining_str}")
-    lines_leg.append(f"🛡 {'Bảo hành đến' if vi else 'Warranty until'}: {(order.get('warrantyExpiry') or order.get('warrantyDate') or '')[:10] or 'N/A'}")
-    lines_leg.append(f"{warranty_icon}{'Trạng thái BH' if vi else 'Warranty status'}: {warranty_str}")
+    if not is_kbh_leg:
+        lines_leg.append(f"⌛ {'Còn lại' if vi else 'Remaining'}: {remaining_str}")
+        lines_leg.append(f"🛡 {'Bảo hành đến' if vi else 'Warranty until'}: {(order.get('warrantyExpiry') or order.get('warrantyDate') or '')[:10] or 'N/A'}")
+    lines_leg.append(f"{warranty_icon}{'Trạng thái BH' if vi else 'Warranty status'}: <b>{warranty_display}</b>")
     lines_leg.append(f"💰 {'Giá mua' if vi else 'Price'}: {price_str}")
-    lines_leg.append(f"💵 {'Hoàn dự kiến' if vi else 'Est. Refund'}: {refund_str}")
+    if not is_kbh_leg:
+        lines_leg.append(f"💵 {'Hoàn dự kiến' if vi else 'Est. Refund'}: {refund_str}")
     lines_leg.append(f"📊 {'Trạng thái' if vi else 'Status'}: <b>{status_str}</b>")
 
     # Refund detail block (legacy path)
@@ -471,6 +487,9 @@ def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
         if w_st == "refunded" or item.get("item_status") == "refunded":
             label = "Đã hoàn tiền" if vi else "Refunded"
             icon  = "💰"
+        elif w_st == "no_warranty":
+            label = "KBH - Không BH" if vi else "No Warranty (KBH)"
+            icon  = "🚫"
         elif w_st == "expired":
             label = "Hết bảo hành" if vi else "Warranty expired"
             icon  = "❌"
@@ -972,11 +991,13 @@ def _mw_compute_account(order: dict, settings: dict, item: dict = None) -> dict:
         can_report  = wdata["canReport"]
         days_left   = wdata["remainingDays"]
         warranty_ok = can_report  # True / False (never None from calc_item_warranty)
+        is_kbh      = wdata.get("isKBH", False)
     else:
         data = db.calc_order_display(order, settings)
         warranty_ok = data.get("_warranty_ok")
         days_left   = data.get("_remaining_days")
         can_report  = bool(warranty_ok)
+        is_kbh      = data.get("_is_kbh", False)
     return {
         "orderId":     order.get("orderId", ""),
         "email":       order.get("email", ""),
@@ -984,12 +1005,14 @@ def _mw_compute_account(order: dict, settings: dict, item: dict = None) -> dict:
         "warrantyOk":  warranty_ok,
         "daysLeft":    days_left,
         "canReport":   can_report,
+        "isKBH":       is_kbh,
     }
 
-def _mw_summary_text(L: str, found: list, not_found: list, blocked: list, expired: list = None) -> str:
+def _mw_summary_text(L: str, found: list, not_found: list, blocked: list, expired: list = None, kbh: list = None) -> str:
     vi = L == "vi"
     expired = expired or []
-    total = len(found) + len(not_found) + len(blocked) + len(expired)
+    kbh     = kbh     or []
+    total = len(found) + len(not_found) + len(blocked) + len(expired) + len(kbh)
     lines = [
         f"📋 <b>{'KẾT QUẢ TRA CỨU' if vi else 'LOOKUP RESULTS'}</b>",
         f"{'Đã nhập' if vi else 'Entered'}: <b>{total}</b> {'tài khoản' if vi else 'account(s)'}",
@@ -1000,6 +1023,10 @@ def _mw_summary_text(L: str, found: list, not_found: list, blocked: list, expire
             days = a.get("daysLeft")
             w = f"✅ {'Còn BH' if vi else 'In warranty'} ({days} {'ngày' if vi else 'days'})" if days else f"✅ {'Còn BH' if vi else 'In warranty'}"
             lines.append(f"  {i}. <code>{a['email']}</code> — {a.get('productName','?')} | {w}")
+    if kbh:
+        lines.append(f"\n🚫 <b>{'Không Bảo Hành (KBH) — không thể báo lỗi' if vi else 'No Warranty (KBH) — cannot report'} ({len(kbh)})</b>:")
+        for a in kbh:
+            lines.append(f"  • <code>{a['email']}</code> — {a.get('productName','?')} | 🚫 KBH")
     if expired:
         lines.append(f"\n❌ <b>{'Hết bảo hành — không thể báo lỗi' if vi else 'Warranty expired — cannot report'} ({len(expired)})</b>:")
         for a in expired:
@@ -1100,6 +1127,8 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
     found_full:   list = []   # (order, item) — reportable (in warranty)
     expired_full: list = []   # (order, item) — found but warranty expired
     expired: list = []        # summary records for expired
+    kbh_full: list = []       # (order, item) — KBH products (no warranty)
+    kbh: list = []            # summary records for KBH
 
     for e in emails:
         result = db.find_order_with_items(e)
@@ -1116,16 +1145,21 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
             order = {**order, "email": canonical_email}
         acc = _mw_compute_account(order, settings, item=matched_item)
         if not acc["canReport"]:
-            # Warranty expired — cannot report, show card but do NOT add to reportable list
-            expired.append(acc)
-            expired_full.append((order, matched_item))
+            if acc.get("isKBH"):
+                # KBH — no warranty, bucket separately so UI shows different label
+                kbh.append(acc)
+                kbh_full.append((order, matched_item))
+            else:
+                # Warranty expired — cannot report
+                expired.append(acc)
+                expired_full.append((order, matched_item))
         else:
             found.append(acc)
             found_full.append((order, matched_item))
 
-    # Always send full order card(s) for every account (found OR expired), up to 3 total
+    # Always send full order card(s) for every account (found OR expired OR kbh), up to 3 total
     _CARD_THRESHOLD = 3
-    all_full = found_full + expired_full
+    all_full = found_full + expired_full + kbh_full
     if len(all_full) <= _CARD_THRESHOLD:
         for (ord_, mit_) in all_full:
             card_text = _fmt_order(L, ord_, settings, item=mit_)
@@ -1133,7 +1167,7 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
 
     # No reportable accounts at all → show summary + back only
     if not found:
-        summary = _mw_summary_text(L, found, not_found, blocked, expired=expired)
+        summary = _mw_summary_text(L, found, not_found, blocked, expired=expired, kbh=kbh)
         await update.message.reply_text(
             summary,
             parse_mode=ParseMode.HTML,
@@ -1148,7 +1182,7 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
     db.clear_user_state(user.id, "conv_state")
 
     await update.message.reply_text(
-        _mw_summary_text(L, found, not_found, blocked, expired=expired),
+        _mw_summary_text(L, found, not_found, blocked, expired=expired, kbh=kbh),
         parse_mode=ParseMode.HTML,
         reply_markup=_mw_initial_kb(L, len(found)),
     )
