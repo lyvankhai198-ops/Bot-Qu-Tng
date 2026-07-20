@@ -120,11 +120,11 @@ function HealthTab({ orderId, email }: { orderId: string; email: string }) {
   const handleCheck = async () => {
     setChecking(true)
     try {
-      await apiFetch("POST", "/bot/orders/health/check", { orderId })
+      await apiFetch("POST", "/bot/order-health/check", { orderId })
       // Poll jobs until ours is done
       pollingRef.current = setInterval(async () => {
         try {
-          const jobs = await apiFetch("GET", `/bot/orders/health/jobs?orderId=${orderId}`)
+          const jobs = await apiFetch("GET", `/bot/order-health/jobs?orderId=${orderId}`)
           const active = jobs.some((j: any) => j.status === "queued" || j.status === "running")
           if (!active) {
             stopPolling()
@@ -241,7 +241,7 @@ export default function Orders() {
 
   const loadOrderHealth = useCallback(async () => {
     try {
-      const data = await apiFetch("GET", "/bot/orders/health")
+      const data = await apiFetch("GET", "/bot/order-health")
       const map: Record<string, string> = {}
       for (const o of (data.orders ?? [])) {
         map[o.orderId] = o.healthCode
@@ -252,7 +252,7 @@ export default function Orders() {
 
   const pollJobs = useCallback(async () => {
     try {
-      const jobs = await apiFetch("GET", "/bot/orders/health/jobs?status=queued,running")
+      const jobs = await apiFetch("GET", "/bot/order-health/jobs?status=queued,running")
       const map: Record<string, boolean> = {}
       for (const j of jobs) map[j.orderId] = true
       setActiveJobMap(map)
@@ -350,7 +350,7 @@ export default function Orders() {
   const handleCheckOrder = async (orderId: string) => {
     setActiveJobMap(prev => ({ ...prev, [orderId]: true }))
     try {
-      await apiFetch("POST", "/bot/orders/health/check", { orderId })
+      await apiFetch("POST", "/bot/order-health/check", { orderId })
       startPolling()
     } catch (e: any) {
       toast({ title: "Lỗi", description: e.message, variant: "destructive" })
@@ -361,7 +361,7 @@ export default function Orders() {
   const handleCheckAll = async () => {
     setCheckingAll(true)
     try {
-      const res = await apiFetch("POST", "/bot/orders/health/check", {})
+      const res = await apiFetch("POST", "/bot/order-health/check", {})
       toast({ title: `Đã thêm ${res.queued} đơn vào hàng đợi kiểm tra` })
       await pollJobs()
       startPolling()

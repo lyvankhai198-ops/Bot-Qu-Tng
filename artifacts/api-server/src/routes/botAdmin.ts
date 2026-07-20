@@ -2315,13 +2315,13 @@ function orderHealthDefaults(cfg: any) {
 }
 
 // ── GET /bot/orders/health/config ─────────────────────────────────────────────
-router.get("/bot/orders/health/config", requireAuth, (_req: any, res: any) => {
+router.get("/bot/order-health/config", requireAuth, (_req: any, res: any) => {
   const h = readOrderHealth();
   res.json(orderHealthDefaults(h.config ?? {}));
 });
 
 // ── PUT /bot/orders/health/config ─────────────────────────────────────────────
-router.put("/bot/orders/health/config", requireAuth, (req: any, res: any) => {
+router.put("/bot/order-health/config", requireAuth, (req: any, res: any) => {
   const h = readOrderHealth();
   h.config = { ...(h.config ?? {}), ...req.body };
   writeJson("order_health", h);
@@ -2330,7 +2330,7 @@ router.put("/bot/orders/health/config", requireAuth, (req: any, res: any) => {
 
 // ── GET /bot/orders/health ─────────────────────────────────────────────────────
 // Returns every order with its latest health check code.
-router.get("/bot/orders/health", requireAuth, (_req: any, res: any) => {
+router.get("/bot/order-health", requireAuth, (_req: any, res: any) => {
   const orders: Record<string, any> = readJson("orders", {}) ?? {};
   const h = readOrderHealth();
   const checks: any = h.checks ?? {};
@@ -2379,7 +2379,7 @@ router.get("/bot/orders/:orderId/health", requireAuth, (req: any, res: any) => {
 
 // ── POST /bot/orders/health/check ─────────────────────────────────────────────
 // Body: { orderId? } — enqueue one order (by id) or all non-refunded orders.
-router.post("/bot/orders/health/check", requireAuth, (req: any, res: any) => {
+router.post("/bot/order-health/check", requireAuth, (req: any, res: any) => {
   const body = req.body ?? {};
   const orders: Record<string, any> = readJson("orders", {}) ?? {};
   let toCheck: any[];
@@ -2409,7 +2409,7 @@ router.post("/bot/orders/health/check", requireAuth, (req: any, res: any) => {
 
 // ── GET /bot/orders/health/jobs ───────────────────────────────────────────────
 // Query params: status (comma-separated), orderId
-router.get("/bot/orders/health/jobs", requireAuth, (req: any, res: any) => {
+router.get("/bot/order-health/jobs", requireAuth, (req: any, res: any) => {
   const { status, orderId } = req.query ?? {};
   const statusFilter = status
     ? String(status).split(",").map((s: string) => s.trim()).filter(Boolean)
@@ -2428,14 +2428,14 @@ router.get("/bot/orders/health/jobs", requireAuth, (req: any, res: any) => {
 });
 
 // ── DELETE /bot/orders/health/jobs/done ───────────────────────────────────────
-router.delete("/bot/orders/health/jobs/done", requireAuth, (req: any, res: any) => {
+router.delete("/bot/order-health/jobs/done", requireAuth, (req: any, res: any) => {
   const { orderId } = req.body ?? {};
   clearDoneJobs(orderId);
   res.json({ ok: true });
 });
 
 // ── DELETE /bot/orders/health/clear ───────────────────────────────────────────
-router.delete("/bot/orders/health/clear", requireAuth, (req: any, res: any) => {
+router.delete("/bot/order-health/clear", requireAuth, (req: any, res: any) => {
   const { orderId } = req.body ?? {};
   const h = readOrderHealth();
   if (!h.checks) h.checks = {};

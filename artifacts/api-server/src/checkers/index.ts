@@ -97,11 +97,11 @@ export function detectPluginType(productName: string): string {
 // Import plugins AFTER registry is initialised to avoid circular-import issues.
 
 import grokPlugin from "./grok.js";
+import chatgptPlugin from "./chatgpt.js";
 
 registerAll([
   grokPlugin,
-  // Add more here as they are implemented:
-  // chatgptPlugin,
+  chatgptPlugin,
   // geminiPlugin,
   // claudePlugin,
 ]);
