@@ -49860,7 +49860,7 @@ function _ensureInit() {
       status: "failed",
       finishedAt: now(),
       result: {
-        status: "error",
+        code: "UNKNOWN",
         message: "Server kh\u1EDFi \u0111\u1ED9ng l\u1EA1i trong khi \u0111ang ki\u1EC3m tra",
         responseTime: null
       }
@@ -49870,17 +49870,17 @@ function _ensureInit() {
     _persist();
   }
 }
-function enqueue(account) {
+function enqueue(order) {
   _ensureInit();
   const existing = jobs.find(
-    (j) => j.accountId === account.id && (j.status === "queued" || j.status === "running")
+    (j) => j.orderId === order.id && (j.status === "queued" || j.status === "running")
   );
   if (existing) return existing;
   const job = {
     id: crypto.randomUUID().slice(0, 12),
-    accountId: account.id,
-    email: account.email,
-    type: account.type ?? "",
+    orderId: order.id,
+    email: order.email,
+    type: order.type ?? "",
     status: "queued",
     createdAt: now(),
     startedAt: null,
@@ -49909,8 +49909,8 @@ function updateJob(id, patch) {
 function getJobs(filter) {
   _ensureInit();
   let result = [...jobs];
-  if (filter?.accountId) {
-    result = result.filter((j) => j.accountId === filter.accountId);
+  if (filter?.orderId) {
+    result = result.filter((j) => j.orderId === filter.orderId);
   }
   if (filter?.status) {
     const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
@@ -49918,11 +49918,11 @@ function getJobs(filter) {
   }
   return result.reverse();
 }
-function clearDoneJobs(accountId) {
+function clearDoneJobs(orderId) {
   _ensureInit();
-  if (accountId) {
+  if (orderId) {
     jobs = jobs.filter(
-      (j) => !(j.accountId === accountId && (j.status === "done" || j.status === "failed"))
+      (j) => !(j.orderId === orderId && (j.status === "done" || j.status === "failed"))
     );
   } else {
     jobs = jobs.filter(
@@ -49952,9 +49952,14 @@ var grokPlugin = {
     const timeoutMs = options.timeoutMs ?? 6e4;
     const start = Date.now();
     let browser = null;
+    const logs = [];
     const elapsed = () => Date.now() - start;
+    const log = (msg) => {
+      logs.push(`[${elapsed()}ms] ${msg}`);
+    };
     try {
       const { chromium } = await import("playwright");
+      log("Launching Chromium");
       browser = await chromium.launch({
         headless: true,
         args: [
@@ -49973,20 +49978,20 @@ var grokPlugin = {
         timezoneId: "America/New_York"
       });
       await ctx.addInitScript(() => {
-        Object.defineProperty(navigator, "webdriver", {
-          get: () => void 0
-        });
+        Object.defineProperty(navigator, "webdriver", { get: () => void 0 });
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
       });
       const page = await ctx.newPage();
       page.setDefaultTimeout(timeoutMs);
+      log("Navigating to x.com/login");
       await page.goto("https://x.com/login", {
         waitUntil: "domcontentloaded",
         timeout: 3e4
       });
       await page.waitForTimeout(2e3);
+      log("Entering email");
       const emailSel = 'input[autocomplete="username"], input[name="text"], input[type="text"]';
       const emailInput = page.locator(emailSel).first();
       await emailInput.waitFor({ state: "visible", timeout: 15e3 });
@@ -50002,27 +50007,33 @@ var grokPlugin = {
         'input[data-testid="ocfEnterTextTextInput"]'
       );
       if (await usernameConfirmInput.isVisible({ timeout: 2500 }).catch(() => false)) {
+        log("Username confirmation step");
         const username = email.includes("@") ? email.split("@")[0] : email;
         await usernameConfirmInput.fill(username);
         await page.waitForTimeout(400);
         await page.locator('[data-testid="ocfEnterTextNextButton"]').click().catch(() => page.keyboard.press("Enter"));
         await page.waitForTimeout(2500);
       }
+      log("Entering password");
       const pwInput = page.locator('input[type="password"]').first();
       const pwVisible = await pwInput.isVisible({ timeout: 12e3 }).catch(() => false);
       if (!pwVisible) {
         const url = page.url();
         if (url.includes("/home")) {
+          log("Already at home (session cookie)");
           return {
-            status: "healthy",
+            code: "ACTIVE",
             message: "\u0110\xE3 \u0111\u0103ng nh\u1EADp (phi\xEAn c\xF2n hi\u1EC7u l\u1EF1c)",
-            responseTime: elapsed()
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n")
           };
         }
+        log(`Password input not found \u2014 URL: ${url}`);
         return {
-          status: "error",
+          code: "UNKNOWN",
           message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 nh\u1EADp m\u1EADt kh\u1EA9u \u2014 URL: ${url.split("?")[0]}`,
-          responseTime: elapsed()
+          responseTime: elapsed(),
+          playwrightLog: logs.join("\n")
         };
       }
       await pwInput.click();
@@ -50035,88 +50046,125 @@ var grokPlugin = {
       } else {
         await pwInput.press("Enter");
       }
+      log("Waiting for login result");
       await page.waitForTimeout(6e3);
       const finalUrl = page.url();
       const responseTime = elapsed();
+      log(`Final URL: ${finalUrl}`);
       if (finalUrl.includes("/home") || finalUrl.match(/x\.com\/?$/) || finalUrl.match(/twitter\.com\/?$/)) {
         return {
-          status: "healthy",
+          code: "ACTIVE",
           message: `\u0110\u0103ng nh\u1EADp th\xE0nh c\xF4ng (${responseTime}ms)`,
-          responseTime
+          responseTime,
+          playwrightLog: logs.join("\n")
         };
       }
       const hasFeed = await page.locator('[data-testid="primaryColumn"]').isVisible({ timeout: 2e3 }).catch(() => false);
       if (hasFeed) {
         return {
-          status: "healthy",
+          code: "ACTIVE",
           message: `\u0110\u0103ng nh\u1EADp th\xE0nh c\xF4ng (${responseTime}ms)`,
-          responseTime
+          responseTime,
+          playwrightLog: logs.join("\n")
         };
       }
       const toastText = await page.locator('[data-testid="toast"], [role="alert"]').first().textContent({ timeout: 2e3 }).catch(() => "");
+      if (finalUrl.includes("challenge") || finalUrl.includes("/i/flow/")) {
+        if (/email/i.test(finalUrl) || /email/i.test(toastText ?? "")) {
+          return {
+            code: "REQUIRE_EMAIL",
+            message: `Y\xEAu c\u1EA7u x\xE1c minh email \u2014 ${finalUrl.split("?")[0]}`,
+            responseTime,
+            playwrightLog: logs.join("\n")
+          };
+        }
+        return {
+          code: "REQUIRE_PHONE",
+          message: `Y\xEAu c\u1EA7u x\xE1c minh s\u1ED1 \u0111i\u1EC7n tho\u1EA1i / 2FA \u2014 ${finalUrl.split("?")[0]}`,
+          responseTime,
+          playwrightLog: logs.join("\n")
+        };
+      }
       if (finalUrl.includes("/login") || finalUrl.includes("/i/flow/login")) {
         if (toastText && /wrong|incorrect|didn't match/i.test(toastText)) {
           return {
-            status: "unhealthy",
+            code: "PASSWORD_INVALID",
             message: "Sai m\u1EADt kh\u1EA9u",
             responseTime,
-            detail: toastText.trim()
+            playwrightLog: logs.join("\n")
           };
         }
         if (toastText && /too many|rate limit|unusual/i.test(toastText)) {
           return {
-            status: "error",
-            message: `Rate-limited / Ho\u1EA1t \u0111\u1ED9ng b\u1EA5t th\u01B0\u1EDDng \u2014 ${toastText.trim().slice(0, 100)}`,
-            responseTime
+            code: "CAPTCHA",
+            message: `B\u1ECB ch\u1EB7n do ho\u1EA1t \u0111\u1ED9ng b\u1EA5t th\u01B0\u1EDDng \u2014 ${toastText.trim().slice(0, 100)}`,
+            responseTime,
+            playwrightLog: logs.join("\n")
           };
         }
         return {
-          status: "unhealthy",
-          message: toastText ? `\u0110\u0103ng nh\u1EADp th\u1EA5t b\u1EA1i: ${toastText.trim().slice(0, 120)}` : "\u0110\u0103ng nh\u1EADp th\u1EA5t b\u1EA1i (kh\xF4ng r\xF5 l\xFD do)",
-          responseTime
-        };
-      }
-      if (finalUrl.includes("challenge") || finalUrl.includes("verification") || finalUrl.includes("/i/flow/")) {
-        return {
-          status: "unhealthy",
-          message: `Y\xEAu c\u1EA7u x\xE1c minh (2FA / s\u1ED1 \u0111i\u1EC7n tho\u1EA1i) \u2014 ${finalUrl.split("?")[0]}`,
-          responseTime
+          code: "PASSWORD_INVALID",
+          message: toastText ? `\u0110\u0103ng nh\u1EADp th\u1EA5t b\u1EA1i: ${toastText.trim().slice(0, 120)}` : "Sai m\u1EADt kh\u1EA9u ho\u1EB7c t\xE0i kho\u1EA3n kh\xF4ng h\u1EE3p l\u1EC7",
+          responseTime,
+          playwrightLog: logs.join("\n")
         };
       }
       const bodySnippet = await page.locator("body").innerText().catch(() => "");
       if (/suspended|account has been suspended/i.test(bodySnippet)) {
         return {
-          status: "unhealthy",
+          code: "ACCOUNT_BANNED",
           message: "T\xE0i kho\u1EA3n b\u1ECB t\u1EA1m ng\u1EEBng (suspended)",
-          responseTime
+          responseTime,
+          playwrightLog: logs.join("\n")
+        };
+      }
+      if (/locked|temporarily locked/i.test(bodySnippet)) {
+        return {
+          code: "ACCOUNT_LOCKED",
+          message: "T\xE0i kho\u1EA3n b\u1ECB kh\xF3a t\u1EA1m th\u1EDDi",
+          responseTime,
+          playwrightLog: logs.join("\n")
         };
       }
       return {
-        status: "error",
+        code: "UNKNOWN",
         message: `Kh\xF4ng x\xE1c \u0111\u1ECBnh \u0111\u01B0\u1EE3c tr\u1EA1ng th\xE1i \u2014 URL: ${finalUrl.split("?")[0]}`,
-        responseTime
+        responseTime,
+        playwrightLog: logs.join("\n")
       };
     } catch (e) {
       const responseTime = elapsed();
       const msg = e?.message ?? String(e);
+      log(`Exception: ${msg.slice(0, 300)}`);
       if (/timeout/i.test(msg)) {
         return {
-          status: "error",
+          code: "TIMEOUT",
           message: `Timeout sau ${timeoutMs}ms`,
-          responseTime
+          responseTime,
+          playwrightLog: logs.join("\n")
         };
       }
       if (/Executable doesn't exist|browserType\.launch/i.test(msg)) {
         return {
-          status: "error",
+          code: "NETWORK_ERROR",
           message: "Chromium ch\u01B0a \u0111\u01B0\u1EE3c c\xE0i \u0111\u1EB7t. Ch\u1EA1y: npx playwright install chromium --with-deps",
-          responseTime
+          responseTime,
+          playwrightLog: logs.join("\n")
+        };
+      }
+      if (/net::|ERR_/i.test(msg)) {
+        return {
+          code: "NETWORK_ERROR",
+          message: `L\u1ED7i k\u1EBFt n\u1ED1i m\u1EA1ng: ${msg.slice(0, 150)}`,
+          responseTime,
+          playwrightLog: logs.join("\n")
         };
       }
       return {
-        status: "error",
+        code: "UNKNOWN",
         message: `Playwright error: ${msg.slice(0, 200)}`,
-        responseTime
+        responseTime,
+        playwrightLog: logs.join("\n")
       };
     } finally {
       await browser?.close().catch(() => {
@@ -50133,11 +50181,19 @@ function registerAll(plugins) {
     registry.set(p.id.toLowerCase(), p);
   }
 }
-function getPlugin(accountType) {
-  return registry.get((accountType ?? "").toLowerCase().trim());
+function getPlugin(productType) {
+  return registry.get((productType ?? "").toLowerCase().trim());
 }
 function listPlugins() {
   return [...registry.values()];
+}
+function detectPluginType(productName) {
+  const lower = (productName ?? "").toLowerCase();
+  if (lower.includes("grok")) return "grok";
+  if (lower.includes("chatgpt") || lower.includes("openai") || lower.includes("gpt")) return "chatgpt";
+  if (lower.includes("gemini")) return "gemini";
+  if (lower.includes("claude") || lower.includes("anthropic")) return "claude";
+  return lower.split(/\s+/)[0] || "unknown";
 }
 registerAll([
   grok_default
@@ -52277,11 +52333,11 @@ router2.post("/bot/accounts/health/check", requireAuth, (req, res) => {
   res.json({ ok: true, queued: jobIds.length, jobIds });
 });
 router2.get("/bot/health/jobs", requireAuth, (req, res) => {
-  const { status, accountId } = req.query ?? {};
+  const { status, orderId } = req.query ?? {};
   const statusFilter = status ? String(status).split(",").map((s) => s.trim()).filter(Boolean) : void 0;
   const jobs2 = getJobs({
     status: statusFilter,
-    accountId: accountId ? String(accountId) : void 0
+    orderId: orderId ? String(orderId) : void 0
   });
   const plugins = listPlugins();
   const pluginMap = Object.fromEntries(plugins.map((p) => [p.id, p.name]));
@@ -52292,8 +52348,8 @@ router2.get("/bot/health/jobs", requireAuth, (req, res) => {
   res.json(enriched);
 });
 router2.delete("/bot/health/jobs/done", requireAuth, (req, res) => {
-  const { accountId } = req.body ?? {};
-  clearDoneJobs(accountId);
+  const { orderId } = req.body ?? {};
+  clearDoneJobs(orderId);
   res.json({ ok: true });
 });
 router2.delete("/bot/accounts/health/clear", requireAuth, (req, res) => {
@@ -52307,6 +52363,128 @@ router2.delete("/bot/accounts/health/clear", requireAuth, (req, res) => {
   }
   writeJson2("account_health", h);
   addLog("HEALTH_CLEAR", accountId ?? "all", "web-admin");
+  res.json({ ok: true });
+});
+function readOrderHealth() {
+  return readJson2("order_health", { config: {}, checks: {} }) ?? { config: {}, checks: {} };
+}
+function orderHealthDefaults(cfg) {
+  return {
+    timeoutMs: 6e4,
+    workerCount: 2,
+    ...cfg
+  };
+}
+router2.get("/bot/orders/health/config", requireAuth, (_req, res) => {
+  const h = readOrderHealth();
+  res.json(orderHealthDefaults(h.config ?? {}));
+});
+router2.put("/bot/orders/health/config", requireAuth, (req, res) => {
+  const h = readOrderHealth();
+  h.config = { ...h.config ?? {}, ...req.body };
+  writeJson2("order_health", h);
+  res.json({ ok: true, config: orderHealthDefaults(h.config) });
+});
+router2.get("/bot/orders/health", requireAuth, (_req, res) => {
+  const orders = readJson2("orders", {}) ?? {};
+  const h = readOrderHealth();
+  const checks = h.checks ?? {};
+  const ISSUE_CODES = /* @__PURE__ */ new Set([
+    "PACKAGE_LOST",
+    "PASSWORD_INVALID",
+    "ACCOUNT_BANNED",
+    "ACCOUNT_LOCKED",
+    "REQUIRE_EMAIL",
+    "REQUIRE_PHONE",
+    "CAPTCHA",
+    "NETWORK_ERROR",
+    "TIMEOUT",
+    "UNKNOWN",
+    "NO_PLUGIN"
+  ]);
+  const result = Object.values(orders).map((ord) => {
+    const history = checks[ord.orderId] ?? [];
+    const latest = history.length > 0 ? history[history.length - 1] : null;
+    return {
+      orderId: ord.orderId,
+      email: ord.email,
+      productName: ord.productName,
+      status: ord.status,
+      healthCode: latest?.code ?? "UNCHECKED",
+      lastCheckedAt: latest?.checkedAt ?? null,
+      lastMessage: latest?.message ?? null,
+      lastResponseTime: latest?.responseTime ?? null,
+      plugin: latest?.plugin ?? null,
+      checkCount: history.length
+    };
+  });
+  const summary = {
+    total: result.length,
+    active: result.filter((r) => r.healthCode === "ACTIVE").length,
+    issues: result.filter((r) => ISSUE_CODES.has(r.healthCode)).length,
+    unchecked: result.filter((r) => r.healthCode === "UNCHECKED").length
+  };
+  res.json({ orders: result, summary, config: orderHealthDefaults(h.config ?? {}) });
+});
+router2.get("/bot/orders/:orderId/health", requireAuth, (req, res) => {
+  const { orderId } = req.params;
+  const h = readOrderHealth();
+  const history = (h.checks ?? {})[orderId] ?? [];
+  res.json([...history].reverse());
+});
+router2.post("/bot/orders/health/check", requireAuth, (req, res) => {
+  const body = req.body ?? {};
+  const orders = readJson2("orders", {}) ?? {};
+  let toCheck;
+  if (body.orderId) {
+    const order = orders[body.orderId];
+    if (!order) {
+      res.status(404).json({ ok: false, message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng: ${body.orderId}` });
+      return;
+    }
+    toCheck = [order];
+  } else {
+    toCheck = Object.values(orders).filter((o) => o.status !== "refunded");
+  }
+  const jobIds = toCheck.filter((ord) => ord.email).map((ord) => enqueue({
+    id: ord.orderId,
+    email: ord.email,
+    type: detectPluginType(ord.productName ?? "")
+  }).id);
+  addLog("HEALTH_CHECK_ENQUEUE", `queued=${jobIds.length}`, "web-admin");
+  res.json({ ok: true, queued: jobIds.length, jobIds });
+});
+router2.get("/bot/orders/health/jobs", requireAuth, (req, res) => {
+  const { status, orderId } = req.query ?? {};
+  const statusFilter = status ? String(status).split(",").map((s) => s.trim()).filter(Boolean) : void 0;
+  const jobs2 = getJobs({
+    status: statusFilter,
+    orderId: orderId ? String(orderId) : void 0
+  });
+  const plugins = listPlugins();
+  const pluginMap = Object.fromEntries(plugins.map((p) => [p.id, p.name]));
+  const enriched = jobs2.map((j) => ({
+    ...j,
+    pluginName: pluginMap[j.type?.toLowerCase()] ?? null
+  }));
+  res.json(enriched);
+});
+router2.delete("/bot/orders/health/jobs/done", requireAuth, (req, res) => {
+  const { orderId } = req.body ?? {};
+  clearDoneJobs(orderId);
+  res.json({ ok: true });
+});
+router2.delete("/bot/orders/health/clear", requireAuth, (req, res) => {
+  const { orderId } = req.body ?? {};
+  const h = readOrderHealth();
+  if (!h.checks) h.checks = {};
+  if (orderId) {
+    delete h.checks[orderId];
+  } else {
+    h.checks = {};
+  }
+  writeJson2("order_health", h);
+  addLog("HEALTH_CLEAR", orderId ?? "all", "web-admin");
   res.json({ ok: true });
 });
 router2.get("/bot/backup", requireAuth, (_req, res) => {
@@ -52779,63 +52957,66 @@ var POLL_MS = 2e3;
 var MAX_HISTORY = 50;
 var running = false;
 var timer = null;
-function getWorkerCount() {
+function getWorkerConfig() {
   try {
-    const h = readJson("account_health", { config: {} }) ?? { config: {} };
+    const h = readJson("order_health", { config: {} }) ?? { config: {} };
     const n = Number((h.config ?? {}).workerCount ?? 2);
-    return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : 2;
+    const t = Number((h.config ?? {}).timeoutMs ?? 6e4);
+    return {
+      workerCount: Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : 2,
+      timeoutMs: Number.isFinite(t) && t >= 5e3 ? t : 6e4
+    };
   } catch {
-    return 2;
+    return { workerCount: 2, timeoutMs: 6e4 };
   }
 }
-function saveHealthEntry(accountId, entry) {
-  const h = readJson("account_health", { config: {}, checks: {} }) ?? {
+function saveHealthEntry(orderId, entry) {
+  const h = readJson("order_health", { config: {}, checks: {} }) ?? {
     config: {},
     checks: {}
   };
   if (!h.checks) h.checks = {};
-  if (!h.checks[accountId]) h.checks[accountId] = [];
-  h.checks[accountId].push(entry);
-  if (h.checks[accountId].length > MAX_HISTORY) {
-    h.checks[accountId] = h.checks[accountId].slice(-MAX_HISTORY);
+  if (!h.checks[orderId]) h.checks[orderId] = [];
+  h.checks[orderId].push(entry);
+  if (h.checks[orderId].length > MAX_HISTORY) {
+    h.checks[orderId] = h.checks[orderId].slice(-MAX_HISTORY);
   }
-  writeJson("account_health", h);
+  writeJson("order_health", h);
 }
 async function processJob(job) {
   let result;
   const plugin = getPlugin(job.type);
   if (!plugin) {
     result = {
-      status: "no_plugin",
-      message: `Ch\u01B0a c\xF3 plugin ki\u1EC3m tra cho lo\u1EA1i t\xE0i kho\u1EA3n "${job.type || "kh\xF4ng x\xE1c \u0111\u1ECBnh"}". Plugin hi\u1EC7n c\xF3: ${["grok"].join(", ")}`,
+      code: "NO_PLUGIN",
+      message: `Ch\u01B0a c\xF3 plugin ki\u1EC3m tra cho lo\u1EA1i "${job.type || "kh\xF4ng x\xE1c \u0111\u1ECBnh"}". Plugin hi\u1EC7n c\xF3: ${["grok"].join(", ")}`,
       responseTime: null
     };
   } else {
-    const accounts = readJson("accounts", []) ?? [];
-    const acc = accounts.find((a) => a.id === job.accountId);
-    const password = acc?.password ?? "";
-    const h = readJson("account_health", { config: {} }) ?? { config: {} };
-    const timeoutMs = Number((h.config ?? {}).timeoutMs ?? 6e4);
+    const orders = readJson("orders", {}) ?? {};
+    const order = orders[job.orderId];
+    const password = order?.password ?? "";
+    const { timeoutMs } = getWorkerConfig();
     try {
       result = await plugin.check(job.email, password, { timeoutMs });
     } catch (err) {
       result = {
-        status: "error",
+        code: "UNKNOWN",
         message: `Plugin error: ${err?.message?.slice(0, 200) ?? String(err)}`,
         responseTime: null
       };
     }
   }
-  const historyStatus = result.status === "no_plugin" ? "error" : result.status;
-  saveHealthEntry(job.accountId, {
+  saveHealthEntry(job.orderId, {
     checkedAt: now(),
-    status: historyStatus,
+    code: result.code,
     message: result.message,
     responseTime: result.responseTime,
-    httpStatus: null,
-    plugin: plugin?.id ?? "none"
+    plugin: plugin?.id ?? "none",
+    screenshotBase64: result.screenshotBase64,
+    playwrightLog: result.playwrightLog
   });
-  const finalStatus = result.status === "healthy" || result.status === "unhealthy" ? "done" : "failed";
+  const finalStatus = result.code === "ACTIVE" || result.code === "PACKAGE_LOST" ? "done" : "failed";
   updateJob(job.id, {
     status: finalStatus,
     finishedAt: now(),
@@ -52844,7 +53025,7 @@ async function processJob(job) {
   trimOldJobs();
 }
 async function tick() {
-  const workerCount = getWorkerCount();
+  const { workerCount } = getWorkerConfig();
   const alreadyRunning = countRunning();
   const slots = workerCount - alreadyRunning;
   if (slots <= 0) return;
@@ -52864,7 +53045,7 @@ async function tick() {
           status: "failed",
           finishedAt: now(),
           result: {
-            status: "error",
+            code: "UNKNOWN",
             message: `Unhandled: ${err?.message?.slice(0, 200) ?? String(err)}`,
             responseTime: null
           }

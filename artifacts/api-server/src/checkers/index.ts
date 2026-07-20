@@ -13,15 +13,32 @@
 
 // ── Types (re-exported so callers only need one import) ──────────────────────
 
+/** Standardised result codes — every checker plugin MUST return one of these. */
+export type ResultCode =
+  | "ACTIVE"           // Logged in, plan still active
+  | "PACKAGE_LOST"     // Logged in but subscription/plan no longer active
+  | "PASSWORD_INVALID" // Wrong password
+  | "ACCOUNT_BANNED"   // Account suspended / banned
+  | "ACCOUNT_LOCKED"   // Account locked (not suspended, but inaccessible)
+  | "REQUIRE_EMAIL"    // Needs email verification
+  | "REQUIRE_PHONE"    // Needs phone / 2FA verification
+  | "CAPTCHA"          // Bot-detection / CAPTCHA / rate-limit block
+  | "NETWORK_ERROR"    // Connection issue
+  | "TIMEOUT"          // Playwright timed out
+  | "NO_PLUGIN"        // No checker registered for this product type
+  | "UNKNOWN";         // Unrecognised state
+
 export interface CheckResult {
-  /** Health outcome */
-  status: "healthy" | "unhealthy" | "error" | "no_plugin";
+  /** Standardised outcome code */
+  code: ResultCode;
   /** Human-readable message shown in the UI */
   message: string;
   /** Wall-clock time of the check in ms, null if not applicable */
   responseTime: number | null;
-  /** Extra detail for debugging (not shown in main UI) */
-  detail?: string;
+  /** Base64-encoded screenshot on failure (optional) */
+  screenshotBase64?: string;
+  /** Playwright / browser log lines on failure (optional) */
+  playwrightLog?: string;
 }
 
 export interface CheckOptions {
@@ -30,7 +47,7 @@ export interface CheckOptions {
 }
 
 export interface CheckerPlugin {
-  /** Lowercase product identifier — matched against account.type (case-insensitive) */
+  /** Lowercase product identifier — matched against order product name */
   id: string;
   /** Display name shown in the UI */
   name: string;
@@ -52,14 +69,28 @@ function registerAll(plugins: CheckerPlugin[]) {
   }
 }
 
-/** Look up a plugin by account type (case-insensitive). */
-export function getPlugin(accountType: string): CheckerPlugin | undefined {
-  return registry.get((accountType ?? "").toLowerCase().trim());
+/** Look up a plugin by product type key (case-insensitive). */
+export function getPlugin(productType: string): CheckerPlugin | undefined {
+  return registry.get((productType ?? "").toLowerCase().trim());
 }
 
 /** List all registered plugins. */
 export function listPlugins(): CheckerPlugin[] {
   return [...registry.values()];
+}
+
+/**
+ * Detect the checker plugin key from an order's productName.
+ * Returns the plugin id string to pass to getPlugin().
+ */
+export function detectPluginType(productName: string): string {
+  const lower = (productName ?? "").toLowerCase();
+  if (lower.includes("grok")) return "grok";
+  if (lower.includes("chatgpt") || lower.includes("openai") || lower.includes("gpt")) return "chatgpt";
+  if (lower.includes("gemini")) return "gemini";
+  if (lower.includes("claude") || lower.includes("anthropic")) return "claude";
+  // Fallback: first word of product name
+  return lower.split(/\s+/)[0] || "unknown";
 }
 
 // ── Register known plugins ────────────────────────────────────────────────────

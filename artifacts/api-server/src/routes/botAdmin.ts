@@ -8,7 +8,7 @@ import {
   getJobs,
   clearDoneJobs,
 } from "../queue/jobQueue.js";
-import { listPlugins } from "../checkers/index.js";
+import { listPlugins, detectPluginType } from "../checkers/index.js";
 
 const router = Router();
 
@@ -2253,15 +2253,15 @@ router.post("/bot/accounts/health/check", requireAuth, (req: any, res: any) => {
 });
 
 // ── GET /bot/health/jobs ─────────────────────────────────────────────────────
-// Query params: status (comma-separated), accountId
+// Query params: status (comma-separated), orderId
 router.get("/bot/health/jobs", requireAuth, (req: any, res: any) => {
-  const { status, accountId } = req.query ?? {};
+  const { status, orderId } = req.query ?? {};
   const statusFilter = status
     ? String(status).split(",").map((s: string) => s.trim()).filter(Boolean)
     : undefined;
   const jobs = getJobs({
     status: statusFilter,
-    accountId: accountId ? String(accountId) : undefined,
+    orderId: orderId ? String(orderId) : undefined,
   });
   // Attach plugin name for display
   const plugins = listPlugins();
@@ -2274,10 +2274,10 @@ router.get("/bot/health/jobs", requireAuth, (req: any, res: any) => {
 });
 
 // ── DELETE /bot/health/jobs/done ─────────────────────────────────────────────
-// Body: { accountId? } — omit to clear all finished jobs
+// Body: { orderId? } — omit to clear all finished jobs
 router.delete("/bot/health/jobs/done", requireAuth, (req: any, res: any) => {
-  const { accountId } = req.body ?? {};
-  clearDoneJobs(accountId);
+  const { orderId } = req.body ?? {};
+  clearDoneJobs(orderId);
   res.json({ ok: true });
 });
 
@@ -2293,6 +2293,159 @@ router.delete("/bot/accounts/health/clear", requireAuth, (req: any, res: any) =>
   }
   writeJson("account_health", h);
   addLog("HEALTH_CLEAR", accountId ?? "all", "web-admin");
+  res.json({ ok: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ORDER HEALTH CHECK ROUTES
+// Data source: orders.json — robot reads email/password from each order.
+// Results:     order_health.json — keyed by orderId.
+// ══════════════════════════════════════════════════════════════════════════════
+
+function readOrderHealth() {
+  return readJson("order_health", { config: {}, checks: {} }) ?? { config: {}, checks: {} };
+}
+
+function orderHealthDefaults(cfg: any) {
+  return {
+    timeoutMs: 60000,
+    workerCount: 2,
+    ...cfg,
+  };
+}
+
+// ── GET /bot/orders/health/config ─────────────────────────────────────────────
+router.get("/bot/orders/health/config", requireAuth, (_req: any, res: any) => {
+  const h = readOrderHealth();
+  res.json(orderHealthDefaults(h.config ?? {}));
+});
+
+// ── PUT /bot/orders/health/config ─────────────────────────────────────────────
+router.put("/bot/orders/health/config", requireAuth, (req: any, res: any) => {
+  const h = readOrderHealth();
+  h.config = { ...(h.config ?? {}), ...req.body };
+  writeJson("order_health", h);
+  res.json({ ok: true, config: orderHealthDefaults(h.config) });
+});
+
+// ── GET /bot/orders/health ─────────────────────────────────────────────────────
+// Returns every order with its latest health check code.
+router.get("/bot/orders/health", requireAuth, (_req: any, res: any) => {
+  const orders: Record<string, any> = readJson("orders", {}) ?? {};
+  const h = readOrderHealth();
+  const checks: any = h.checks ?? {};
+
+  const ISSUE_CODES = new Set([
+    "PACKAGE_LOST", "PASSWORD_INVALID", "ACCOUNT_BANNED", "ACCOUNT_LOCKED",
+    "REQUIRE_EMAIL", "REQUIRE_PHONE", "CAPTCHA", "NETWORK_ERROR", "TIMEOUT",
+    "UNKNOWN", "NO_PLUGIN",
+  ]);
+
+  const result = Object.values(orders).map((ord: any) => {
+    const history: any[] = checks[ord.orderId] ?? [];
+    const latest = history.length > 0 ? history[history.length - 1] : null;
+    return {
+      orderId: ord.orderId,
+      email: ord.email,
+      productName: ord.productName,
+      status: ord.status,
+      healthCode: latest?.code ?? "UNCHECKED",
+      lastCheckedAt: latest?.checkedAt ?? null,
+      lastMessage: latest?.message ?? null,
+      lastResponseTime: latest?.responseTime ?? null,
+      plugin: latest?.plugin ?? null,
+      checkCount: history.length,
+    };
+  });
+
+  const summary = {
+    total: result.length,
+    active: result.filter((r: any) => r.healthCode === "ACTIVE").length,
+    issues: result.filter((r: any) => ISSUE_CODES.has(r.healthCode)).length,
+    unchecked: result.filter((r: any) => r.healthCode === "UNCHECKED").length,
+  };
+
+  res.json({ orders: result, summary, config: orderHealthDefaults(h.config ?? {}) });
+});
+
+// ── GET /bot/orders/:orderId/health ───────────────────────────────────────────
+// Returns full check history for one order, newest first.
+router.get("/bot/orders/:orderId/health", requireAuth, (req: any, res: any) => {
+  const { orderId } = req.params;
+  const h = readOrderHealth();
+  const history: any[] = (h.checks ?? {})[orderId] ?? [];
+  res.json([...history].reverse());
+});
+
+// ── POST /bot/orders/health/check ─────────────────────────────────────────────
+// Body: { orderId? } — enqueue one order (by id) or all non-refunded orders.
+router.post("/bot/orders/health/check", requireAuth, (req: any, res: any) => {
+  const body = req.body ?? {};
+  const orders: Record<string, any> = readJson("orders", {}) ?? {};
+  let toCheck: any[];
+
+  if (body.orderId) {
+    const order = orders[body.orderId];
+    if (!order) {
+      res.status(404).json({ ok: false, message: `Không tìm thấy đơn hàng: ${body.orderId}` });
+      return;
+    }
+    toCheck = [order];
+  } else {
+    toCheck = Object.values(orders).filter((o: any) => o.status !== "refunded");
+  }
+
+  const jobIds = toCheck
+    .filter((ord: any) => ord.email)
+    .map((ord: any) => enqueue({
+      id: ord.orderId,
+      email: ord.email,
+      type: detectPluginType(ord.productName ?? ""),
+    }).id);
+
+  addLog("HEALTH_CHECK_ENQUEUE", `queued=${jobIds.length}`, "web-admin");
+  res.json({ ok: true, queued: jobIds.length, jobIds });
+});
+
+// ── GET /bot/orders/health/jobs ───────────────────────────────────────────────
+// Query params: status (comma-separated), orderId
+router.get("/bot/orders/health/jobs", requireAuth, (req: any, res: any) => {
+  const { status, orderId } = req.query ?? {};
+  const statusFilter = status
+    ? String(status).split(",").map((s: string) => s.trim()).filter(Boolean)
+    : undefined;
+  const jobs = getJobs({
+    status: statusFilter,
+    orderId: orderId ? String(orderId) : undefined,
+  });
+  const plugins = listPlugins();
+  const pluginMap = Object.fromEntries(plugins.map(p => [p.id, p.name]));
+  const enriched = jobs.map((j: any) => ({
+    ...j,
+    pluginName: pluginMap[j.type?.toLowerCase()] ?? null,
+  }));
+  res.json(enriched);
+});
+
+// ── DELETE /bot/orders/health/jobs/done ───────────────────────────────────────
+router.delete("/bot/orders/health/jobs/done", requireAuth, (req: any, res: any) => {
+  const { orderId } = req.body ?? {};
+  clearDoneJobs(orderId);
+  res.json({ ok: true });
+});
+
+// ── DELETE /bot/orders/health/clear ───────────────────────────────────────────
+router.delete("/bot/orders/health/clear", requireAuth, (req: any, res: any) => {
+  const { orderId } = req.body ?? {};
+  const h = readOrderHealth();
+  if (!h.checks) h.checks = {};
+  if (orderId) {
+    delete h.checks[orderId];
+  } else {
+    h.checks = {};
+  }
+  writeJson("order_health", h);
+  addLog("HEALTH_CLEAR", orderId ?? "all", "web-admin");
   res.json({ ok: true });
 });
 
