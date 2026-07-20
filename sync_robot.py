@@ -688,14 +688,89 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
         _step("Tìm nút Đăng nhập", False, f"Không tìm thấy sau {len(_SUBMIT_SELECTORS)} selectors")
         raise RuntimeError(f"Không tìm thấy nút Đăng nhập trên {page.url}")
 
-    # Bắt network log để debug
+    # ── Kiểm tra CSRF token / meta trước khi submit ───────────────────────────
+    try:
+        csrf_info = await page.evaluate("""() => {
+            const meta   = document.querySelector('meta[name="csrf-token"],meta[name="_token"]');
+            const hidden = document.querySelector('input[name="_token"],input[name="csrf_token"],input[name="csrf-token"]');
+            return {
+                meta_name:  meta   ? meta.getAttribute('name')    : null,
+                meta_value: meta   ? (meta.getAttribute('content') || '').slice(0,20) : null,
+                hidden_name: hidden ? hidden.getAttribute('name') : null,
+                hidden_value: hidden ? (hidden.value || '').slice(0,20) : null,
+            };
+        }""")
+        _log(f"[login] CSRF check: {csrf_info}")
+    except Exception as _ce:
+        _log(f"[login] CSRF check error: {_ce}")
+
+    # ── Bắt request/response đầy đủ cho auth endpoint ────────────────────────
     network_log: list[str] = []
+    auth_log: list[str]    = []   # chi tiết request login
+
+    AUTH_PATTERNS = ("login", "signin", "sign-in", "auth", "session", "token")
+
     def _on_req(req):
-        network_log.append(f"→ {req.method} {req.url[:180]}")
+        short = f"→ {req.method} {req.url[:200]}"
+        network_log.append(short)
+        url_lower = req.url.lower()
+        if req.method in ("POST", "PUT") and any(p in url_lower for p in AUTH_PATTERNS):
+            try:
+                body = req.post_data or ""
+                # Ẩn password
+                import re as _re
+                body_safe = _re.sub(
+                    r'("password"\s*:\s*")[^"]*"',
+                    r'\1***"', body
+                )
+                body_safe = _re.sub(
+                    r'(password=)[^&\s]*',
+                    r'\1***', body_safe
+                )
+                headers = dict(req.headers)
+                auth_log.append(
+                    f"\n{'='*60}\n"
+                    f"REQUEST  {req.method} {req.url}\n"
+                    f"Headers  : {headers}\n"
+                    f"Payload  : {body_safe[:800]}\n"
+                    f"{'='*60}"
+                )
+            except Exception as _ex:
+                auth_log.append(f"[req capture error] {_ex}")
+
     def _on_resp(resp):
-        network_log.append(f"← {resp.status} {resp.url[:180]}")
+        short = f"← {resp.status} {resp.url[:200]}"
+        network_log.append(short)
+
+    async def _on_resp_full(resp):
+        _on_resp(resp)
+        url_lower = resp.url.lower()
+        if any(p in url_lower for p in AUTH_PATTERNS):
+            try:
+                status  = resp.status
+                headers = dict(resp.headers)
+                set_ck  = headers.get("set-cookie", "(none)")
+                try:
+                    body = await resp.json()
+                except Exception:
+                    try:
+                        body = await resp.text()
+                    except Exception:
+                        body = "(unreadable)"
+                auth_log.append(
+                    f"\n{'='*60}\n"
+                    f"RESPONSE {resp.status} {resp.url}\n"
+                    f"Status      : {status}\n"
+                    f"Set-Cookie  : {set_ck}\n"
+                    f"Content-Type: {headers.get('content-type','')}\n"
+                    f"Body        : {str(body)[:1200]}\n"
+                    f"{'='*60}"
+                )
+            except Exception as _ex:
+                auth_log.append(f"[resp capture error] {_ex}")
+
     page.on("request",  _on_req)
-    page.on("response", _on_resp)
+    page.on("response", _on_resp_full)
 
     url_before = page.url
     await page.locator(submit_sel).first.click()
@@ -752,8 +827,14 @@ async def loginAndWaitReady(page, config: dict, log_fn=None, step_fn=None, sourc
         _log("[login] networkidle timeout 20s — tiếp tục")
 
     page.remove_listener("request",  _on_req)
-    page.remove_listener("response", _on_resp)
+    page.remove_listener("response", _on_resp_full)
     _log(f"[login] Network ({len(network_log)} entries): " + " | ".join(network_log[-12:]))
+    # In toàn bộ auth request/response log
+    if auth_log:
+        for entry in auth_log:
+            _log(f"[login][AUTH-DETAIL]{entry}")
+    else:
+        _log("[login][AUTH-DETAIL] Không bắt được request auth nào")
 
     # 7. Nếu vẫn ở /login ngay sau networkidle → thất bại rõ ràng
     if any(kw in page.url.lower() for kw in _LOGIN_URL_KEYWORDS):
