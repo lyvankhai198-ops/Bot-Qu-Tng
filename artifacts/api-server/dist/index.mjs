@@ -52951,11 +52951,16 @@ router2.post("/bot/order-health/check", requireAuth, (req, res) => {
   } else {
     toCheck = Object.values(orders).filter((o) => o.status !== "refunded");
   }
-  const jobIds = toCheck.filter((ord) => ord.email).map((ord) => enqueue({
-    id: ord.orderId,
-    email: ord.email,
-    type: detectPluginType(ord.productName ?? "")
-  }).id);
+  const orderItemsAll = readJson2("order_items", {}) ?? {};
+  const jobIds = toCheck.map((ord) => {
+    const loginEmail = ord.email || (orderItemsAll[ord.orderId]?.[0]?.email ?? "");
+    if (!loginEmail) return null;
+    return enqueue({
+      id: ord.orderId,
+      email: loginEmail,
+      type: detectPluginType(ord.productName ?? "")
+    }).id;
+  }).filter(Boolean);
   addLog("HEALTH_CHECK_ENQUEUE", `queued=${jobIds.length}`, "web-admin");
   res.json({ ok: true, queued: jobIds.length, jobIds });
 });

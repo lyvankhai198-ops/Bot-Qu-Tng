@@ -2410,13 +2410,23 @@ router.post("/bot/order-health/check", requireAuth, (req: any, res: any) => {
     toCheck = Object.values(orders).filter((o: any) => o.status !== "refunded");
   }
 
+  // Khi ord.email trống (slot email rỗng) → fallback lấy email từ order_items
+  // (account đã giao: danie.jimsody@outlook.com nằm ở đây, không ở orders.email)
+  const orderItemsAll: Record<string, any[]> = readJson("order_items", {}) ?? {};
+
   const jobIds = toCheck
-    .filter((ord: any) => ord.email)
-    .map((ord: any) => enqueue({
-      id: ord.orderId,
-      email: ord.email,
-      type: detectPluginType(ord.productName ?? ""),
-    }).id);
+    .map((ord: any) => {
+      const loginEmail: string =
+        ord.email ||
+        (orderItemsAll[ord.orderId]?.[0]?.email ?? "");
+      if (!loginEmail) return null; // không có email nào → bỏ qua
+      return enqueue({
+        id: ord.orderId,
+        email: loginEmail,
+        type: detectPluginType(ord.productName ?? ""),
+      }).id;
+    })
+    .filter(Boolean);
 
   addLog("HEALTH_CHECK_ENQUEUE", `queued=${jobIds.length}`, "web-admin");
   res.json({ ok: true, queued: jobIds.length, jobIds });
