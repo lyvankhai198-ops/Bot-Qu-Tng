@@ -230,6 +230,8 @@ export default function Orders() {
   const [currentOrder, setCurrentOrder] = useState<Partial<Order>>({})
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<"info" | "health">("info")
+  const [grokCookieInput, setGrokCookieInput] = useState("")
+  const [cookieSaving, setCookieSaving] = useState(false)
 
   // ── Health check state ────────────────────────────────────────────────────
   // activeJobMap: orderId → true (has active job)
@@ -301,7 +303,33 @@ export default function Orders() {
   const handleOpenEdit = (order: Order) => {
     setCurrentOrder({ ...order })
     setActiveTab("info")
+    setGrokCookieInput("")
     setDialogOpen("edit")
+  }
+
+  const handleSaveCookie = async () => {
+    if (!currentOrder.orderId || !grokCookieInput.trim()) return
+    setCookieSaving(true)
+    try {
+      const data = await apiFetch("PUT", `/bot/orders/${currentOrder.orderId}/grok-cookie`, { cookie: grokCookieInput.trim() })
+      setCurrentOrder(prev => ({ ...prev, grokSessionCookieSavedAt: data.savedAt } as any))
+      setGrokCookieInput("")
+      toast({ title: "Đã lưu cookie", description: "Health check sẽ dùng cookie này (không cần Playwright)" })
+    } catch (e: any) {
+      toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    } finally { setCookieSaving(false) }
+  }
+
+  const handleClearCookie = async () => {
+    if (!currentOrder.orderId) return
+    setCookieSaving(true)
+    try {
+      await apiFetch("PUT", `/bot/orders/${currentOrder.orderId}/grok-cookie`, { cookie: "" })
+      setCurrentOrder(prev => { const o = { ...prev } as any; delete o.grokSessionCookie; o.grokSessionCookieSavedAt = null; return o })
+      toast({ title: "Đã xóa cookie" })
+    } catch (e: any) {
+      toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    } finally { setCookieSaving(false) }
   }
 
   const handleSave = async () => {
@@ -794,6 +822,58 @@ export default function Orders() {
                     />
                   </div>
                 </div>
+
+                {/* ── Session Cookie (Grok bypass Cloudflare) ───────────── */}
+                {dialogMode === "edit" && (
+                  <div className="grid gap-2 pt-1">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs flex items-center gap-1.5">
+                        <KeyRound className="h-3.5 w-3.5 text-blue-500" />
+                        Session Cookie <span className="text-muted-foreground font-normal ml-1">(Grok — bypass Cloudflare)</span>
+                      </Label>
+                      {(currentOrder as any).grokSessionCookieSavedAt ? (
+                        <Badge variant="outline" className="text-xs text-green-700 border-green-300 bg-green-50 dark:bg-green-950/30 dark:text-green-400 dark:border-green-800">
+                          ✓ Cookie đã lưu
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-xs text-muted-foreground">
+                          Chưa có cookie
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Đăng nhập <strong>grok.com</strong> trên trình duyệt → F12 → Application → Cookies → copy giá trị <code className="bg-muted px-1 rounded">__Secure-next-auth.session-token</code> (hoặc dán cả Cookie header).
+                    </p>
+                    <Textarea
+                      rows={2}
+                      placeholder="Dán cookie vào đây... (VD: __Secure-next-auth.session-token=eyJ...)"
+                      value={grokCookieInput}
+                      onChange={e => setGrokCookieInput(e.target.value)}
+                      className="font-mono text-xs resize-none"
+                    />
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        size="sm" variant="outline"
+                        onClick={handleSaveCookie}
+                        disabled={cookieSaving || !grokCookieInput.trim()}
+                        className="text-blue-700 border-blue-300 hover:bg-blue-50 dark:text-blue-400 dark:border-blue-700"
+                      >
+                        {cookieSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <KeyRound className="h-3.5 w-3.5 mr-1" />}
+                        Lưu Cookie
+                      </Button>
+                      {(currentOrder as any).grokSessionCookieSavedAt && (
+                        <Button
+                          size="sm" variant="ghost"
+                          onClick={handleClearCookie}
+                          disabled={cookieSaving}
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <XCircle className="h-3.5 w-3.5 mr-1" /> Xóa Cookie
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <DialogFooter className="flex-col sm:flex-row gap-2 pt-0">
                 <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDialogOpen(null)}>Hủy</Button>

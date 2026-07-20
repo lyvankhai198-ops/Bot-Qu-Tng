@@ -44,6 +44,13 @@ export interface CheckResult {
 export interface CheckOptions {
   /** Max ms to wait for the whole check (default: 60 000) */
   timeoutMs?: number;
+  /**
+   * Raw Cookie header value saved from a real browser session.
+   * When set, the Grok checker uses fetch() directly (no Playwright / no
+   * Cloudflare challenge) instead of the full browser login flow.
+   * Example: "__Secure-next-auth.session-token=eyJ...; other=val"
+   */
+  sessionCookie?: string;
 }
 
 export interface CheckerPlugin {

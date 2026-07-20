@@ -763,6 +763,26 @@ router.put("/bot/orders/:orderId", requireAuth, (req: any, res: any) => {
   res.json({ ok: true, message: "Đã cập nhật" });
 });
 
+// ── PUT /bot/orders/:orderId/grok-cookie — lưu hoặc xóa session cookie ──────
+router.put("/bot/orders/:orderId/grok-cookie", requireAuth, (req: any, res: any) => {
+  const orders: any = readJson("orders", {}) ?? {};
+  const id = req.params.orderId;
+  if (!orders[id]) { res.status(404).json({ ok: false, message: "Không tìm thấy đơn hàng" }); return; }
+  const cookie = String(req.body?.cookie ?? "").trim();
+  if (cookie) {
+    orders[id].grokSessionCookie = cookie;
+    orders[id].grokSessionCookieSavedAt = now();
+    addLog("GROK_COOKIE_SAVE", id, "web-admin");
+  } else {
+    delete orders[id].grokSessionCookie;
+    orders[id].grokSessionCookieSavedAt = null;
+    addLog("GROK_COOKIE_CLEAR", id, "web-admin");
+  }
+  orders[id].updatedAt = now();
+  writeJson("orders", orders);
+  res.json({ ok: true, hasCookie: !!cookie, savedAt: orders[id].grokSessionCookieSavedAt ?? null });
+});
+
 // ── DELETE /bot/orders/:orderId ──────────────────────────────────────────────
 router.delete("/bot/orders/:orderId", requireAuth, (req: any, res: any) => {
   const orders: any = readJson("orders", {}) ?? {};

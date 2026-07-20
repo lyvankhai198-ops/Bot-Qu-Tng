@@ -21,6 +21,159 @@
 
 import type { CheckerPlugin, CheckResult, CheckOptions } from "./index.js";
 
+// ── Cookie-based fast path (bypasses Cloudflare completely) ──────────────────
+/**
+ * Kiểm tra bằng session cookie lấy từ trình duyệt thật.
+ * Không cần Playwright, không bị Cloudflare block.
+ * User đăng nhập grok.com thủ công → F12 → Application → Cookies →
+ * copy toàn bộ giá trị "__Secure-next-auth.session-token" (hoặc cả Cookie header).
+ */
+async function checkWithCookie(cookie: string, email: string): Promise<CheckResult> {
+  const start = Date.now();
+  const logs: string[] = [];
+  const log = (msg: string) => { logs.push(`[${Date.now() - start}ms] ${msg}`); console.log(`[grok-cookie] ${msg}`); };
+
+  // Nếu user chỉ dán token (không có tên cookie), tự thêm tên
+  const cookieHeader = cookie.includes("=")
+    ? cookie
+    : `__Secure-next-auth.session-token=${cookie}`;
+
+  const HEADERS: Record<string, string> = {
+    Cookie: cookieHeader,
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    Accept: "application/json, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    Referer: "https://grok.com/",
+  };
+
+  try {
+    // ── 1. /api/auth/session — kiểm tra đăng nhập ─────────────────────────
+    log("GET /api/auth/session");
+    const r1 = await fetch("https://grok.com/api/auth/session", {
+      headers: HEADERS,
+      redirect: "follow",
+    });
+    log(`Status: ${r1.status}`);
+
+    if (r1.status === 401 || r1.status === 403) {
+      return {
+        code: "PASSWORD_INVALID",
+        message: "Session cookie hết hạn hoặc không hợp lệ — cần lấy cookie mới từ trình duyệt",
+        responseTime: Date.now() - start,
+        playwrightLog: logs.join("\n"),
+      };
+    }
+
+    const text1 = await r1.text();
+    log(`Session body: ${text1.slice(0, 600)}`);
+
+    if (!text1 || text1.trim() === "{}" || text1.trim() === "null" || text1.trim() === "") {
+      return {
+        code: "PASSWORD_INVALID",
+        message: "Session cookie không hợp lệ hoặc hết hạn (response rỗng) — cần cập nhật cookie mới",
+        responseTime: Date.now() - start,
+        playwrightLog: logs.join("\n"),
+      };
+    }
+
+    let sess: any = null;
+    try { sess = JSON.parse(text1); } catch {}
+
+    const loggedIn = !!(sess?.user || sess?.email || sess?.id || sess?.sub);
+    if (!loggedIn) {
+      return {
+        code: "PASSWORD_INVALID",
+        message: "Session cookie không hợp lệ — cần đăng nhập lại và lấy cookie mới",
+        responseTime: Date.now() - start,
+        playwrightLog: logs.join("\n"),
+      };
+    }
+
+    log(`Logged in: ${sess?.user?.email ?? sess?.email ?? "ok"}`);
+
+    // ── 2. Kiểm tra subscription trong session response ────────────────────
+    const sessStr = JSON.stringify(sess);
+    const superMatch = sessStr.match(/(SuperGrok|super_grok|grok_plus|grokPlus|superGrok)/i);
+    if (superMatch) {
+      return {
+        code: "ACTIVE",
+        message: `Cookie hợp lệ — Gói ${superMatch[0]} đang hoạt động`,
+        responseTime: Date.now() - start,
+        playwrightLog: logs.join("\n"),
+      };
+    }
+
+    // ── 3. Thử các endpoint subscription ────────────────────────────────────
+    for (const path of ["/api/user/subscription", "/api/subscription", "/api/user", "/api/me"]) {
+      try {
+        log(`GET ${path}`);
+        const r = await fetch(`https://grok.com${path}`, { headers: HEADERS });
+        if (r.status === 200) {
+          const t = await r.text();
+          log(`${path}: ${t.slice(0, 400)}`);
+          if (/super|SuperGrok|grok_plus|premium/i.test(t)) {
+            return {
+              code: "ACTIVE",
+              message: "Cookie hợp lệ — Tài khoản có gói SuperGrok",
+              responseTime: Date.now() - start,
+              playwrightLog: logs.join("\n"),
+            };
+          }
+        }
+      } catch {}
+    }
+
+    // ── 4. Fetch trang chủ grok.com (HTML) — kiểm tra __NEXT_DATA__ ─────────
+    try {
+      log("GET grok.com HTML");
+      const r3 = await fetch("https://grok.com", {
+        headers: { ...HEADERS, Accept: "text/html,*/*" },
+        redirect: "follow",
+      });
+      const html = await r3.text();
+      log(`HTML (800): ${html.slice(0, 800)}`);
+
+      const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+      if (nextDataMatch) {
+        const nd = nextDataMatch[1];
+        log(`__NEXT_DATA__ (600): ${nd.slice(0, 600)}`);
+        if (/super|SuperGrok|grok_plus|subscription/i.test(nd)) {
+          return {
+            code: "ACTIVE",
+            message: "Cookie hợp lệ — Gói SuperGrok (từ app state)",
+            responseTime: Date.now() - start,
+            playwrightLog: logs.join("\n"),
+          };
+        }
+      }
+
+      if (/SuperGrok|super_grok/i.test(html)) {
+        return {
+          code: "ACTIVE",
+          message: "Cookie hợp lệ — Phát hiện gói SuperGrok trên homepage",
+          responseTime: Date.now() - start,
+          playwrightLog: logs.join("\n"),
+        };
+      }
+    } catch (err: any) { log(`HTML fetch: ${err.message}`); }
+
+    // Đăng nhập OK nhưng không thấy SuperGrok
+    return {
+      code: "PACKAGE_LOST",
+      message: "Cookie hợp lệ (đã đăng nhập) nhưng không phát hiện gói SuperGrok",
+      responseTime: Date.now() - start,
+      playwrightLog: logs.join("\n"),
+    };
+
+  } catch (err: any) {
+    const msg: string = err?.message ?? String(err);
+    if (/net::|ERR_|ECONNREFUSED/i.test(msg)) {
+      return { code: "NETWORK_ERROR", message: `Lỗi mạng: ${msg.slice(0, 150)}`, responseTime: Date.now() - start, playwrightLog: logs.join("\n") };
+    }
+    return { code: "UNKNOWN", message: `Cookie check error: ${msg.slice(0, 200)}`, responseTime: Date.now() - start, playwrightLog: logs.join("\n") };
+  }
+}
+
 /** Script chèn vào mọi trang để qua bot-detection */
 const STEALTH_SCRIPT = `
   // 1. Xoá webdriver flag
@@ -102,6 +255,11 @@ const grokPlugin: CheckerPlugin = {
     password: string,
     options: CheckOptions = {},
   ): Promise<CheckResult> {
+    // ── Fast path: cookie-based check — không cần Playwright, bypass Cloudflare
+    if (options.sessionCookie) {
+      return checkWithCookie(options.sessionCookie, email);
+    }
+
     const timeoutMs = options.timeoutMs ?? 120_000;
     const start = Date.now();
     let browser: any = null;
