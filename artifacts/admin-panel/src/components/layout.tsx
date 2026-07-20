@@ -17,6 +17,7 @@ import {
   X,
   Wallet,
   RefreshCw,
+  HeartPulse,
 } from "lucide-react"
 import { Button } from "./ui/button"
 
@@ -31,6 +32,7 @@ const navItems = [
   { href: "/receivers", label: "Đã nhận quà", icon: Gift },
   { href: "/refund-history", label: "Lịch sử hoàn tiền", icon: Wallet },
   { href: "/sync-robot", label: "Robot Đồng Bộ", icon: RefreshCw },
+  { href: "/account-health", label: "Kiểm Tra Tài Khoản", icon: HeartPulse },
   { href: "/logs", label: "Lịch sử hệ thống", icon: Activity },
   { href: "/settings", label: "Cài đặt", icon: SettingsIcon },
 ]

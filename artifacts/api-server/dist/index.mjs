@@ -49843,7 +49843,9 @@ function now() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
 function normalizeAccount(acc) {
-  if (!acc || typeof acc !== "object") return { email: String(acc), password: "", status: "available" };
+  if (!acc || typeof acc !== "object") {
+    return { id: crypto.randomUUID().slice(0, 8), email: String(acc), password: "", status: "available", type: "", note: "", addedAt: now(), distributedTo: null, distributedAt: null };
+  }
   return {
     id: acc.id ?? crypto.randomUUID().slice(0, 8),
     type: acc.type ?? "",
@@ -51832,6 +51834,200 @@ router2.get("/bot/sync-robot/existing-sets", requireAuth, (_req, res) => {
     }
   }
   res.json({ orderIds, itemEmails: [...new Set(itemEmails)] });
+});
+var MAX_HEALTH_HISTORY = 50;
+function ensureStableAccountIds() {
+  const raw = readJson("accounts", []) ?? [];
+  let dirty = false;
+  const accounts = raw.map((acc) => {
+    if (!acc || typeof acc !== "object") {
+      dirty = true;
+      return normalizeAccount(acc);
+    }
+    if (!acc.id) {
+      acc = { ...normalizeAccount(acc) };
+      dirty = true;
+    }
+    return acc;
+  });
+  if (dirty) {
+    writeJson("accounts", accounts);
+  }
+  return accounts;
+}
+function readHealth() {
+  return readJson("account_health", { config: {}, checks: {} }) ?? { config: {}, checks: {} };
+}
+function healthDefaults(cfg) {
+  return {
+    checkUrl: "",
+    method: "POST",
+    emailField: "email",
+    passwordField: "password",
+    successStatus: 200,
+    successPattern: "",
+    timeoutMs: 1e4,
+    autoCheckEnabled: false,
+    autoCheckIntervalMinutes: 60,
+    ...cfg
+  };
+}
+router2.get("/bot/accounts/health/config", requireAuth, (_req, res) => {
+  const h = readHealth();
+  res.json(healthDefaults(h.config ?? {}));
+});
+router2.put("/bot/accounts/health/config", requireAuth, (req, res) => {
+  const h = readHealth();
+  h.config = { ...h.config ?? {}, ...req.body };
+  writeJson("account_health", h);
+  res.json({ ok: true, config: healthDefaults(h.config) });
+});
+router2.get("/bot/accounts/health", requireAuth, (_req, res) => {
+  const accounts = ensureStableAccountIds();
+  const h = readHealth();
+  const checks = h.checks ?? {};
+  const result = accounts.map((acc) => {
+    const history = checks[acc.id] ?? [];
+    const latest = history.length > 0 ? history[history.length - 1] : null;
+    return {
+      ...acc,
+      health: latest ? latest.status : "unchecked",
+      lastCheckedAt: latest?.checkedAt ?? null,
+      lastMessage: latest?.message ?? null,
+      lastResponseTime: latest?.responseTime ?? null,
+      checkCount: history.length
+    };
+  });
+  const summary = {
+    total: result.length,
+    healthy: result.filter((a) => a.health === "healthy").length,
+    unhealthy: result.filter((a) => a.health === "unhealthy").length,
+    error: result.filter((a) => a.health === "error").length,
+    unchecked: result.filter((a) => a.health === "unchecked").length,
+    manual: result.filter((a) => a.health === "manual").length
+  };
+  res.json({ accounts: result, summary, config: healthDefaults(h.config ?? {}) });
+});
+router2.get("/bot/accounts/:id/health-history", requireAuth, (req, res) => {
+  const { id } = req.params;
+  const h = readHealth();
+  const history = (h.checks ?? {})[id] ?? [];
+  res.json([...history].reverse());
+});
+router2.post("/bot/accounts/health/check", requireAuth, async (req, res) => {
+  const body = req.body ?? {};
+  const wantSingle = Object.prototype.hasOwnProperty.call(body, "accountId");
+  const accountId = wantSingle ? body.accountId : void 0;
+  if (wantSingle && (typeof accountId !== "string" || !accountId.trim())) {
+    res.status(400).json({ ok: false, message: "accountId ph\u1EA3i l\xE0 chu\u1ED7i ID h\u1EE3p l\u1EC7 khi \u0111\u01B0\u1EE3c cung c\u1EA5p" });
+    return;
+  }
+  const accounts = ensureStableAccountIds();
+  const h = readHealth();
+  if (!h.checks) h.checks = {};
+  const cfg = healthDefaults(h.config ?? {});
+  const toCheck = wantSingle ? accounts.filter((a) => a.id === accountId) : accounts;
+  if (toCheck.length === 0) {
+    if (wantSingle) {
+      res.status(404).json({ ok: false, message: `Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n v\u1EDBi ID: ${accountId}` });
+    } else {
+      res.json({ ok: true, checked: 0, healthy: 0, unhealthy: 0, error: 0, manual: 0, results: [] });
+    }
+    return;
+  }
+  const results = [];
+  if (!cfg.checkUrl) {
+    const checkedAt = now();
+    for (const acc of toCheck) {
+      const entry = {
+        checkedAt,
+        status: "manual",
+        message: "Ch\u01B0a c\u1EA5u h\xECnh URL ki\u1EC3m tra \u2014 ghi nh\u1EADn th\u1EE7 c\xF4ng",
+        responseTime: null,
+        httpStatus: null
+      };
+      if (!h.checks[acc.id]) h.checks[acc.id] = [];
+      h.checks[acc.id].push(entry);
+      if (h.checks[acc.id].length > MAX_HEALTH_HISTORY) {
+        h.checks[acc.id] = h.checks[acc.id].slice(-MAX_HEALTH_HISTORY);
+      }
+      results.push({ id: acc.id, email: acc.email, ...entry });
+    }
+    writeJson("account_health", h);
+    res.json({ ok: true, checked: toCheck.length, healthy: 0, unhealthy: 0, error: 0, manual: toCheck.length, results });
+    return;
+  }
+  for (const acc of toCheck) {
+    const start = Date.now();
+    let status = "error";
+    let message = "";
+    let httpStatus = null;
+    let responseTime = null;
+    try {
+      const bodyObj = {
+        [cfg.emailField]: acc.email,
+        [cfg.passwordField]: acc.password
+      };
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+      const resp = await fetch(cfg.checkUrl, {
+        method: cfg.method,
+        headers: { "Content-Type": "application/json", "User-Agent": "HealthCheck/1.0" },
+        body: cfg.method !== "GET" ? JSON.stringify(bodyObj) : void 0,
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      responseTime = Date.now() - start;
+      httpStatus = resp.status;
+      const text = await resp.text().catch(() => "");
+      const statusOk = resp.status === (cfg.successStatus ?? 200);
+      const patternOk = cfg.successPattern ? text.includes(cfg.successPattern) : true;
+      if (statusOk && patternOk) {
+        status = "healthy";
+        message = `OK (${resp.status}) \u2014 ${responseTime}ms`;
+      } else {
+        status = "unhealthy";
+        const reasons = [];
+        if (!statusOk) reasons.push(`HTTP ${resp.status} (expected ${cfg.successStatus})`);
+        if (!patternOk) reasons.push("pattern kh\xF4ng kh\u1EDBp");
+        message = reasons.join("; ");
+      }
+    } catch (e) {
+      responseTime = Date.now() - start;
+      message = e.name === "AbortError" ? `Timeout sau ${cfg.timeoutMs}ms` : `L\u1ED7i k\u1EBFt n\u1ED1i: ${e.message ?? "Unknown"}`;
+    }
+    const entry = { checkedAt: (/* @__PURE__ */ new Date()).toISOString(), status, message, responseTime, httpStatus };
+    if (!h.checks[acc.id]) h.checks[acc.id] = [];
+    h.checks[acc.id].push(entry);
+    if (h.checks[acc.id].length > MAX_HEALTH_HISTORY) {
+      h.checks[acc.id] = h.checks[acc.id].slice(-MAX_HEALTH_HISTORY);
+    }
+    results.push({ id: acc.id, email: acc.email, ...entry });
+  }
+  writeJson("account_health", h);
+  addLog("HEALTH_CHECK", `checked=${toCheck.length}`, "web-admin");
+  res.json({
+    ok: true,
+    checked: results.length,
+    healthy: results.filter((r) => r.status === "healthy").length,
+    unhealthy: results.filter((r) => r.status === "unhealthy").length,
+    error: results.filter((r) => r.status === "error").length,
+    manual: 0,
+    results
+  });
+});
+router2.delete("/bot/accounts/health/clear", requireAuth, (req, res) => {
+  const { accountId } = req.body ?? {};
+  const h = readHealth();
+  if (!h.checks) h.checks = {};
+  if (accountId) {
+    delete h.checks[accountId];
+  } else {
+    h.checks = {};
+  }
+  writeJson("account_health", h);
+  addLog("HEALTH_CLEAR", accountId ?? "all", "web-admin");
+  res.json({ ok: true });
 });
 router2.get("/bot/backup", requireAuth, (_req, res) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
