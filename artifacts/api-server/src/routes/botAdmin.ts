@@ -43,7 +43,10 @@ function addLog(action: string, user = "", admin = "") {
 function now() { return new Date().toISOString(); }
 
 function normalizeAccount(acc: any): any {
-  if (!acc || typeof acc !== "object") return { email: String(acc), password: "", status: "available" };
+  if (!acc || typeof acc !== "object") {
+    // Legacy plain-string entry — always assign a stable id so health history can be keyed
+    return { id: crypto.randomUUID().slice(0, 8), email: String(acc), password: "", status: "available", type: "", note: "", addedAt: now(), distributedTo: null, distributedAt: null };
+  }
   return {
     id: acc.id ?? crypto.randomUUID().slice(0, 8),
     type: acc.type ?? "",
@@ -2103,6 +2106,255 @@ router.get("/bot/sync-robot/existing-sets", requireAuth, (_req: any, res: any) =
     }
   }
   res.json({ orderIds, itemEmails: [...new Set(itemEmails)] });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACCOUNT HEALTH CHECK
+// ═══════════════════════════════════════════════════════════════════════════
+
+const MAX_HEALTH_HISTORY = 50;
+
+/**
+ * Reads all accounts, assigns stable IDs to any entry missing one,
+ * persists the updated list back to disk, and returns the stable list.
+ * This prevents health history from being orphaned when accounts lack IDs.
+ */
+function ensureStableAccountIds(): any[] {
+  const raw: any[] = readJson("accounts", []) ?? [];
+  let dirty = false;
+  const accounts = raw.map((acc: any) => {
+    if (!acc || typeof acc !== "object") {
+      // Legacy non-object entry (e.g. plain string) — normalize to full object with stable ID.
+      dirty = true;
+      return normalizeAccount(acc);
+    }
+    if (!acc.id) {
+      // Object entry that was added before the id field existed — assign a stable ID.
+      acc = { ...normalizeAccount(acc) };
+      dirty = true;
+    }
+    return acc;
+  });
+  if (dirty) {
+    writeJson("accounts", accounts);
+  }
+  return accounts;
+}
+
+function readHealth() {
+  return readJson("account_health", { config: {}, checks: {} }) ?? { config: {}, checks: {} };
+}
+
+function healthDefaults(cfg: any) {
+  return {
+    checkUrl: "",
+    method: "POST",
+    emailField: "email",
+    passwordField: "password",
+    successStatus: 200,
+    successPattern: "",
+    timeoutMs: 10000,
+    autoCheckEnabled: false,
+    autoCheckIntervalMinutes: 60,
+    ...cfg,
+  };
+}
+
+// ── GET /bot/accounts/health/config ─────────────────────────────────────────
+router.get("/bot/accounts/health/config", requireAuth, (_req: any, res: any) => {
+  const h = readHealth();
+  res.json(healthDefaults(h.config ?? {}));
+});
+
+// ── PUT /bot/accounts/health/config ─────────────────────────────────────────
+router.put("/bot/accounts/health/config", requireAuth, (req: any, res: any) => {
+  const h = readHealth();
+  h.config = { ...(h.config ?? {}), ...req.body };
+  writeJson("account_health", h);
+  res.json({ ok: true, config: healthDefaults(h.config) });
+});
+
+// ── GET /bot/accounts/health ─────────────────────────────────────────────────
+router.get("/bot/accounts/health", requireAuth, (_req: any, res: any) => {
+  const accounts: any[] = ensureStableAccountIds();
+  const h = readHealth();
+  const checks: any = h.checks ?? {};
+
+  const result = accounts.map((acc: any) => {
+    const history: any[] = checks[acc.id] ?? [];
+    const latest = history.length > 0 ? history[history.length - 1] : null;
+    return {
+      ...acc,
+      health: latest ? latest.status : "unchecked",
+      lastCheckedAt: latest?.checkedAt ?? null,
+      lastMessage: latest?.message ?? null,
+      lastResponseTime: latest?.responseTime ?? null,
+      checkCount: history.length,
+    };
+  });
+
+  const summary = {
+    total: result.length,
+    healthy: result.filter((a: any) => a.health === "healthy").length,
+    unhealthy: result.filter((a: any) => a.health === "unhealthy").length,
+    error: result.filter((a: any) => a.health === "error").length,
+    unchecked: result.filter((a: any) => a.health === "unchecked").length,
+    manual: result.filter((a: any) => a.health === "manual").length,
+  };
+
+  res.json({ accounts: result, summary, config: healthDefaults(h.config ?? {}) });
+});
+
+// ── GET /bot/accounts/:id/health-history ─────────────────────────────────────
+router.get("/bot/accounts/:id/health-history", requireAuth, (req: any, res: any) => {
+  const { id } = req.params;
+  const h = readHealth();
+  const history: any[] = (h.checks ?? {})[id] ?? [];
+  res.json([...history].reverse()); // newest first
+});
+
+// ── POST /bot/accounts/health/check ─────────────────────────────────────────
+// Body: { accountId?: string }  — omit accountId entirely to check all accounts.
+// Providing accountId but with an invalid/empty value is rejected with 400.
+router.post("/bot/accounts/health/check", requireAuth, async (req: any, res: any) => {
+  const body = req.body ?? {};
+  // Distinguish "not provided" (check all) from "provided but invalid" (reject)
+  const wantSingle = Object.prototype.hasOwnProperty.call(body, "accountId");
+  const accountId: string | undefined = wantSingle ? body.accountId : undefined;
+
+  if (wantSingle && (typeof accountId !== "string" || !accountId.trim())) {
+    res.status(400).json({ ok: false, message: "accountId phải là chuỗi ID hợp lệ khi được cung cấp" });
+    return;
+  }
+
+  const accounts: any[] = ensureStableAccountIds();
+  const h = readHealth();
+  if (!h.checks) h.checks = {};
+  const cfg = healthDefaults(h.config ?? {});
+
+  const toCheck = wantSingle
+    ? accounts.filter((a: any) => a.id === accountId)
+    : accounts;
+
+  if (toCheck.length === 0) {
+    if (wantSingle) {
+      res.status(404).json({ ok: false, message: `Không tìm thấy tài khoản với ID: ${accountId}` });
+    } else {
+      res.json({ ok: true, checked: 0, healthy: 0, unhealthy: 0, error: 0, manual: 0, results: [] });
+    }
+    return;
+  }
+
+  const results: any[] = [];
+
+  // No URL configured → manual ping
+  if (!cfg.checkUrl) {
+    const checkedAt = now();
+    for (const acc of toCheck) {
+      const entry = {
+        checkedAt,
+        status: "manual",
+        message: "Chưa cấu hình URL kiểm tra — ghi nhận thủ công",
+        responseTime: null,
+        httpStatus: null,
+      };
+      if (!h.checks[acc.id]) h.checks[acc.id] = [];
+      h.checks[acc.id].push(entry);
+      if (h.checks[acc.id].length > MAX_HEALTH_HISTORY) {
+        h.checks[acc.id] = h.checks[acc.id].slice(-MAX_HEALTH_HISTORY);
+      }
+      results.push({ id: acc.id, email: acc.email, ...entry });
+    }
+    writeJson("account_health", h);
+    res.json({ ok: true, checked: toCheck.length, healthy: 0, unhealthy: 0, error: 0, manual: toCheck.length, results });
+    return;
+  }
+
+  // HTTP-based health check
+  for (const acc of toCheck) {
+    const start = Date.now();
+    let status = "error";
+    let message = "";
+    let httpStatus: number | null = null;
+    let responseTime: number | null = null;
+
+    try {
+      const bodyObj: Record<string, string> = {
+        [cfg.emailField]: acc.email,
+        [cfg.passwordField]: acc.password,
+      };
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+
+      const resp = await fetch(cfg.checkUrl, {
+        method: cfg.method,
+        headers: { "Content-Type": "application/json", "User-Agent": "HealthCheck/1.0" },
+        body: cfg.method !== "GET" ? JSON.stringify(bodyObj) : undefined,
+        signal: controller.signal,
+      } as RequestInit);
+      clearTimeout(timer);
+
+      responseTime = Date.now() - start;
+      httpStatus = resp.status;
+      const text = await resp.text().catch(() => "");
+
+      const statusOk = resp.status === (cfg.successStatus ?? 200);
+      const patternOk = cfg.successPattern ? text.includes(cfg.successPattern) : true;
+
+      if (statusOk && patternOk) {
+        status = "healthy";
+        message = `OK (${resp.status}) — ${responseTime}ms`;
+      } else {
+        status = "unhealthy";
+        const reasons = [];
+        if (!statusOk) reasons.push(`HTTP ${resp.status} (expected ${cfg.successStatus})`);
+        if (!patternOk) reasons.push("pattern không khớp");
+        message = reasons.join("; ");
+      }
+    } catch (e: any) {
+      responseTime = Date.now() - start;
+      message = e.name === "AbortError"
+        ? `Timeout sau ${cfg.timeoutMs}ms`
+        : `Lỗi kết nối: ${e.message ?? "Unknown"}`;
+    }
+
+    const entry = { checkedAt: new Date().toISOString(), status, message, responseTime, httpStatus };
+    if (!h.checks[acc.id]) h.checks[acc.id] = [];
+    h.checks[acc.id].push(entry);
+    if (h.checks[acc.id].length > MAX_HEALTH_HISTORY) {
+      h.checks[acc.id] = h.checks[acc.id].slice(-MAX_HEALTH_HISTORY);
+    }
+    results.push({ id: acc.id, email: acc.email, ...entry });
+  }
+
+  writeJson("account_health", h);
+  addLog("HEALTH_CHECK", `checked=${toCheck.length}`, "web-admin");
+
+  res.json({
+    ok: true,
+    checked: results.length,
+    healthy:  results.filter(r => r.status === "healthy").length,
+    unhealthy: results.filter(r => r.status === "unhealthy").length,
+    error:    results.filter(r => r.status === "error").length,
+    manual:   0,
+    results,
+  });
+});
+
+// ── DELETE /bot/accounts/health/clear ────────────────────────────────────────
+router.delete("/bot/accounts/health/clear", requireAuth, (req: any, res: any) => {
+  const { accountId } = req.body ?? {};
+  const h = readHealth();
+  if (!h.checks) h.checks = {};
+  if (accountId) {
+    delete h.checks[accountId];
+  } else {
+    h.checks = {};
+  }
+  writeJson("account_health", h);
+  addLog("HEALTH_CLEAR", accountId ?? "all", "web-admin");
+  res.json({ ok: true });
 });
 
 // ── GET /bot/backup ──────────────────────────────────────────────────────────
