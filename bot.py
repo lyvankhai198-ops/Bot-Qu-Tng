@@ -1008,6 +1008,9 @@ def _mw_summary_text(L: str, found: list, not_found: list, blocked: list, expire
         lines.append(f"\n🔍 <b>{'Không tìm thấy' if vi else 'Not found'} ({len(not_found)})</b>:")
         for e in not_found:
             lines.append(f"  • <code>{e}</code>")
+        lines.append(
+            f"\n💡 <i>{'Không tìm thấy tài khoản? Bạn có thể thử lại bằng <b>mã đơn hàng</b>.' if vi else 'Account not found? Try searching by <b>order code</b> instead.'}</i>"
+        )
     if blocked:
         lines.append(f"\n⚠️ <b>{'Đang có yêu cầu xử lý' if vi else 'Open request exists'} ({len(blocked)})</b>:")
         for e in blocked:
