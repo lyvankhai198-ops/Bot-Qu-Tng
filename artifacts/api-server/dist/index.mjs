@@ -51025,7 +51025,13 @@ router2.post("/bot/warranty/:id/accounts/:accId/respond", requireAuth, async (re
   const sentAt = now();
   const responseEntry = { message: String(message).trim(), sentAt, adminId: "web-admin" };
   const prevResponses = acc.responses ?? [];
-  requests[idx].accounts[accIdx] = { ...acc, responses: [...prevResponses, responseEntry] };
+  const newAccStatus = acc.status === "pending" ? "processing" : acc.status;
+  requests[idx].accounts[accIdx] = { ...acc, status: newAccStatus, responses: [...prevResponses, responseEntry] };
+  if (!req_.acknowledgedAt) {
+    requests[idx].acknowledgedAt = sentAt;
+    requests[idx].acknowledgedBy = "web-admin";
+  }
+  _recomputeGroupStatus(requests[idx]);
   writeJson("warranty_requests", requests);
   const teleMsg = `\u{1F4AC} <b>Ph\u1EA3n h\u1ED3i t\u1EEB admin (t\xE0i kho\u1EA3n <code>${acc.email}</code>):</b>
 
@@ -51301,7 +51307,9 @@ router2.post("/bot/warranty/:id/respond", requireAuth, async (req, res) => {
   const sentAt = now();
   const responseEntry = { message: String(message).trim(), sentAt, adminId: "web-admin" };
   const prevResponses = req_.responses ?? [];
-  requests[idx] = { ...req_, responses: [...prevResponses, responseEntry] };
+  const newStatus = req_.status === "pending" ? "processing" : req_.status;
+  const ackPatch = req_.acknowledgedAt ? {} : { acknowledgedAt: sentAt, acknowledgedBy: "web-admin" };
+  requests[idx] = { ...req_, ...ackPatch, status: newStatus, responses: [...prevResponses, responseEntry] };
   writeJson("warranty_requests", requests);
   const teleMsg = `\u{1F4AC} <b>Ph\u1EA3n h\u1ED3i t\u1EEB admin:</b>
 
