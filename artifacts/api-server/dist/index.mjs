@@ -50309,30 +50309,55 @@ var grokPlugin = {
           log(`After CF \u2014 URL: ${url}`);
         }
       }
-      await page.waitForSelector("input", { timeout: 12e3 }).catch(() => {
-        log("No <input> found after 12s \u2014 page may not have loaded form yet");
-      });
-      await page.waitForTimeout(1500);
-      const emailBtnSels = [
+      await page.waitForTimeout(3e3);
+      const bodyInner = await page.evaluate(() => {
+        const body = document.body;
+        return body ? body.innerHTML.slice(0, 3e3) : "(no body)";
+      }).catch(() => "(eval error)");
+      log(`Body innerHTML (3000 chars): ${bodyInner}`);
+      const allButtons = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll("button, a, [role='button']"));
+        return els.slice(0, 30).map((el) => ({
+          tag: el.tagName,
+          text: (el.textContent || "").trim().slice(0, 80),
+          href: el.href || "",
+          visible: el.offsetParent !== null
+        }));
+      }).catch(() => []);
+      log(`All buttons/links (${allButtons.length}): ${JSON.stringify(allButtons.slice(0, 15))}`);
+      const signInBtnSels = [
         'button:has-text("Continue with email")',
         'button:has-text("Sign in with email")',
         'button:has-text("Email")',
         'a:has-text("Continue with email")',
         '[data-provider="email"]',
-        '[data-testid*="email"]'
+        'button:has-text("Continue with X")',
+        'button:has-text("Sign in with X")',
+        'a:has-text("Continue with X")',
+        'button:has-text("Sign in")',
+        'button[type="submit"]'
       ];
-      for (const sel of emailBtnSels) {
-        if (await isVisible(page, sel, 3e3)) {
-          log(`Clicking email provider button: ${sel}`);
+      let clickedSignIn = false;
+      for (const sel of signInBtnSels) {
+        if (await isVisible(page, sel, 2e3)) {
+          log(`Clicking sign-in button: ${sel}`);
           await page.locator(sel).first().click();
-          await page.waitForTimeout(2500);
-          await page.waitForSelector("input", { timeout: 8e3 }).catch(() => {
-          });
+          await page.waitForTimeout(3e3);
+          clickedSignIn = true;
           break;
         }
       }
+      if (!clickedSignIn) {
+        const firstBtn = await page.locator("button:visible").first();
+        if (await firstBtn.isVisible({ timeout: 2e3 }).catch(() => false)) {
+          const btnText = await firstBtn.textContent().catch(() => "");
+          log(`Clicking first visible button: "${btnText}"`);
+          await firstBtn.click();
+          await page.waitForTimeout(3e3);
+        }
+      }
       url = page.url();
-      log(`After email option \u2014 URL: ${url}`);
+      log(`After sign-in click \u2014 URL: ${url}`);
       {
         const bt = await bodyText(page);
         if (/Performing security verification|Just a moment/i.test(bt)) {
