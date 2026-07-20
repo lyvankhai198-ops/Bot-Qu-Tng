@@ -520,6 +520,18 @@ def _fmt_order_multi(L: str, order: dict, items: list, settings: dict) -> str:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     db.save_user(user.id, user.username, user.first_name)
+
+    # ── Gift box referral deep link: gboxr{creator_id}e{ev_timestamp} ──
+    args = context.args or []
+    if args:
+        m = re.match(r"^gboxr(\d+)e(\w+)$", args[0])
+        if m:
+            creator_id = int(m.group(1))
+            event_id   = f"gb_{m.group(2)}"
+            context.application.create_task(
+                _process_gift_box_referral(context, event_id, creator_id, user)
+            )
+
     await update.message.reply_text(
         "🌐 <b>Chọn ngôn ngữ / Choose language</b>",
         parse_mode=ParseMode.HTML,
@@ -2284,13 +2296,10 @@ async def _apply_gift_box_reward(user, prize: dict | None) -> str:
             return ""
     return ""
 
-async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    events = db.get_gift_boxes()
+def _get_active_gift_box_event() -> dict | None:
+    """Return the first active gift box event, or None."""
     now_dt = datetime.now()
-
-    active = None
-    for ev in events:
+    for ev in db.get_gift_boxes():
         if not ev.get("enabled"):
             continue
         s = (ev.get("startTime") or "").strip()
@@ -2305,8 +2314,85 @@ async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 continue
         except Exception:
             pass
-        active = ev
-        break
+        return ev
+    return None
+
+async def _process_gift_box_referral(
+    context: ContextTypes.DEFAULT_TYPE,
+    event_id: str,
+    creator_id: int,
+    invitee,          # telegram User object of the newcomer
+) -> None:
+    """Called when someone starts the bot via a gift-box referral link."""
+    if invitee.id == creator_id:
+        return  # self-invite, silently ignore
+
+    # Verify event is still active
+    ev = _get_active_gift_box_event()
+    if not ev or ev["id"] != event_id:
+        return
+
+    result = db.record_gift_box_referral(event_id, creator_id, invitee.id)
+    if not result.get("added"):
+        return  # already counted or duplicate
+
+    total    = result["total"]
+    required = int(ev.get("requiredInvites", 1))
+
+    # Notify creator of progress
+    try:
+        if total >= required and not db.is_gift_box_unlocked(event_id, creator_id):
+            db.mark_gift_box_unlocked(event_id, creator_id)
+            ev_name = ev.get("name", "Ô Quà Bí Mật")
+            msg = (
+                f"🎉 <b>Chúc mừng!</b>\n\n"
+                f"Bạn đã mời thành công <b>{required}</b> người.\n\n"
+                f"🎁 <b>{ev_name}</b> đã được mở khóa.\n"
+            )
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🎁 Nhận quà ngay", callback_data=f"gbox_open:{event_id}")
+            ]])
+            await context.bot.send_message(
+                creator_id, msg, parse_mode=ParseMode.HTML, reply_markup=kb
+            )
+        else:
+            # Progress update (still locked)
+            msg = (
+                f"👥 Cập nhật: bạn đã mời <b>{total}/{required}</b> người.\n"
+                f"Còn <b>{max(0, required - total)}</b> người nữa để mở khóa 🎁"
+            )
+            await context.bot.send_message(creator_id, msg, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.warning(f"GiftBox referral notify error creator={creator_id}: {e}")
+
+async def _send_gift_box_locked(update_or_query, user_id: int, active: dict,
+                                 *, is_callback: bool = False) -> None:
+    """Send / edit the 'locked' message with invite link and progress."""
+    required     = int(active.get("requiredInvites", 1))
+    invite_count = db.get_gift_box_invite_count(active["id"], user_id)
+
+    bot_me       = await (update_or_query.get_bot() if is_callback else update_or_query._bot)
+    # Safer: use context bot via closure; just build from event_id
+    ev_ts        = active["id"].replace("gb_", "")
+    deep_param   = f"gboxr{user_id}e{ev_ts}"
+    bot_username = active.get("_bot_username", "")  # will be filled below if empty
+
+    msg = (
+        f"🔒 <b>Ô Quà Bí Mật đang bị khóa.</b>\n\n"
+        f"Để mở khóa, bạn cần mời ít nhất <b>{required}</b> người bạn tham gia "
+        f"thông qua liên kết riêng bên dưới.\n\n"
+        f"📨 <b>Link mời của bạn:</b>\n"
+        f"<code>https://t.me/{bot_username}?start={deep_param}</code>\n\n"
+        f"👥 Đã mời: <b>{invite_count}/{required}</b>"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔄 Kiểm tra lại", callback_data=f"gbox_check:{active['id']}")
+    ]])
+    return msg, kb
+
+async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user   = update.effective_user
+    active = _get_active_gift_box_event()
 
     if not active:
         await update.message.reply_text(
@@ -2325,7 +2411,7 @@ async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
     if active.get("buyersOnly"):
-        orders = db.get_orders()
+        orders  = db.get_orders()
         uid_str = str(user.id)
         has_order = any(
             str(o.get("userId") or o.get("user_id") or "") == uid_str
@@ -2338,39 +2424,175 @@ async def handle_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-    msg = _gift_box_header(active, user.id)
-    kb  = _gift_box_grid_keyboard(active, user.id)
+    require_invite = active.get("inviteRequired", True)
+    required       = int(active.get("requiredInvites", 1))
+    eid            = active["id"]
+
+    # ── Check / auto-unlock ───────────────────────────────────────────────
+    unlocked = not require_invite
+    if not unlocked:
+        unlocked = db.is_gift_box_unlocked(eid, user.id)
+    if not unlocked and db.get_gift_box_invite_count(eid, user.id) >= required:
+        db.mark_gift_box_unlocked(eid, user.id)
+        unlocked = True
+
+    if not unlocked:
+        # Show locked message with invite link
+        invite_count = db.get_gift_box_invite_count(eid, user.id)
+        ev_ts        = eid.replace("gb_", "")
+        bot_me       = await context.bot.get_me()
+        deep_param   = f"gboxr{user.id}e{ev_ts}"
+        invite_link  = f"https://t.me/{bot_me.username}?start={deep_param}"
+        msg = (
+            f"🔒 <b>Ô Quà Bí Mật đang bị khóa.</b>\n\n"
+            f"Để mở khóa, bạn cần mời ít nhất <b>{required}</b> người bạn tham gia "
+            f"thông qua liên kết riêng bên dưới.\n\n"
+            f"📨 <b>Link mời của bạn:</b>\n"
+            f"<code>{invite_link}</code>\n\n"
+            f"👥 Đã mời: <b>{invite_count}/{required}</b>"
+        )
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔄 Kiểm tra lại", callback_data=f"gbox_check:{eid}")
+        ]])
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb)
+        return
+
+    # ── Already played? ───────────────────────────────────────────────────
+    boxes     = active.get("boxes", [])
+    max_picks = int(active.get("maxPicksPerUser", 1))
+    u_picks   = sum(1 for b in boxes if b.get("openedBy") == user.id)
+    if u_picks >= max_picks:
+        msg = _gift_box_header(active, user.id, extra="✅ Bạn đã tham gia sự kiện này.")
+        kb  = _gift_box_grid_keyboard(active, user.id)
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb)
+        return
+
+    # ── Unlocked — show "Nhận quà ngay" CTA ──────────────────────────────
+    ev_name = active.get("name", "Ô Quà Bí Mật")
+    total   = len(boxes)
+    msg = (
+        f"🎁 <b>{ev_name}</b>\n\n"
+        f"🎉 Ô Quà Bí Mật đã được mở khóa!\n\n"
+        f"📦 Tổng: <b>{total}</b> ô — Bạn được chọn <b>1</b> ô.\n"
+        f"Bấm nút bên dưới để bắt đầu! 👇"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🎁 Nhận quà ngay", callback_data=f"gbox_open:{eid}")
+    ]])
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 async def callback_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user  = query.from_user
-    data  = query.data  # "gbox:<eid>:<idx>" or "gbox_view:<eid>:<idx>"
-
+    query  = update.callback_query
+    user   = query.from_user
+    data   = query.data  # e.g. "gbox_open:eid", "gbox_check:eid", "gbox_view:eid:idx", "gbox:eid:idx"
     parts  = data.split(":")
-    action = parts[0]
-    eid    = parts[1]
-    idx    = int(parts[2])
+    action = parts[0]  # gbox_open | gbox_check | gbox_view | gbox
+    eid    = parts[1] if len(parts) > 1 else ""
 
+    # ── gbox_check — refresh locked status ───────────────────────────────
+    if action == "gbox_check":
+        await query.answer()
+        active = _get_active_gift_box_event()
+        if not active or active["id"] != eid:
+            try:
+                await query.edit_message_text("❌ Sự kiện đã kết thúc.", parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            return
+
+        require_invite = active.get("inviteRequired", True)
+        required       = int(active.get("requiredInvites", 1))
+        unlocked       = not require_invite or db.is_gift_box_unlocked(eid, user.id)
+
+        if not unlocked and db.get_gift_box_invite_count(eid, user.id) >= required:
+            db.mark_gift_box_unlocked(eid, user.id)
+            unlocked = True
+
+        if unlocked:
+            ev_name = active.get("name", "Ô Quà Bí Mật")
+            total   = len(active.get("boxes", []))
+            msg = (
+                f"🎁 <b>{ev_name}</b>\n\n"
+                f"🎉 Ô Quà Bí Mật đã được mở khóa!\n\n"
+                f"📦 Tổng: <b>{total}</b> ô — Bạn được chọn <b>1</b> ô.\n"
+                f"Bấm nút bên dưới để bắt đầu! 👇"
+            )
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🎁 Nhận quà ngay", callback_data=f"gbox_open:{eid}")
+            ]])
+        else:
+            invite_count = db.get_gift_box_invite_count(eid, user.id)
+            ev_ts        = eid.replace("gb_", "")
+            bot_me       = await context.bot.get_me()
+            deep_param   = f"gboxr{user.id}e{ev_ts}"
+            invite_link  = f"https://t.me/{bot_me.username}?start={deep_param}"
+            msg = (
+                f"🔒 <b>Ô Quà Bí Mật đang bị khóa.</b>\n\n"
+                f"Để mở khóa, bạn cần mời ít nhất <b>{required}</b> người bạn tham gia "
+                f"thông qua liên kết riêng bên dưới.\n\n"
+                f"📨 <b>Link mời của bạn:</b>\n"
+                f"<code>{invite_link}</code>\n\n"
+                f"👥 Đã mời: <b>{invite_count}/{required}</b>"
+            )
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Kiểm tra lại", callback_data=f"gbox_check:{eid}")
+            ]])
+        try:
+            await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except Exception:
+            pass
+        return
+
+    # ── gbox_open — show the grid ─────────────────────────────────────────
+    if action == "gbox_open":
+        await query.answer()
+        active = _get_active_gift_box_event()
+        if not active or active["id"] != eid:
+            try:
+                await query.edit_message_text("❌ Sự kiện đã kết thúc.", parse_mode=ParseMode.HTML)
+            except Exception:
+                pass
+            return
+        # Safety: re-verify unlock
+        require_invite = active.get("inviteRequired", True)
+        required       = int(active.get("requiredInvites", 1))
+        unlocked       = not require_invite or db.is_gift_box_unlocked(eid, user.id)
+        if not unlocked and db.get_gift_box_invite_count(eid, user.id) >= required:
+            db.mark_gift_box_unlocked(eid, user.id)
+            unlocked = True
+        if not unlocked:
+            await query.answer("🔒 Chưa đủ điều kiện mở khóa!", show_alert=True)
+            return
+        msg = _gift_box_header(active, user.id)
+        kb  = _gift_box_grid_keyboard(active, user.id)
+        try:
+            await query.edit_message_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except Exception:
+            pass
+        return
+
+    # ── gbox_view — peek at an already-opened box ─────────────────────────
     if action == "gbox_view":
+        idx    = int(parts[2]) if len(parts) > 2 else 0
         events = db.get_gift_boxes()
-        ev = next((e for e in events if e["id"] == eid), None)
+        ev     = next((e for e in events if e["id"] == eid), None)
         if not ev:
             await query.answer("Sự kiện không tồn tại!", show_alert=True)
             return
-        boxes = ev.get("boxes", [])
+        boxes  = ev.get("boxes", [])
         if idx >= len(boxes):
             await query.answer("Ô không tồn tại!", show_alert=True)
             return
-        box = boxes[idx]
+        box    = boxes[idx]
         prizes = {p["id"]: p for p in ev.get("prizes", [])}
-        p = prizes.get(box.get("prizeId"))
+        p      = prizes.get(box.get("prizeId"))
         opener = box.get("openedByName", "Ai đó")
         plabel = p.get("label", "Chúc may mắn") if p else "Chúc may mắn"
         await query.answer(f"Ô {idx+1}: {opener} — {plabel}", show_alert=True)
         return
 
-    # action == "gbox" — open the box
+    # ── gbox — open a box ─────────────────────────────────────────────────
+    idx = int(parts[2]) if len(parts) > 2 else 0
     await query.answer()
 
     result = db.open_gift_box(eid, idx, user.id, user.username or "", user.first_name or "")
@@ -2399,17 +2621,15 @@ async def callback_gift_box(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.answer("❌ Có lỗi xảy ra. Vui lòng thử lại.", show_alert=True)
         return
 
-    prize  = result.get("prize")
-    event  = result["event"]
+    prize    = result.get("prize")
+    event    = result["event"]
     is_lucky = not prize or prize.get("type") == "lucky"
-    extra  = await _apply_gift_box_reward(user, prize)
+    extra    = await _apply_gift_box_reward(user, prize)
 
     if is_lucky:
-        result_txt = (
-            f"😄 <b>Ô {idx+1}</b>: Chúc may mắn!\n\nHẹn gặp lại sự kiện sau. 🍀"
-        )
+        result_txt = f"😄 <b>Ô {idx+1}</b>: Chúc may mắn!\n\nHẹn gặp lại sự kiện sau. 🍀"
     else:
-        plabel = prize.get("label", "Phần thưởng bí mật")
+        plabel     = prize.get("label", "Phần thưởng bí mật")
         result_txt = (
             f"🎉 <b>Ô {idx+1}</b>: Chúc mừng!\n"
             f"Bạn nhận được: <b>🎁 {plabel}</b>"

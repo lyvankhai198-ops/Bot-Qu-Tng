@@ -119,6 +119,8 @@ const DEFAULT_FORM = {
   maxPicksPerUser: 1,
   membersOnly: false,
   buyersOnly: false,
+  inviteRequired: true,
+  requiredInvites: 1,
   prizes: [] as GiftPrize[],
 }
 
@@ -179,6 +181,8 @@ export default function GiftBoxes() {
       maxPicksPerUser: ev.maxPicksPerUser,
       membersOnly: ev.membersOnly,
       buyersOnly: ev.buyersOnly,
+      inviteRequired: ev.inviteRequired !== false,
+      requiredInvites: ev.requiredInvites ?? 1,
       prizes: ev.prizes.map(p => ({ ...p })),
     })
     setDialogOpen(true)
@@ -511,6 +515,30 @@ export default function GiftBoxes() {
                   onChange={e => setForm(f => ({ ...f, maxPicksPerUser: Number(e.target.value) }))}
                 />
               </div>
+            </div>
+
+            {/* Invite gate */}
+            <div className="grid gap-3 p-3 border border-border rounded-lg">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium">🔗 Yêu cầu mời bạn bè</p>
+                  <p className="text-xs text-muted-foreground">Người dùng phải mời đủ số người mới mở được ô quà</p>
+                </div>
+                <Switch checked={form.inviteRequired} onCheckedChange={v => setForm(f => ({ ...f, inviteRequired: v }))} />
+              </div>
+              {form.inviteRequired && (
+                <div className="grid gap-2">
+                  <Label className="text-xs">Số người cần mời tối thiểu</Label>
+                  <Input
+                    type="number" min={1} max={100} className="h-9"
+                    value={form.requiredInvites}
+                    onChange={e => setForm(f => ({ ...f, requiredInvites: Number(e.target.value) }))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Bot sẽ tự động gửi thông báo mở khóa khi đủ số lượng. Không tính: tự mời bản thân, người đã tham gia sự kiện trước.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Flags */}
