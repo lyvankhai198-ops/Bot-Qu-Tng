@@ -1146,6 +1146,15 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
             continue
         if matched_item and not order.get("email"):
             order = {**order, "email": canonical_email}
+        # Đơn đã hoàn tiền — không cho báo lỗi, xếp vào expired để hiện card nhưng không có nút
+        _item_ref  = matched_item.get("item_status") == "refunded" if matched_item else False
+        _order_ref = order.get("status") == "refunded"
+        if _item_ref or _order_ref:
+            acc = _mw_compute_account(order, settings, item=matched_item)
+            acc["canReport"] = False
+            expired.append(acc)
+            expired_full.append((order, matched_item))
+            continue
         acc = _mw_compute_account(order, settings, item=matched_item)
         if not acc["canReport"]:
             if acc.get("isKBH"):
@@ -1620,11 +1629,14 @@ async def callback_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 show_alert=True,
             )
             return
-        # Filter: only items still under warranty
+        # Filter: only items still under warranty AND not refunded
         settings = db.get_settings()
         product_name = order.get("productName", "") if order else ""
+        _ord_refunded = (order or {}).get("status") == "refunded"
         found = []
         for it in all_items:
+            if _ord_refunded or it.get("item_status") == "refunded":
+                continue
             wdata = db.calc_item_warranty(it, order or {}, settings)
             if wdata["canReport"]:
                 email = it.get("original_account") or it.get("email") or ""
@@ -1659,11 +1671,14 @@ async def callback_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 show_alert=True,
             )
             return
-        # Filter: only items still under warranty
+        # Filter: only items still under warranty AND not refunded
         settings = db.get_settings()
         product_name = order.get("productName", "") if order else ""
+        _ord_refunded2 = (order or {}).get("status") == "refunded"
         found = []
         for it in all_items:
+            if _ord_refunded2 or it.get("item_status") == "refunded":
+                continue
             wdata = db.calc_item_warranty(it, order or {}, settings)
             if wdata["canReport"]:
                 email = it.get("original_account") or it.get("email") or ""
