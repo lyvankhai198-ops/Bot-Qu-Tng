@@ -50358,6 +50358,7 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
       rowIndex,
       orderCode,
       productNameMapped,
+      productNameRaw,
       quantity,
       totalPrice,
       unitPrice,
@@ -50393,10 +50394,11 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
       const ud = Number(usageDays || 0);
       const tp = Number(totalPrice || 0);
       const up = Number(unitPrice || 0) || (tp && quantity > 1 ? Math.round(tp / quantity) : tp);
+      const resolvedName = productNameMapped || productNameRaw || "";
       const orderObj = {
         orderId,
         email: customerEmail || "",
-        productName: productNameMapped || "",
+        productName: resolvedName,
         price: up || null,
         totalPrice: tp || null,
         quantity: Number(quantity || 0) || 1,
@@ -50414,6 +50416,15 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
         orders[orderId] = orderObj;
       } else if (conflictAction === "update") {
         orders[orderId] = { ...existingOrder, ...orderObj };
+      } else if (conflictAction === "add_missing") {
+        const ex = existingOrder;
+        if (!ex.productName && resolvedName) ex.productName = resolvedName;
+        if (!ex.warrantyDays && wd) ex.warrantyDays = wd;
+        if (!ex.usageDays && ud) ex.usageDays = ud;
+        if (!ex.expiryDate && orderObj.expiryDate) ex.expiryDate = orderObj.expiryDate;
+        if (!ex.warrantyExpiry && orderObj.warrantyExpiry) ex.warrantyExpiry = orderObj.warrantyExpiry;
+        if (!ex.purchaseDate && orderObj.purchaseDate) ex.purchaseDate = orderObj.purchaseDate;
+        orders[orderId] = ex;
       }
       if (!orderItems[orderId]) orderItems[orderId] = [];
       let itemsAddedThisRow = 0, dupThisRow = 0;

@@ -578,7 +578,7 @@ router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
 
   for (const row of rows) {
     const {
-      rowIndex, orderCode, productNameMapped, quantity,
+      rowIndex, orderCode, productNameMapped, productNameRaw, quantity,
       totalPrice, unitPrice, status, customerName, customerEmail,
       purchaseDate, originalDeliveredAt, expiryDate, warrantyEndDate,
       warrantyDays, usageDays, accounts,
@@ -608,10 +608,11 @@ router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
       const tp = Number(totalPrice || 0);
       const up = Number(unitPrice || 0) || (tp && quantity > 1 ? Math.round(tp / quantity) : tp);
 
+      const resolvedName = productNameMapped || productNameRaw || "";
       const orderObj: any = {
         orderId,
         email: customerEmail || "",
-        productName: productNameMapped || "",
+        productName: resolvedName,
         price: up || null,
         totalPrice: tp || null,
         quantity: Number(quantity || 0) || 1,
@@ -630,8 +631,17 @@ router.post("/bot/orders/xlsx-import", requireAuth, (req: any, res: any) => {
         orders[orderId] = orderObj;
       } else if (conflictAction === "update") {
         orders[orderId] = { ...existingOrder, ...orderObj };
+      } else if (conflictAction === "add_missing") {
+        // Cập nhật các trường còn rỗng/null trong đơn cũ (tên SP, ngày, bảo hành)
+        const ex = existingOrder;
+        if (!ex.productName   && resolvedName)       ex.productName   = resolvedName;
+        if (!ex.warrantyDays  && wd)                 ex.warrantyDays  = wd;
+        if (!ex.usageDays     && ud)                 ex.usageDays     = ud;
+        if (!ex.expiryDate    && orderObj.expiryDate)    ex.expiryDate    = orderObj.expiryDate;
+        if (!ex.warrantyExpiry && orderObj.warrantyExpiry) ex.warrantyExpiry = orderObj.warrantyExpiry;
+        if (!ex.purchaseDate  && orderObj.purchaseDate)  ex.purchaseDate  = orderObj.purchaseDate;
+        orders[orderId] = ex;
       }
-      // conflictAction === "add_missing" → keep existing order header untouched
 
       if (!orderItems[orderId]) orderItems[orderId] = [];
       let itemsAddedThisRow = 0, dupThisRow = 0;
