@@ -50192,8 +50192,11 @@ var grokPlugin = {
     try {
       const { chromium } = await import("playwright");
       log("Launching Chromium");
+      const launchProxy = options?.proxy?.server ? { server: options.proxy.server, username: options.proxy.username, password: options.proxy.password } : void 0;
+      if (launchProxy) log(`Using proxy: ${launchProxy.server}`);
       browser = await chromium.launch({
         headless: true,
+        proxy: launchProxy,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -53734,11 +53737,19 @@ var timer = null;
 function getWorkerConfig() {
   try {
     const h = readJson("order_health", { config: {} }) ?? { config: {} };
-    const n = Number((h.config ?? {}).workerCount ?? 2);
-    const t = Number((h.config ?? {}).timeoutMs ?? 6e4);
+    const cfg = h.config ?? {};
+    const n = Number(cfg.workerCount ?? 2);
+    const t = Number(cfg.timeoutMs ?? 6e4);
+    const proxyServer = (cfg.proxyServer ?? "").trim();
+    const proxy = proxyServer ? {
+      server: proxyServer,
+      username: (cfg.proxyUsername ?? "").trim() || void 0,
+      password: (cfg.proxyPassword ?? "").trim() || void 0
+    } : void 0;
     return {
       workerCount: Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : 2,
-      timeoutMs: Number.isFinite(t) && t >= 5e3 ? t : 12e4
+      timeoutMs: Number.isFinite(t) && t >= 5e3 ? t : 12e4,
+      proxy
     };
   } catch {
     return { workerCount: 2, timeoutMs: 6e4 };
@@ -53772,11 +53783,12 @@ async function processJob(job) {
     const order = orders[job.orderId];
     const password = order?.password ?? "";
     const sessionCookie = order?.grokSessionCookie ? String(order.grokSessionCookie) : void 0;
-    const { timeoutMs } = getWorkerConfig();
+    const { timeoutMs, proxy } = getWorkerConfig();
     try {
       result = await plugin.check(job.email, password, {
         timeoutMs,
-        sessionCookie
+        sessionCookie,
+        proxy
       });
     } catch (err) {
       result = {
