@@ -292,7 +292,7 @@ export default function AccountHealth() {
 
   const loadOrders = useCallback(async () => {
     try {
-      const data = await apiFetch("GET", "/bot/orders/health")
+      const data = await apiFetch("GET", "/bot/order-health")
       setOrders(data.orders ?? [])
       setSummary(data.summary ?? { total: 0, active: 0, issues: 0, unchecked: 0 })
       setConfig(prev => ({ ...prev, ...(data.config ?? {}) }))
@@ -303,7 +303,7 @@ export default function AccountHealth() {
 
   const loadJobs = useCallback(async () => {
     try {
-      const jobs = await apiFetch("GET", "/bot/orders/health/jobs")
+      const jobs = await apiFetch("GET", "/bot/order-health/jobs")
       setAllJobs(jobs ?? [])
       return jobs as HealthJob[]
     } catch {
@@ -347,7 +347,7 @@ export default function AccountHealth() {
   const handleCheckAll = async () => {
     setCheckingAll(true)
     try {
-      const res = await apiFetch("POST", "/bot/orders/health/check", {})
+      const res = await apiFetch("POST", "/bot/order-health/check", {})
       toast({ title: `Đã thêm ${res.queued} đơn vào hàng đợi` })
       await loadJobs()
       startPolling()
@@ -360,7 +360,7 @@ export default function AccountHealth() {
   const handleCheckOne = async (orderId: string) => {
     setCheckingId(orderId)
     try {
-      await apiFetch("POST", "/bot/orders/health/check", { orderId })
+      await apiFetch("POST", "/bot/order-health/check", { orderId })
       await loadJobs()
       startPolling()
     } catch (e: any) {
@@ -371,7 +371,7 @@ export default function AccountHealth() {
 
   const handleClearQueue = async () => {
     try {
-      await apiFetch("DELETE", "/bot/orders/health/jobs/done")
+      await apiFetch("DELETE", "/bot/order-health/jobs/done")
       await loadJobs()
       toast({ title: "Đã xóa các job hoàn thành" })
     } catch (e: any) {
@@ -382,7 +382,7 @@ export default function AccountHealth() {
   const handleSaveConfig = async () => {
     setSavingConfig(true)
     try {
-      await apiFetch("PUT", "/bot/orders/health/config", config)
+      await apiFetch("PUT", "/bot/order-health/config", config)
       toast({ title: "Đã lưu cấu hình" })
     } catch (e: any) {
       toast({ title: "Lỗi", description: e.message, variant: "destructive" })

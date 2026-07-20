@@ -50174,6 +50174,323 @@ var grokPlugin = {
 };
 var grok_default = grokPlugin;
 
+// src/checkers/chatgpt.ts
+var chatgptPlugin = {
+  id: "chatgpt",
+  name: "ChatGPT (OpenAI)",
+  async check(email, password, options = {}) {
+    const timeoutMs = options.timeoutMs ?? 6e4;
+    const start = Date.now();
+    let browser = null;
+    const logs = [];
+    const elapsed = () => Date.now() - start;
+    const log = (msg) => logs.push(`[${elapsed()}ms] ${msg}`);
+    try {
+      const { chromium } = await import("playwright");
+      log("Launching Chromium");
+      browser = await chromium.launch({
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-blink-features=AutomationControlled",
+          "--window-size=1280,800"
+        ]
+      });
+      const ctx = await browser.newContext({
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        viewport: { width: 1280, height: 800 },
+        locale: "en-US",
+        timezoneId: "America/New_York"
+      });
+      await ctx.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => void 0 });
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+      });
+      const page = await ctx.newPage();
+      page.setDefaultTimeout(timeoutMs);
+      log("Navigating to chatgpt.com");
+      await page.goto("https://chatgpt.com/", {
+        waitUntil: "domcontentloaded",
+        timeout: 3e4
+      });
+      await page.waitForTimeout(2e3);
+      const landingUrl = page.url();
+      log(`Landing URL: ${landingUrl}`);
+      if (landingUrl.includes("chatgpt.com") && !landingUrl.includes("/auth/") && !landingUrl.includes("auth0") && !landingUrl.includes("login")) {
+        const alreadyLoggedIn = await page.locator('[data-testid="profile-button"], nav, [aria-label="Chat history"]').first().isVisible({ timeout: 4e3 }).catch(() => false);
+        if (alreadyLoggedIn) {
+          log("Session already active \u2014 checking subscription");
+          return await checkSubscription(page, elapsed, logs);
+        }
+      }
+      log("Clicking Log in");
+      const loginBtn = page.locator(
+        'button:has-text("Log in"), a:has-text("Log in"), [data-testid="login-button"]'
+      ).first();
+      const btnVisible = await loginBtn.isVisible({ timeout: 8e3 }).catch(() => false);
+      if (btnVisible) {
+        await loginBtn.click();
+        await page.waitForTimeout(2e3);
+      }
+      log("Entering email");
+      const emailInput = page.locator(
+        'input[type="email"], input[name="email"], input[name="username"], input[autocomplete="email"], input[autocomplete="username"]'
+      ).first();
+      await emailInput.waitFor({ state: "visible", timeout: 15e3 });
+      await emailInput.click();
+      await page.waitForTimeout(300);
+      await emailInput.fill(email);
+      await page.waitForTimeout(400);
+      const continueBtn = page.locator(
+        'button[type="submit"], button:has-text("Continue"), button:has-text("Next")'
+      ).first();
+      await continueBtn.click();
+      await page.waitForTimeout(2500);
+      log("Entering password");
+      const pwInput = page.locator('input[type="password"]').first();
+      const pwVisible = await pwInput.isVisible({ timeout: 15e3 }).catch(() => false);
+      if (!pwVisible) {
+        const url = page.url();
+        log(`Password field not visible \u2014 URL: ${url}`);
+        const errText = await page.locator('[class*="error"], [class*="alert"], [role="alert"]').first().textContent({ timeout: 2e3 }).catch(() => "");
+        if (errText && /wrong|incorrect|not find|can't find|no account/i.test(errText)) {
+          return {
+            code: "PASSWORD_INVALID",
+            message: `Email kh\xF4ng t\u1ED3n t\u1EA1i ho\u1EB7c sai: ${errText.trim().slice(0, 120)}`,
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n")
+          };
+        }
+        return {
+          code: "UNKNOWN",
+          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 nh\u1EADp m\u1EADt kh\u1EA9u \u2014 URL: ${url.split("?")[0]}`,
+          responseTime: elapsed(),
+          playwrightLog: logs.join("\n")
+        };
+      }
+      await pwInput.click();
+      await page.waitForTimeout(300);
+      await pwInput.fill(password);
+      await page.waitForTimeout(400);
+      const pwSubmit = page.locator('button[type="submit"], button:has-text("Continue"), button:has-text("Sign in")').first();
+      if (await pwSubmit.isVisible({ timeout: 2e3 }).catch(() => false)) {
+        await pwSubmit.click();
+      } else {
+        await pwInput.press("Enter");
+      }
+      log("Waiting for login result");
+      await page.waitForTimeout(7e3);
+      const finalUrl = page.url();
+      log(`Final URL: ${finalUrl}`);
+      if (finalUrl.includes("auth0") || finalUrl.includes("/authorize") || finalUrl.includes("/u/login") || finalUrl.includes("errors=")) {
+        const errEl = page.locator('[class*="error"], [role="alert"], [class*="invalid"]').first();
+        const errText = await errEl.textContent({ timeout: 2e3 }).catch(() => "");
+        log(`Auth error text: ${errText}`);
+        if (/wrong|incorrect|invalid/i.test(errText)) {
+          return {
+            code: "PASSWORD_INVALID",
+            message: "Sai email ho\u1EB7c m\u1EADt kh\u1EA9u",
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n")
+          };
+        }
+        if (/blocked|too many/i.test(errText)) {
+          return {
+            code: "CAPTCHA",
+            message: `B\u1ECB ch\u1EB7n: ${errText.trim().slice(0, 120)}`,
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n")
+          };
+        }
+        return {
+          code: "PASSWORD_INVALID",
+          message: errText ? `\u0110\u0103ng nh\u1EADp th\u1EA5t b\u1EA1i: ${errText.trim().slice(0, 150)}` : `\u0110\u0103ng nh\u1EADp th\u1EA5t b\u1EA1i \u2014 v\u1EABn \u1EDF trang auth`,
+          responseTime: elapsed(),
+          playwrightLog: logs.join("\n")
+        };
+      }
+      if (finalUrl.includes("challenge") || finalUrl.includes("verify")) {
+        const bodyText = await page.locator("body").innerText().catch(() => "");
+        if (/email/i.test(bodyText)) {
+          return {
+            code: "REQUIRE_EMAIL",
+            message: `Y\xEAu c\u1EA7u x\xE1c minh email \u2014 ${finalUrl.split("?")[0]}`,
+            responseTime: elapsed(),
+            playwrightLog: logs.join("\n")
+          };
+        }
+        return {
+          code: "REQUIRE_PHONE",
+          message: `Y\xEAu c\u1EA7u x\xE1c minh s\u1ED1 \u0111i\u1EC7n tho\u1EA1i / 2FA \u2014 ${finalUrl.split("?")[0]}`,
+          responseTime: elapsed(),
+          playwrightLog: logs.join("\n")
+        };
+      }
+      if (finalUrl.includes("deactivated") || finalUrl.includes("banned")) {
+        return {
+          code: "ACCOUNT_BANNED",
+          message: "T\xE0i kho\u1EA3n b\u1ECB v\xF4 hi\u1EC7u h\xF3a",
+          responseTime: elapsed(),
+          playwrightLog: logs.join("\n")
+        };
+      }
+      if (finalUrl.includes("chatgpt.com") || finalUrl.includes("chat.openai.com")) {
+        return await checkSubscription(page, elapsed, logs);
+      }
+      return {
+        code: "UNKNOWN",
+        message: `Kh\xF4ng x\xE1c \u0111\u1ECBnh \u0111\u01B0\u1EE3c tr\u1EA1ng th\xE1i \u2014 URL: ${finalUrl.split("?")[0]}`,
+        responseTime: elapsed(),
+        playwrightLog: logs.join("\n")
+      };
+    } catch (e) {
+      const responseTime = elapsed();
+      const msg = e?.message ?? String(e);
+      log(`Exception: ${msg.slice(0, 300)}`);
+      if (/timeout/i.test(msg)) {
+        return {
+          code: "TIMEOUT",
+          message: `Timeout sau ${timeoutMs}ms`,
+          responseTime,
+          playwrightLog: logs.join("\n")
+        };
+      }
+      if (/Executable doesn't exist|browserType\.launch/i.test(msg)) {
+        return {
+          code: "NETWORK_ERROR",
+          message: "Chromium ch\u01B0a \u0111\u01B0\u1EE3c c\xE0i \u0111\u1EB7t. Ch\u1EA1y: npx playwright install chromium --with-deps",
+          responseTime,
+          playwrightLog: logs.join("\n")
+        };
+      }
+      if (/net::|ERR_/i.test(msg)) {
+        return {
+          code: "NETWORK_ERROR",
+          message: `L\u1ED7i k\u1EBFt n\u1ED1i m\u1EA1ng: ${msg.slice(0, 150)}`,
+          responseTime,
+          playwrightLog: logs.join("\n")
+        };
+      }
+      return {
+        code: "UNKNOWN",
+        message: `Playwright error: ${msg.slice(0, 200)}`,
+        responseTime,
+        playwrightLog: logs.join("\n")
+      };
+    } finally {
+      await browser?.close().catch(() => {
+      });
+    }
+  }
+};
+async function checkSubscription(page, elapsed, logs) {
+  const log = (msg) => logs.push(`[${elapsed()}ms] ${msg}`);
+  try {
+    await page.waitForTimeout(3e3);
+    log("Checking sidebar for subscription badge");
+    const sidebarText = await page.locator('nav, [class*="sidebar"], [class*="Sidebar"]').first().textContent({ timeout: 5e3 }).catch(() => "");
+    if (/\bPro\b/i.test(sidebarText)) {
+      log("Found 'Pro' in sidebar");
+      return {
+        code: "ACTIVE",
+        message: "T\xE0i kho\u1EA3n ChatGPT Pro \u2014 \u0111ang ho\u1EA1t \u0111\u1ED9ng",
+        responseTime: elapsed(),
+        playwrightLog: logs.join("\n")
+      };
+    }
+    if (/\bPlus\b/i.test(sidebarText)) {
+      log("Found 'Plus' in sidebar");
+      return {
+        code: "ACTIVE",
+        message: "T\xE0i kho\u1EA3n ChatGPT Plus \u2014 \u0111ang ho\u1EA1t \u0111\u1ED9ng",
+        responseTime: elapsed(),
+        playwrightLog: logs.join("\n")
+      };
+    }
+    log("Navigating to settings to check subscription");
+    await page.goto("https://chatgpt.com/settings", {
+      waitUntil: "domcontentloaded",
+      timeout: 2e4
+    });
+    await page.waitForTimeout(3e3);
+    const settingsUrl = page.url();
+    log(`Settings URL: ${settingsUrl}`);
+    const pageBody = await page.locator("body").innerText().catch(() => "");
+    if (/ChatGPT Pro/i.test(pageBody)) {
+      log("ChatGPT Pro subscription found in settings");
+      return {
+        code: "ACTIVE",
+        message: "T\xE0i kho\u1EA3n ChatGPT Pro \u2014 \u0111ang ho\u1EA1t \u0111\u1ED9ng",
+        responseTime: elapsed(),
+        playwrightLog: logs.join("\n")
+      };
+    }
+    if (/ChatGPT Plus|Plus plan|Plus subscription/i.test(pageBody)) {
+      log("ChatGPT Plus subscription found in settings");
+      return {
+        code: "ACTIVE",
+        message: "T\xE0i kho\u1EA3n ChatGPT Plus \u2014 \u0111ang ho\u1EA1t \u0111\u1ED9ng",
+        responseTime: elapsed(),
+        playwrightLog: logs.join("\n")
+      };
+    }
+    if (/Team|Enterprise/i.test(pageBody)) {
+      log("ChatGPT Team/Enterprise subscription found");
+      return {
+        code: "ACTIVE",
+        message: "T\xE0i kho\u1EA3n ChatGPT Team/Enterprise \u2014 \u0111ang ho\u1EA1t \u0111\u1ED9ng",
+        responseTime: elapsed(),
+        playwrightLog: logs.join("\n")
+      };
+    }
+    log("Going back to chat to check model selector");
+    await page.goto("https://chatgpt.com/", {
+      waitUntil: "domcontentloaded",
+      timeout: 2e4
+    });
+    await page.waitForTimeout(3e3);
+    const modelPicker = page.locator(
+      '[data-testid="model-switcher-button"], [aria-label*="Model"], button:has-text("GPT")'
+    ).first();
+    const pickerVisible = await modelPicker.isVisible({ timeout: 3e3 }).catch(() => false);
+    if (pickerVisible) {
+      await modelPicker.click();
+      await page.waitForTimeout(1500);
+      const pickerText = await page.locator('[role="menu"], [role="listbox"], [data-testid*="model"]').first().textContent({ timeout: 3e3 }).catch(() => "");
+      log(`Model picker text: ${pickerText?.slice(0, 200)}`);
+      if (/GPT-4o|GPT-4|o3|o4/i.test(pickerText ?? "")) {
+        return {
+          code: "ACTIVE",
+          message: "T\xE0i kho\u1EA3n ChatGPT c\xF3 GPT-4o \u2014 \u0111ang ho\u1EA1t \u0111\u1ED9ng",
+          responseTime: elapsed(),
+          playwrightLog: logs.join("\n")
+        };
+      }
+    }
+    log("Logged in but no paid subscription detected");
+    return {
+      code: "PACKAGE_LOST",
+      message: "\u0110\u0103ng nh\u1EADp th\xE0nh c\xF4ng nh\u01B0ng kh\xF4ng ph\xE1t hi\u1EC7n g\xF3i tr\u1EA3 ph\xED (Plus/Pro)",
+      responseTime: elapsed(),
+      playwrightLog: logs.join("\n")
+    };
+  } catch (e) {
+    log(`checkSubscription error: ${e?.message?.slice(0, 200)}`);
+    return {
+      code: "ACTIVE",
+      message: "\u0110\u0103ng nh\u1EADp th\xE0nh c\xF4ng (kh\xF4ng ki\u1EC3m tra \u0111\u01B0\u1EE3c g\xF3i \u2014 coi l\xE0 c\xF2n ho\u1EA1t \u0111\u1ED9ng)",
+      responseTime: elapsed(),
+      playwrightLog: logs.join("\n")
+    };
+  }
+}
+var chatgpt_default = chatgptPlugin;
+
 // src/checkers/index.ts
 var registry = /* @__PURE__ */ new Map();
 function registerAll(plugins) {
@@ -50196,9 +50513,8 @@ function detectPluginType(productName) {
   return lower.split(/\s+/)[0] || "unknown";
 }
 registerAll([
-  grok_default
-  // Add more here as they are implemented:
-  // chatgptPlugin,
+  grok_default,
+  chatgpt_default
   // geminiPlugin,
   // claudePlugin,
 ]);
@@ -52375,17 +52691,17 @@ function orderHealthDefaults(cfg) {
     ...cfg
   };
 }
-router2.get("/bot/orders/health/config", requireAuth, (_req, res) => {
+router2.get("/bot/order-health/config", requireAuth, (_req, res) => {
   const h = readOrderHealth();
   res.json(orderHealthDefaults(h.config ?? {}));
 });
-router2.put("/bot/orders/health/config", requireAuth, (req, res) => {
+router2.put("/bot/order-health/config", requireAuth, (req, res) => {
   const h = readOrderHealth();
   h.config = { ...h.config ?? {}, ...req.body };
   writeJson2("order_health", h);
   res.json({ ok: true, config: orderHealthDefaults(h.config) });
 });
-router2.get("/bot/orders/health", requireAuth, (_req, res) => {
+router2.get("/bot/order-health", requireAuth, (_req, res) => {
   const orders = readJson2("orders", {}) ?? {};
   const h = readOrderHealth();
   const checks = h.checks ?? {};
@@ -52432,7 +52748,7 @@ router2.get("/bot/orders/:orderId/health", requireAuth, (req, res) => {
   const history = (h.checks ?? {})[orderId] ?? [];
   res.json([...history].reverse());
 });
-router2.post("/bot/orders/health/check", requireAuth, (req, res) => {
+router2.post("/bot/order-health/check", requireAuth, (req, res) => {
   const body = req.body ?? {};
   const orders = readJson2("orders", {}) ?? {};
   let toCheck;
@@ -52454,7 +52770,7 @@ router2.post("/bot/orders/health/check", requireAuth, (req, res) => {
   addLog("HEALTH_CHECK_ENQUEUE", `queued=${jobIds.length}`, "web-admin");
   res.json({ ok: true, queued: jobIds.length, jobIds });
 });
-router2.get("/bot/orders/health/jobs", requireAuth, (req, res) => {
+router2.get("/bot/order-health/jobs", requireAuth, (req, res) => {
   const { status, orderId } = req.query ?? {};
   const statusFilter = status ? String(status).split(",").map((s) => s.trim()).filter(Boolean) : void 0;
   const jobs2 = getJobs({
@@ -52469,12 +52785,12 @@ router2.get("/bot/orders/health/jobs", requireAuth, (req, res) => {
   }));
   res.json(enriched);
 });
-router2.delete("/bot/orders/health/jobs/done", requireAuth, (req, res) => {
+router2.delete("/bot/order-health/jobs/done", requireAuth, (req, res) => {
   const { orderId } = req.body ?? {};
   clearDoneJobs(orderId);
   res.json({ ok: true });
 });
-router2.delete("/bot/orders/health/clear", requireAuth, (req, res) => {
+router2.delete("/bot/order-health/clear", requireAuth, (req, res) => {
   const { orderId } = req.body ?? {};
   const h = readOrderHealth();
   if (!h.checks) h.checks = {};
