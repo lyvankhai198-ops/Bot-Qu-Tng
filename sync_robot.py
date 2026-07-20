@@ -1816,14 +1816,15 @@ def run_sync_cycle(config: dict) -> dict:
         # 4. Import via API
         resp = call_api("POST", "/bot/orders/xlsx-import", body={"rows": rows}, token=token)
         result["import_ok"]      = True
-        result["new_orders"]     = resp.get("success", 0)
-        result["updated_orders"] = 0
-        result["skipped_orders"] = resp.get("skipped", 0)
+        result["new_orders"]     = resp.get("new", resp.get("success", 0))
+        result["updated_orders"] = resp.get("updated", 0)
+        result["skipped_orders"] = resp.get("skipped", 0) + resp.get("unchanged", 0)
         result["errors"]         = resp.get("failed", 0)
         result["success"]        = True
         result["message"] = (
             f"✔ Đồng bộ thành công lúc {datetime.now().strftime('%H:%M %d/%m/%Y')}: "
             f"{result['new_orders']} đơn mới, "
+            f"{result['updated_orders']} cập nhật, "
             f"{result['skipped_orders']} bỏ qua, "
             f"{result['errors']} lỗi"
         )
