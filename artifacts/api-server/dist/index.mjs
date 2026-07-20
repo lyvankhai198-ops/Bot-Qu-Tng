@@ -50636,13 +50636,13 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
     orders[req_.orderId].status = "warranted";
     writeJson("orders", orders);
   }
-  if (req_.orderId && req_.email) {
+  if (req_.orderId) {
     const orderItems = readJson("order_items", {}) ?? {};
     const itemList = orderItems[req_.orderId] ?? [];
     const prevEmailLower = (req_.email || "").toLowerCase();
-    const itemIdx = itemList.findIndex(
+    const itemIdx = prevEmailLower ? itemList.findIndex(
       (it) => (it.original_account || it.email || "").toLowerCase() === prevEmailLower || (it.current_account || it.email || "").toLowerCase() === prevEmailLower
-    );
+    ) : -1;
     if (itemIdx !== -1) {
       const item = itemList[itemIdx];
       const repNumber = (item.current_replacement_number ?? 0) + 1;
@@ -50676,6 +50676,48 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
       };
       orderItems[req_.orderId] = itemList;
       writeJson("order_items", orderItems);
+    } else {
+      const newItemId = crypto.randomUUID().slice(0, 8).toUpperCase();
+      const order = orders[req_.orderId] ?? {};
+      const newItem = {
+        itemId: newItemId,
+        orderId: req_.orderId,
+        email: req_.email || email,
+        original_account: req_.email || "",
+        current_account: email,
+        current_password: password,
+        current_two_fa: twoFA || null,
+        current_replacement_number: 1,
+        original_delivered_at: order.purchaseDate || order.paymentAt || now(),
+        productName: order.productName || "",
+        warranty_days: order.warrantyDays || 0,
+        item_status: "active",
+        createdAt: now(),
+        updatedAt: now(),
+        _from_warranty_replacement: true
+      };
+      itemList.push(newItem);
+      orderItems[req_.orderId] = itemList;
+      writeJson("order_items", orderItems);
+      const allReps = readJson("account_replacements", {}) ?? {};
+      if (!allReps[newItemId]) allReps[newItemId] = [];
+      allReps[newItemId].push({
+        id: crypto.randomUUID().slice(0, 12),
+        orderId: req_.orderId,
+        orderItemId: newItemId,
+        previousAccount: req_.email || "",
+        newAccount: email,
+        newPassword: password,
+        newTwoFA: twoFA || null,
+        replacementNumber: 1,
+        deliveredAt: now(),
+        reason: note || "",
+        supportTicketId: id,
+        createdBy: "web-admin",
+        createdAt: now(),
+        status: "delivered"
+      });
+      writeJson("account_replacements", allReps);
     }
   }
   const reminderOff = { reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
