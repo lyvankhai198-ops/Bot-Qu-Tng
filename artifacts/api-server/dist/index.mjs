@@ -50076,74 +50076,92 @@ async function checkWithCookie(cookie, email) {
   }
 }
 var STEALTH_SCRIPT = `
-  // 1. Xo\xE1 webdriver flag
-  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-  delete (navigator as any).__proto__.webdriver;
+  (function() {
+    // 1. Xo\xE1 webdriver flag
+    try {
+      Object.defineProperty(navigator, 'webdriver', { get: function() { return undefined; } });
+      delete navigator.__proto__.webdriver;
+    } catch(e) {}
 
-  // 2. Chrome runtime gi\u1EA3
-  (window as any).chrome = {
-    app: { isInstalled: false, InstallState: { DISABLED:'disabled',INSTALLED:'installed',NOT_INSTALLED:'not_installed' }, RunningState: { CANNOT_RUN:'cannot_run',READY_TO_RUN:'ready_to_run',RUNNING:'running' } },
-    csi: function(){},
-    loadTimes: function(){},
-    runtime: { PlatformOs: { MAC:'mac',WIN:'win',ANDROID:'android',CROS:'cros',LINUX:'linux',OPENBSD:'openbsd' }, PlatformArch: { ARM:'arm',X86_32:'x86-32',X86_64:'x86-64' }, PlatformNaclArch: { ARM:'arm',X86_32:'x86-32',X86_64:'x86-64' }, RequestUpdateCheckStatus: { THROTTLED:'throttled',NO_UPDATE:'no_update',UPDATE_AVAILABLE:'update_available' }, OnInstalledReason: { INSTALL:'install',UPDATE:'update',CHROME_UPDATE:'chrome_update',SHARED_MODULE_UPDATE:'shared_module_update' }, OnRestartRequiredReason: { APP_UPDATE:'app_update',OS_UPDATE:'os_update',PERIODIC:'periodic' } },
-  };
+    // 2. Chrome runtime gi\u1EA3
+    try {
+      window.chrome = {
+        app: { isInstalled: false },
+        csi: function(){},
+        loadTimes: function(){},
+        runtime: {},
+      };
+    } catch(e) {}
 
-  // 3. Permissions API kh\xF4ng b\u1ECB detect
-  const origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
-  (window.navigator.permissions as any).query = (parameters: any) =>
-    parameters.name === 'notifications'
-      ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
-      : origQuery(parameters);
+    // 3. Permissions API
+    try {
+      var origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+      window.navigator.permissions.query = function(parameters) {
+        if (parameters.name === 'notifications') {
+          return Promise.resolve({ state: Notification.permission });
+        }
+        return origQuery(parameters);
+      };
+    } catch(e) {}
 
-  // 4. Plugins gi\u1EA3
-  Object.defineProperty(navigator, 'plugins', {
-    get: () => {
-      const arr: any = [
-        { name:'Chrome PDF Plugin',    filename:'internal-pdf-viewer',  description:'Portable Document Format', length:1 },
-        { name:'Chrome PDF Viewer',    filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai', description:'',length:1 },
-        { name:'Native Client',        filename:'internal-nacl-plugin',  description:'',length:2 },
-      ];
-      arr.item   = (i: number) => arr[i];
-      arr.namedItem = (n: string) => arr.find((p: any) => p.name === n) ?? null;
-      arr.refresh   = () => {};
-      Object.setPrototypeOf(arr, PluginArray.prototype);
-      return arr;
-    },
-  });
+    // 4. Plugins gi\u1EA3
+    try {
+      Object.defineProperty(navigator, 'plugins', {
+        get: function() {
+          var arr = [
+            { name:'Chrome PDF Plugin',    filename:'internal-pdf-viewer',  description:'Portable Document Format', length:1 },
+            { name:'Chrome PDF Viewer',    filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai', description:'', length:1 },
+            { name:'Native Client',        filename:'internal-nacl-plugin',  description:'', length:2 },
+          ];
+          arr.item = function(i) { return arr[i]; };
+          arr.namedItem = function(n) { return arr.find(function(p) { return p.name === n; }) || null; };
+          arr.refresh = function() {};
+          Object.setPrototypeOf(arr, PluginArray.prototype);
+          return arr;
+        },
+      });
+    } catch(e) {}
 
-  // 5. Languages
-  Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
+    // 5. Languages
+    try {
+      Object.defineProperty(navigator, 'languages', { get: function() { return ['en-US','en']; } });
+    } catch(e) {}
 
-  // 6. outerWidth / outerHeight kh\u1EDBp viewport
-  Object.defineProperty(window, 'outerWidth',  { get: () => window.innerWidth  + 16 });
-  Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 88 });
+    // 6. outerWidth / outerHeight
+    try {
+      Object.defineProperty(window, 'outerWidth',  { get: function() { return window.innerWidth  + 16; } });
+      Object.defineProperty(window, 'outerHeight', { get: function() { return window.innerHeight + 88; } });
+    } catch(e) {}
 
-  // 7. Xo\xE1 c\xE1c bi\u1EBFn Playwright/CDP
-  const toDelete = [
-    '__playwright','__pw_manual','__webdriver_evaluate','__selenium_evaluate',
-    '__fxdriver_evaluate','__driver_evaluate','__webdriver_script_func',
-    '__webdriver_script_fn','__webdriver_script_function',
-    '__selenium_unwrapped','__webdriverFunc','__lastWatirAlert',
-    '__lastWatirConfirm','__lastWatirPrompt','_WEBDRIVER_ELEM_CACHE',
-    'ChromeDriverw','cdc_adoQpoasnfa76pfcZLmcfl_Array',
-    'cdc_adoQpoasnfa76pfcZLmcfl_Promise','cdc_adoQpoasnfa76pfcZLmcfl_Symbol',
-  ];
-  for (const k of toDelete) {
-    try { delete (window as any)[k]; } catch {}
-  }
+    // 7. Xo\xE1 bi\u1EBFn Playwright/CDP
+    var toDelete = [
+      '__playwright','__pw_manual','__webdriver_evaluate','__selenium_evaluate',
+      '__fxdriver_evaluate','__driver_evaluate','__webdriver_script_func',
+      '__webdriver_script_fn','__webdriver_script_function',
+      '__selenium_unwrapped','__webdriverFunc',
+      'cdc_adoQpoasnfa76pfcZLmcfl_Array',
+      'cdc_adoQpoasnfa76pfcZLmcfl_Promise','cdc_adoQpoasnfa76pfcZLmcfl_Symbol',
+    ];
+    for (var i = 0; i < toDelete.length; i++) {
+      try { delete window[toDelete[i]]; } catch(e) {}
+    }
 
-  // 8. Iframe contentWindow kh\xF4ng b\u1ECB detect
-  try {
-    const origFrameGetter = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'contentWindow')!.get!;
-    Object.defineProperty(HTMLIFrameElement.prototype,'contentWindow',{
-      get() {
-        const w = origFrameGetter.call(this);
-        if (!w) return w;
-        Object.defineProperty(w.navigator, 'webdriver', { get: () => undefined });
-        return w;
+    // 8. Iframe contentWindow
+    try {
+      var desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+      var origGet = desc && desc.get;
+      if (origGet) {
+        Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+          get: function() {
+            var w = origGet.call(this);
+            if (!w) return w;
+            try { Object.defineProperty(w.navigator, 'webdriver', { get: function() { return undefined; } }); } catch(e) {}
+            return w;
+          }
+        });
       }
-    });
-  } catch {}
+    } catch(e) {}
+  })();
 `;
 var grokPlugin = {
   id: "grok",
