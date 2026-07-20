@@ -2389,9 +2389,6 @@ router.post("/bot/gift-boxes", requireAuth, (req: any, res: any) => {
     maxPicksPerUser: Number(body.maxPicksPerUser) || 1,
     membersOnly: body.membersOnly ?? false,
     buyersOnly: body.buyersOnly ?? false,
-    inviteRequired: body.inviteRequired !== false,
-    requiredInvites: Number(body.requiredInvites) || 1,
-    channelId: body.channelId ?? "",
     prizes,
     boxes: assignBoxPrizes(totalBoxes, prizes),
     createdAt: now(),
@@ -2416,10 +2413,7 @@ router.put("/bot/gift-boxes/:id", requireAuth, (req: any, res: any) => {
   // Re-assign boxes if prizes or size changed (preserve already-opened boxes)
   const needsReassign = body.prizes != null || (body.totalBoxes != null && body.totalBoxes !== old.totalBoxes);
   const boxes = needsReassign ? reassignBoxPrizes(newTotal, newPrizes, old.boxes) : old.boxes;
-  const inviteRequired  = body.inviteRequired  !== undefined ? body.inviteRequired              : old.inviteRequired;
-  const requiredInvites = body.requiredInvites !== undefined ? Number(body.requiredInvites)      : old.requiredInvites;
-  const channelId       = body.channelId       !== undefined ? body.channelId                   : old.channelId;
-  events[idx] = { ...old, ...body, id: req.params.id, prizes: newPrizes, boxes, totalBoxes: newTotal, inviteRequired, requiredInvites, channelId };
+  events[idx] = { ...old, ...body, id: req.params.id, prizes: newPrizes, boxes, totalBoxes: newTotal };
   writeJson("gift_boxes", events);
   addLog("GIFT_BOX_UPDATE", `id=${req.params.id}`, "web-admin");
   res.json(events[idx]);
