@@ -419,124 +419,133 @@ const grokPlugin: CheckerPlugin = {
         } catch { return undefined; }
       };
 
-      // ── 1. Mở trực tiếp trang signin của NextAuth ────────────────────────────
-      // grok.com dùng NextAuth — URL chuẩn là /auth/signin (không phải /auth/login)
-      log("Opening grok.com/auth/signin");
-      await gotoWithRetry("https://grok.com/auth/signin", "auth/signin");
+      // ── Helper: CF check ─────────────────────────────────────────────────────
+      const checkAndHandleCF = async (waitMs = 50_000): Promise<boolean> => {
+        const bt = await bodyText(page);
+        if (/Performing security verification|Just a moment|checking your browser|security service.*malicious bot/i.test(bt)) {
+          log("Cloudflare challenge detected — waiting up to " + waitMs + "ms");
+          return waitCloudflare(page, waitMs);
+        }
+        return true;
+      };
 
+      // ── 1. Vào grok.com root ──────────────────────────────────────────────────
+      log("Opening https://grok.com");
+      await gotoWithRetry("https://grok.com", "grok.com");
       let url = page.url() as string;
       log(`Loaded — URL: ${url}`);
 
-      // Nếu redirect về trang chủ (đã login) → check ngay
-      if (!url.includes("/auth/") && !url.includes("/login") && !url.includes("/signin")) {
-        log("Redirected away from auth page — may already be logged in, checking subscription");
+      // Kiểm tra CF
+      if (!await checkAndHandleCF(50_000)) {
+        return { code: "CAPTCHA", message: "Cloudflare block tại grok.com root", responseTime: elapsed(), screenshotBase64: await screenshot64(), playwrightLog: logs.join("\n") };
       }
 
-      // ── 2. Xử lý Cloudflare challenge ────────────────────────────────────────
-      {
-        const bt = await bodyText(page);
-        if (/Performing security verification|Just a moment|checking your browser|security service.*malicious bot/i.test(bt)) {
-          log("Cloudflare Managed Challenge detected — waiting up to 50s for auto-solve");
-          const passed = await waitCloudflare(page, 50_000);
-          if (!passed) {
-            return {
-              code: "CAPTCHA",
-              message: "Cloudflare bot protection không thể bypass. Hãy dùng residential proxy hoặc session cookie.",
-              responseTime: elapsed(),
-              screenshotBase64: await screenshot64(),
-              playwrightLog: logs.join("\n"),
-            };
-          }
+      // ── 2. Tìm OAuth URL qua NextAuth API (không cần click UI) ───────────────
+      // NextAuth cung cấp endpoint /api/auth/signin/twitter để bắt đầu OAuth
+      log("Getting Twitter OAuth URL via NextAuth API");
+      const oauthUrl: string | null = await page.evaluate(async () => {
+        try {
+          // Lấy CSRF token từ NextAuth
+          const csrfRes = await fetch("/api/auth/csrf");
+          const csrfData = await csrfRes.json();
+          const csrfToken = csrfData.csrfToken;
+          // Gọi NextAuth signin endpoint → trả về redirect URL tới X.com OAuth
+          const signinRes = await fetch("/api/auth/signin/twitter", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: "csrfToken=" + encodeURIComponent(csrfToken) + "&callbackUrl=" + encodeURIComponent("https://grok.com/"),
+            redirect: "manual",
+          });
+          // Nếu redirect → lấy Location header
+          const loc = signinRes.headers.get("location") || signinRes.url;
+          return loc || null;
+        } catch (e) {
+          return null;
+        }
+      }).catch(() => null);
+
+      log(`OAuth URL from NextAuth: ${(oauthUrl || "null").slice(0, 200)}`);
+
+      // ── 3. Navigate tới X.com OAuth ──────────────────────────────────────────
+      let onXAuth = false;
+      if (oauthUrl && (oauthUrl.includes("x.com") || oauthUrl.includes("twitter.com") || oauthUrl.includes("accounts.x.com"))) {
+        log("Navigating to X.com OAuth page");
+        await gotoWithRetry(oauthUrl, "x.com-oauth");
+        url = page.url() as string;
+        log(`X.com OAuth URL: ${url}`);
+        onXAuth = true;
+      } else {
+        // Fallback: click Sign in button trực tiếp trên trang grok.com
+        log("OAuth API failed, trying UI click approach");
+        await page.waitForTimeout(2_000);
+
+        // Thử tìm và click bằng JS eval (bypass visibility check)
+        const clicked = await page.evaluate(() => {
+          const allEls = Array.from(document.querySelectorAll("*"));
+          const signIn = allEls.find(el => {
+            const txt = (el.textContent || el.getAttribute("aria-label") || "").toLowerCase().trim();
+            return (txt === "sign in" || txt === "login" || txt === "log in") && (el.tagName === "BUTTON" || el.tagName === "A" || el.getAttribute("role") === "button");
+          });
+          if (signIn) { (signIn as HTMLElement).click(); return true; }
+          return false;
+        }).catch(() => false);
+        log(`UI click result: ${clicked}`);
+        await page.waitForTimeout(3_000);
+        url = page.url() as string;
+        log(`After UI click — URL: ${url}`);
+
+        if (url.includes("x.com") || url.includes("twitter.com")) {
+          onXAuth = true;
+        } else {
+          // Thử navigate trực tiếp tới NextAuth twitter signin
+          log("Trying direct /api/auth/signin/twitter navigation");
+          try {
+            await page.goto("https://grok.com/api/auth/signin/twitter", { waitUntil: "networkidle", timeout: 20_000 });
+          } catch {}
+          await page.waitForTimeout(2_000);
           url = page.url() as string;
-          log(`After CF — URL: ${url}`);
+          log(`After direct signin nav — URL: ${url}`);
+          if (url.includes("x.com") || url.includes("twitter.com") || url.includes("accounts.x.com")) {
+            onXAuth = true;
+          }
         }
       }
 
-      // ── 3. Log what's on the page + find all buttons/links ──────────────────
-      await page.waitForTimeout(3_000);
+      // ── 4. Xử lý CF nếu có ───────────────────────────────────────────────────
+      if (!await checkAndHandleCF(40_000)) {
+        return { code: "CAPTCHA", message: "Cloudflare block tại X.com OAuth", responseTime: elapsed(), screenshotBase64: await screenshot64(), playwrightLog: logs.join("\n") };
+      }
 
-      const bodyInner = await page.evaluate(() => {
-        const body = document.body;
-        return body ? body.innerHTML.slice(0, 3000) : "(no body)";
-      }).catch(() => "(eval error)");
-      log(`Body innerHTML (3000 chars): ${bodyInner}`);
+      // ── 5. Log trạng thái trang + tìm email input ────────────────────────────
+      url = page.url() as string;
+      log(`Current URL: ${url}`);
 
-      const allButtons = await page.evaluate(() => {
-        const els = Array.from(document.querySelectorAll("button, a, [role='button']"));
-        return els.slice(0, 30).map(el => ({
-          tag: el.tagName,
-          text: (el.textContent || "").trim().slice(0, 80),
-          href: (el as HTMLAnchorElement).href || "",
-          visible: (el as HTMLElement).offsetParent !== null,
+      const allInputs = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll("input")).map(el => ({
+          type: el.type, name: el.name, placeholder: el.placeholder, visible: el.offsetParent !== null,
         }));
       }).catch(() => [] as any[]);
-      log(`All buttons/links (${allButtons.length}): ${JSON.stringify(allButtons.slice(0,15))}`);
+      log(`All inputs on page: ${JSON.stringify(allInputs)}`);
 
-      // ── 4. Thử click các nút sign-in có thể có ────────────────────────────────
-      // Thứ tự ưu tiên: email → X.com OAuth (vì tài khoản có email/password X.com)
-      const signInBtnSels = [
-        'button:has-text("Continue with email")',
-        'button:has-text("Sign in with email")',
-        'button:has-text("Email")',
-        'a:has-text("Continue with email")',
-        '[data-provider="email"]',
-        'button:has-text("Continue with X")',
-        'button:has-text("Sign in with X")',
-        'a:has-text("Continue with X")',
-        'button:has-text("Sign in")',
-        'button[type="submit"]',
-      ];
-      let clickedSignIn = false;
-      for (const sel of signInBtnSels) {
-        if (await isVisible(page, sel, 2_000)) {
-          log(`Clicking sign-in button: ${sel}`);
-          await page.locator(sel).first().click();
-          await page.waitForTimeout(3_000);
-          clickedSignIn = true;
-          break;
-        }
-      }
+      const anyText = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll("button, a, h1, h2, label, p"));
+        return els.slice(0, 20).map(el => ({
+          tag: el.tagName,
+          text: (el.textContent || "").trim().slice(0, 60),
+          visible: (el as HTMLElement).offsetParent !== null,
+        })).filter(e => e.text);
+      }).catch(() => [] as any[]);
+      log(`Page text elements: ${JSON.stringify(anyText.slice(0, 12))}`);
 
-      if (!clickedSignIn) {
-        // Thử click button đầu tiên visible trên trang (bất kỳ)
-        const firstBtn = await page.locator("button:visible").first();
-        if (await firstBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-          const btnText = await firstBtn.textContent().catch(() => "");
-          log(`Clicking first visible button: "${btnText}"`);
-          await firstBtn.click();
-          await page.waitForTimeout(3_000);
-        }
-      }
-
-      url = page.url() as string;
-      log(`After sign-in click — URL: ${url}`);
-
-      // Có thể lại gặp CF sau click
-      {
-        const bt = await bodyText(page);
-        if (/Performing security verification|Just a moment/i.test(bt)) {
-          log("CF challenge after email click — waiting 30s");
-          const passed = await waitCloudflare(page, 30_000);
-          if (!passed) {
-            return {
-              code: "CAPTCHA",
-              message: "Cloudflare block ở bước chọn email login",
-              responseTime: elapsed(),
-              screenshotBase64: await screenshot64(),
-              playwrightLog: logs.join("\n"),
-            };
-          }
-        }
-      }
-
-      // ── 4. Tìm và điền email ─────────────────────────────────────────────────
+      // ── 6. Điền email (trên X.com hoặc grok.com) ────────────────────────────
       const emailInputSels = [
         'input[type="email"]',
         'input[name="email"]',
+        'input[name="text"]',           // X.com dùng name="text" cho username/email
         'input[autocomplete="email"]',
+        'input[autocomplete="username"]',
         'input[placeholder*="email" i]',
-        'input[placeholder*="Email" ]',
-        'form input[type="text"]',
+        'input[placeholder*="phone" i]',
         'input[type="text"]',
       ];
 
@@ -551,27 +560,18 @@ const grokPlugin: CheckerPlugin = {
       }
 
       if (!emailInput) {
-        const bt = (await bodyText(page)).slice(0, 400);
-        const html = await rawHtml(2000);
+        const bt = (await bodyText(page)).slice(0, 500);
         const domCount = await page.evaluate(() => document.querySelectorAll("*").length).catch(() => 0);
-        log(`Email input not found — DOM elements: ${domCount}`);
+        log(`Email input not found — DOM: ${domCount} el, onXAuth: ${onXAuth}`);
         log(`Body text: ${bt || "(empty)"}`);
-        log(`Raw HTML: ${html}`);
-        if (consoleErrors.length) log(`Console errors: ${consoleErrors.slice(0,3).join(" | ")}`);
+        if (consoleErrors.length) log(`Console errors: ${consoleErrors.slice(0, 3).join(" | ")}`);
         const shot = await screenshot64();
-        // Kiểm tra CF lần nữa
-        if (/Performing security verification|Just a moment|security service/i.test(bt + html)) {
-          return {
-            code: "CAPTCHA",
-            message: "Cloudflare bot protection chặn — không vào được form đăng nhập",
-            responseTime: elapsed(),
-            screenshotBase64: shot,
-            playwrightLog: logs.join("\n"),
-          };
+        if (/Performing security verification|Just a moment|security service/i.test(bt)) {
+          return { code: "CAPTCHA", message: "Cloudflare block — không vào được form đăng nhập", responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
         }
         return {
           code: "UNKNOWN",
-          message: `Không tìm thấy ô email — URL: ${url.split("?")[0]} | DOM: ${domCount} el | ${bt.slice(0, 80) || html.slice(0, 80)}`,
+          message: `Không tìm thấy ô email — URL: ${url.split("?")[0]} | onXAuth: ${onXAuth} | ${bt.slice(0, 100)}`,
           responseTime: elapsed(),
           screenshotBase64: shot,
           playwrightLog: logs.join("\n"),
