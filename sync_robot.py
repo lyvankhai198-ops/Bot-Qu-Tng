@@ -1093,24 +1093,37 @@ async def _find_and_navigate_order_item(page) -> bool:
     order_href = None
     order_outer_html = ""
 
-    # ── Cách 0: Tìm trong sidebar/nav trước (ưu tiên nhất) ─────────────────
-    # Sidebar là context chắc chắn chứa menu item, tránh nhầm với heading trang
+    # ── Cách 0: Tìm trực tiếp trong aside.app-sidebar (ưu tiên nhất) ─────────
+    # DOM dump xác nhận: app dùng <aside class="app-sidebar"> với menu items
+    # bên trong là button/a. Không cần hamburger click — sidebar luôn visible.
     if not order_link:
-        try:
-            nav_sel = 'nav,[role=navigation],[class*=sidebar],[class*=drawer],[class*=menu]'
-            nav = page.locator(nav_sel).first
-            if await nav.count() > 0:
-                # Tìm bất kỳ element con nào có text bắt đầu bằng "Đơn hàng"
-                for tag in ["a", "button", "li", "div", "span"]:
-                    el = nav.locator(tag).filter(
+        for aside_sel in [
+            "aside.app-sidebar",
+            "[class*='app-sidebar']",
+            "aside[class*='sidebar']",
+            # fallback: bất kỳ aside/nav nào
+            "aside",
+            "nav",
+            "[role=navigation]",
+        ]:
+            try:
+                aside = page.locator(aside_sel).first
+                if await aside.count() == 0:
+                    continue
+                for tag in ["button", "a", "li", "div"]:
+                    el = aside.locator(tag).filter(
                         has_text=re.compile(r"Đơn hàng", re.IGNORECASE)
                     ).first
                     if await el.count() > 0 and await el.is_visible():
                         order_link = el
-                        logger.info(f"[SYNC] Tìm thấy 'Đơn hàng' trong nav — tag={tag}")
+                        logger.info(
+                            f"[SYNC] Tìm thấy 'Đơn hàng' trong {aside_sel} — tag={tag}"
+                        )
                         break
-        except Exception:
-            pass
+                if order_link:
+                    break
+            except Exception:
+                continue
 
     # ── Cách 1: <a> có text bắt đầu bằng "Đơn hàng" (chấp nhận suffix "•" v.v.) ──
     if not order_link:
@@ -1351,73 +1364,51 @@ async def _open_orders_page(page) -> None:
     # ═════════════════════════════════════════════════════════════════════
 
     # ══════════════════════════════════════════════════════════════════════
-    # BƯỚC 1: Click hamburger, chờ sidebar mở — retry tối đa 3 lần
+    # BƯỚC 1: Đảm bảo sidebar (aside.app-sidebar) đang MỞ — không click
+    #         hamburger trừ khi sidebar đang collapsed (chỉ icon, không text)
+    #
+    # DOM dump xác nhận: app đang dùng <aside class="app-sidebar"> LUÔN
+    # hiển thị ở desktop (1280px). Hamburger ở (20,20) COLLAPSE sidebar
+    # (ẩn text label, chỉ còn icon). KHÔNG nên click hamburger khi sidebar
+    # đang mở — sẽ làm ẩn "Đơn hàng" text.
     # ══════════════════════════════════════════════════════════════════════
-    sidebar_open = False
-    for ham_try in range(1, 4):
-        logger.info(f"[SYNC] [Ham {ham_try}/3] Bấm nút hamburger ☰")
+    logger.info("[SYNC] Kiểm tra sidebar app-sidebar...")
 
-        # Chụp ảnh trước khi click hamburger
+    # Chờ sidebar container xuất hiện (tối đa 5s)
+    sidebar_ready = False
+    for _tick in range(10):
         try:
-            await page.screenshot(
-                path=str(SCREENSHOTS_DIR / f"before_hamburger_{ham_try}.png"),
-                full_page=False
-            )
+            aside = page.locator("aside.app-sidebar, [class*='app-sidebar']").first
+            if await aside.count() > 0 and await aside.is_visible():
+                sidebar_ready = True
+                logger.info("[SYNC] ✅ aside.app-sidebar visible")
+                break
         except Exception:
             pass
+        await asyncio.sleep(0.5)
 
+    if not sidebar_ready:
+        logger.warning("[SYNC] aside.app-sidebar không visible — thử mở bằng hamburger")
         clicked = await _click_hamburger(page)
-        if not clicked:
-            logger.warning(f"[SYNC] [Ham {ham_try}/3] Không click được hamburger")
-            await page.wait_for_timeout(1_000)
-            continue
+        if clicked:
+            await asyncio.sleep(0.8)
+            try:
+                aside = page.locator("aside.app-sidebar, [class*='app-sidebar']").first
+                if await aside.count() > 0 and await aside.is_visible():
+                    sidebar_ready = True
+                    logger.info("[SYNC] ✅ Sidebar mở sau hamburger click")
+            except Exception:
+                pass
 
-        # Chờ sidebar xuất hiện tối đa 4s
-        await page.wait_for_timeout(400)
-        sidebar_open = await _wait_for_sidebar(page)
-
-        # Chụp ảnh sau khi click hamburger
-        try:
-            await page.screenshot(
-                path=str(SCREENSHOTS_DIR / f"after_hamburger_{ham_try}.png"),
-                full_page=False
-            )
-        except Exception:
-            pass
-
-        if sidebar_open:
-            logger.info(f"[SYNC] [Ham {ham_try}/3] ✅ Sidebar đã mở")
-            break
-        else:
-            logger.warning(f"[SYNC] [Ham {ham_try}/3] Sidebar chưa mở sau click — thử lại")
-            await page.wait_for_timeout(1_000)
-
-    if not sidebar_open:
-        # Log diagnostics rồi raise
-        diag_url   = page.url
-        diag_title = await page.title()
-        fail_ss    = str(SCREENSHOTS_DIR / "hamburger_failed.png")
-        try:
-            await page.screenshot(path=fail_ss, full_page=False)
-        except Exception:
-            pass
-        cookies_names = []
-        try:
-            cookies_names = [c["name"] for c in await page.context.cookies()]
-        except Exception:
-            pass
+    if not sidebar_ready:
         raise RuntimeError(
-            f"Không mở được sidebar sau 3 lần bấm hamburger.\n"
-            f"URL   : {diag_url}\n"
-            f"Title : {diag_title}\n"
-            f"Cookies: {cookies_names}\n"
-            f"Screenshot: hamburger_failed.png"
+            f"Không tìm thấy aside.app-sidebar — URL={page.url} | title={await page.title()}"
         )
 
     # ══════════════════════════════════════════════════════════════════════
-    # BƯỚC 2: Sidebar đã mở — tìm "Đơn hàng" và click
+    # BƯỚC 2: Tìm "Đơn hàng" trong sidebar và click
     # ══════════════════════════════════════════════════════════════════════
-    logger.info("[SYNC] Sidebar đã mở — bắt đầu tìm mục 'Đơn hàng'")
+    logger.info("[SYNC] Sidebar sẵn sàng — bắt đầu tìm mục 'Đơn hàng'")
 
     # Log nội dung sidebar để debug
     last_links: list = []
