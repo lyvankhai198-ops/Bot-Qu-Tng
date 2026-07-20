@@ -15228,11 +15228,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path2) {
-      if (!path2 || typeof path2 !== "string") {
+    function lookup(path3) {
+      if (!path3 || typeof path3 !== "string") {
         return false;
       }
-      var extension2 = extname("x." + path2).toLowerCase().slice(1);
+      var extension2 = extname("x." + path3).toLowerCase().slice(1);
       if (!extension2) {
         return false;
       }
@@ -18774,13 +18774,13 @@ var require_view = __commonJS({
   "../../node_modules/.pnpm/express@5.2.1/node_modules/express/lib/view.js"(exports, module) {
     "use strict";
     var debug = require_src()("express:view");
-    var path2 = __require("node:path");
-    var fs2 = __require("node:fs");
-    var dirname = path2.dirname;
-    var basename = path2.basename;
-    var extname = path2.extname;
-    var join2 = path2.join;
-    var resolve = path2.resolve;
+    var path3 = __require("node:path");
+    var fs3 = __require("node:fs");
+    var dirname = path3.dirname;
+    var basename = path3.basename;
+    var extname = path3.extname;
+    var join2 = path3.join;
+    var resolve = path3.resolve;
     module.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -18809,17 +18809,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path3;
+      var path4;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i = 0; i < roots.length && !path3; i++) {
+      for (var i = 0; i < roots.length && !path4; i++) {
         var root = roots[i];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename(loc);
-        path3 = this.resolve(dir, file);
+        path4 = this.resolve(dir, file);
       }
-      return path3;
+      return path4;
     };
     View.prototype.render = function render(options, callback) {
       var sync = true;
@@ -18841,21 +18841,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path3 = join2(dir, file);
-      var stat = tryStat(path3);
+      var path4 = join2(dir, file);
+      var stat = tryStat(path4);
       if (stat && stat.isFile()) {
-        return path3;
+        return path4;
       }
-      path3 = join2(dir, basename(file, ext), "index" + ext);
-      stat = tryStat(path3);
+      path4 = join2(dir, basename(file, ext), "index" + ext);
+      stat = tryStat(path4);
       if (stat && stat.isFile()) {
-        return path3;
+        return path4;
       }
     };
-    function tryStat(path3) {
-      debug('stat "%s"', path3);
+    function tryStat(path4) {
+      debug('stat "%s"', path4);
       try {
-        return fs2.statSync(path3);
+        return fs3.statSync(path4);
       } catch (e) {
         return void 0;
       }
@@ -18972,14 +18972,14 @@ var require_etag = __commonJS({
   "../../node_modules/.pnpm/etag@1.8.1/node_modules/etag/index.js"(exports, module) {
     "use strict";
     module.exports = etag;
-    var crypto2 = __require("crypto");
+    var crypto3 = __require("crypto");
     var Stats = __require("fs").Stats;
     var toString = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto2.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto3.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -20095,15 +20095,15 @@ var require_dist2 = __commonJS({
       let index = 0;
       function consumeUntil(end) {
         const output = [];
-        let path2 = "";
+        let path3 = "";
         function writePath() {
-          if (!path2)
+          if (!path3)
             return;
           output.push({
             type: "text",
-            value: encodePath(path2)
+            value: encodePath(path3)
           });
-          path2 = "";
+          path3 = "";
         }
         while (index < chars.length) {
           const value = chars[index++];
@@ -20115,7 +20115,7 @@ var require_dist2 = __commonJS({
             if (index === chars.length) {
               throw new PathError(`Unexpected end after \\ at index ${index}`, str);
             }
-            path2 += chars[index++];
+            path3 += chars[index++];
             continue;
           }
           if (value === ":" || value === "*") {
@@ -20159,7 +20159,7 @@ var require_dist2 = __commonJS({
           if (value === "}" || value === "(" || value === ")" || value === "[" || value === "]" || value === "+" || value === "?" || value === "!") {
             throw new PathError(`Unexpected ${value} at index ${index - 1}`, str);
           }
-          path2 += value;
+          path3 += value;
         }
         if (end) {
           throw new PathError(`Unexpected end at index ${index}, expected ${end}`, str);
@@ -20169,17 +20169,17 @@ var require_dist2 = __commonJS({
       }
       return new TokenData(consumeUntil(""), str);
     }
-    function compile(path2, options = {}) {
+    function compile(path3, options = {}) {
       const { encode = encodeURIComponent, delimiter = DEFAULT_DELIMITER } = options;
-      const data = typeof path2 === "object" ? path2 : parse(path2, options);
+      const data = typeof path3 === "object" ? path3 : parse(path3, options);
       const fn = tokensToFunction(data.tokens, delimiter, encode);
-      return function path3(params = {}) {
+      return function path4(params = {}) {
         const missing = [];
-        const path4 = fn(params, missing);
+        const path5 = fn(params, missing);
         if (missing.length) {
           throw new TypeError(`Missing parameters: ${missing.join(", ")}`);
         }
-        return path4;
+        return path5;
       };
     }
     function tokensToFunction(tokens, delimiter, encode) {
@@ -20241,9 +20241,9 @@ var require_dist2 = __commonJS({
         return encodeValue(value);
       };
     }
-    function match(path2, options = {}) {
+    function match(path3, options = {}) {
       const { decode = decodeURIComponent, delimiter = DEFAULT_DELIMITER } = options;
-      const { regexp, keys } = pathToRegexp(path2, options);
+      const { regexp, keys } = pathToRegexp(path3, options);
       const decoders = keys.map((key) => {
         if (decode === false)
           return NOOP_VALUE;
@@ -20255,7 +20255,7 @@ var require_dist2 = __commonJS({
         const m = regexp.exec(input);
         if (!m)
           return false;
-        const path3 = m[0];
+        const path4 = m[0];
         const params = /* @__PURE__ */ Object.create(null);
         for (let i = 1; i < m.length; i++) {
           if (m[i] === void 0)
@@ -20264,21 +20264,21 @@ var require_dist2 = __commonJS({
           const decoder = decoders[i - 1];
           params[key.name] = decoder(m[i]);
         }
-        return { path: path3, params };
+        return { path: path4, params };
       };
     }
-    function pathToRegexp(path2, options = {}) {
+    function pathToRegexp(path3, options = {}) {
       const { delimiter = DEFAULT_DELIMITER, end = true, sensitive = false, trailing = true } = options;
       const keys = [];
       let source = "";
       let combinations = 0;
-      function process2(path3) {
-        if (Array.isArray(path3)) {
-          for (const p of path3)
+      function process2(path4) {
+        if (Array.isArray(path4)) {
+          for (const p of path4)
             process2(p);
           return;
         }
-        const data = typeof path3 === "object" ? path3 : parse(path3, options);
+        const data = typeof path4 === "object" ? path4 : parse(path4, options);
         flatten(data.tokens, 0, [], (tokens) => {
           if (combinations >= 256) {
             throw new PathError("Too many path combinations", data.originalPath);
@@ -20289,7 +20289,7 @@ var require_dist2 = __commonJS({
           combinations++;
         });
       }
-      process2(path2);
+      process2(path3);
       let pattern = `^(?:${source})`;
       if (trailing)
         pattern += "(?:" + escape2(delimiter) + "$)?";
@@ -20429,18 +20429,18 @@ var require_layer = __commonJS({
     var TRAILING_SLASH_REGEXP = /\/+$/;
     var MATCHING_GROUP_REGEXP = /\((?:\?<(.*?)>)?(?!\?)/g;
     module.exports = Layer;
-    function Layer(path2, options, fn) {
+    function Layer(path3, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path2, options, fn);
+        return new Layer(path3, options, fn);
       }
-      debug("new %o", path2);
+      debug("new %o", path3);
       const opts = options || {};
       this.handle = fn;
       this.keys = [];
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.slash = path2 === "/" && opts.end === false;
+      this.slash = path3 === "/" && opts.end === false;
       function matcher(_path) {
         if (_path instanceof RegExp) {
           const keys = [];
@@ -20479,7 +20479,7 @@ var require_layer = __commonJS({
           decode: decodeParam
         });
       }
-      this.matchers = Array.isArray(path2) ? path2.map(matcher) : [matcher(path2)];
+      this.matchers = Array.isArray(path3) ? path3.map(matcher) : [matcher(path3)];
     }
     Layer.prototype.handleError = function handleError(error, req, res, next) {
       const fn = this.handle;
@@ -20519,9 +20519,9 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match(path2) {
+    Layer.prototype.match = function match(path3) {
       let match2;
-      if (path2 != null) {
+      if (path3 != null) {
         if (this.slash) {
           this.params = {};
           this.path = "";
@@ -20529,7 +20529,7 @@ var require_layer = __commonJS({
         }
         let i = 0;
         while (!match2 && i < this.matchers.length) {
-          match2 = this.matchers[i](path2);
+          match2 = this.matchers[i](path3);
           i++;
         }
       }
@@ -20557,13 +20557,13 @@ var require_layer = __commonJS({
         throw err;
       }
     }
-    function loosen(path2) {
-      if (path2 instanceof RegExp || path2 === "/") {
-        return path2;
+    function loosen(path3) {
+      if (path3 instanceof RegExp || path3 === "/") {
+        return path3;
       }
-      return Array.isArray(path2) ? path2.map(function(p) {
+      return Array.isArray(path3) ? path3.map(function(p) {
         return loosen(p);
-      }) : String(path2).replace(TRAILING_SLASH_REGEXP, "");
+      }) : String(path3).replace(TRAILING_SLASH_REGEXP, "");
     }
   }
 });
@@ -20579,9 +20579,9 @@ var require_route = __commonJS({
     var flatten = Array.prototype.flat;
     var methods = METHODS.map((method) => method.toLowerCase());
     module.exports = Route;
-    function Route(path2) {
-      debug("new %o", path2);
-      this.path = path2;
+    function Route(path3) {
+      debug("new %o", path3);
+      this.path = path3;
       this.stack = [];
       this.methods = /* @__PURE__ */ Object.create(null);
     }
@@ -20789,8 +20789,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        const path2 = getPathname(req);
-        if (path2 == null) {
+        const path3 = getPathname(req);
+        if (path3 == null) {
           return done(layerError);
         }
         let layer;
@@ -20798,7 +20798,7 @@ var require_router = __commonJS({
         let route;
         while (match !== true && idx < stack.length) {
           layer = stack[idx++];
-          match = matchLayer(layer, path2);
+          match = matchLayer(layer, path3);
           route = layer.route;
           if (typeof match !== "boolean") {
             layerError = layerError || match;
@@ -20836,18 +20836,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handleRequest(req, res, next);
           } else {
-            trimPrefix(layer, layerError, layerPath, path2);
+            trimPrefix(layer, layerError, layerPath, path3);
           }
           sync = 0;
         });
       }
-      function trimPrefix(layer, layerError, layerPath, path2) {
+      function trimPrefix(layer, layerError, layerPath, path3) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path2.substring(0, layerPath.length)) {
+          if (layerPath !== path3.substring(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          const c = path2[layerPath.length];
+          const c = path3[layerPath.length];
           if (c && c !== "/") {
             next(layerError);
             return;
@@ -20871,7 +20871,7 @@ var require_router = __commonJS({
     };
     Router5.prototype.use = function use(handler) {
       let offset = 0;
-      let path2 = "/";
+      let path3 = "/";
       if (typeof handler !== "function") {
         let arg = handler;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -20879,7 +20879,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path2 = handler;
+          path3 = handler;
         }
       }
       const callbacks = flatten.call(slice.call(arguments, offset), Infinity);
@@ -20891,8 +20891,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("argument handler must be a function");
         }
-        debug("use %o %s", path2, fn.name || "<anonymous>");
-        const layer = new Layer(path2, {
+        debug("use %o %s", path3, fn.name || "<anonymous>");
+        const layer = new Layer(path3, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -20902,9 +20902,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    Router5.prototype.route = function route(path2) {
-      const route2 = new Route(path2);
-      const layer = new Layer(path2, {
+    Router5.prototype.route = function route(path3) {
+      const route2 = new Route(path3);
+      const layer = new Layer(path3, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -20917,8 +20917,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      Router5.prototype[method] = function(path2) {
-        const route = this.route(path2);
+      Router5.prototype[method] = function(path3) {
+        const route = this.route(path3);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -20947,9 +20947,9 @@ var require_router = __commonJS({
       const fqdnIndex = url.substring(0, pathLength).indexOf("://");
       return fqdnIndex !== -1 ? url.substring(0, url.indexOf("/", 3 + fqdnIndex)) : void 0;
     }
-    function matchLayer(layer, path2) {
+    function matchLayer(layer, path3) {
       try {
-        return layer.match(path2);
+        return layer.match(path3);
       } catch (err) {
         return err;
       }
@@ -21177,7 +21177,7 @@ var require_application = __commonJS({
     };
     app2.use = function use(fn) {
       var offset = 0;
-      var path2 = "/";
+      var path3 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -21185,7 +21185,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path2 = fn;
+          path3 = fn;
         }
       }
       var fns = flatten.call(slice.call(arguments, offset), Infinity);
@@ -21195,12 +21195,12 @@ var require_application = __commonJS({
       var router5 = this.router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router5.use(path2, fn2);
+          return router5.use(path3, fn2);
         }
-        debug(".use app under %s", path2);
-        fn2.mountpath = path2;
+        debug(".use app under %s", path3);
+        fn2.mountpath = path3;
         fn2.parent = this;
-        router5.use(path2, function mounted_app(req, res, next) {
+        router5.use(path3, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             Object.setPrototypeOf(req, orig.request);
@@ -21212,8 +21212,8 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app2.route = function route(path2) {
-      return this.router.route(path2);
+    app2.route = function route(path3) {
+      return this.router.route(path3);
     };
     app2.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -21256,7 +21256,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app2.path = function path2() {
+    app2.path = function path3() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app2.enabled = function enabled(setting) {
@@ -21272,17 +21272,17 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app2[method] = function(path2) {
+      app2[method] = function(path3) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path2);
+          return this.set(path3);
         }
-        var route = this.route(path2);
+        var route = this.route(path3);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app2.all = function all(path2) {
-      var route = this.route(path2);
+    app2.all = function all(path3) {
+      var route = this.route(path3);
       var args = slice.call(arguments, 1);
       for (var i = 0; i < methods.length; i++) {
         route[methods[i]].apply(route, args);
@@ -22204,7 +22204,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path2() {
+    defineGetter(req, "path", function path3() {
       return parse(this).pathname;
     });
     defineGetter(req, "host", function host() {
@@ -22415,8 +22415,8 @@ var require_content_disposition = __commonJS({
       this.type = type;
       this.parameters = parameters;
     }
-    function basename(path2) {
-      const normalized = path2.replaceAll("\\", "/");
+    function basename(path3) {
+      const normalized = path3.replaceAll("\\", "/");
       let end = normalized.length;
       while (end > 0 && normalized[end - 1] === "/") {
         end--;
@@ -22466,17 +22466,17 @@ var require_content_disposition = __commonJS({
 // ../../node_modules/.pnpm/cookie-signature@1.2.2/node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "../../node_modules/.pnpm/cookie-signature@1.2.2/node_modules/cookie-signature/index.js"(exports) {
-    var crypto2 = __require("crypto");
+    var crypto3 = __require("crypto");
     exports.sign = function(val, secret) {
       if ("string" != typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto2.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto3.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports.unsign = function(input, secret) {
       if ("string" != typeof input) throw new TypeError("Signed cookie string must be provided.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
       var tentativeValue = input.slice(0, input.lastIndexOf(".")), expectedInput = exports.sign(tentativeValue, secret), expectedBuffer = Buffer.from(expectedInput), inputBuffer = Buffer.from(input);
-      return expectedBuffer.length === inputBuffer.length && crypto2.timingSafeEqual(expectedBuffer, inputBuffer) ? tentativeValue : false;
+      return expectedBuffer.length === inputBuffer.length && crypto3.timingSafeEqual(expectedBuffer, inputBuffer) ? tentativeValue : false;
     };
   }
 });
@@ -22657,32 +22657,32 @@ var require_send = __commonJS({
     var escapeHtml = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs2 = __require("fs");
+    var fs3 = __require("fs");
     var mime = require_mime_types();
     var ms = require_ms();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path2 = __require("path");
+    var path3 = __require("path");
     var statuses = require_statuses();
     var Stream = __require("stream");
     var util2 = __require("util");
-    var extname = path2.extname;
-    var join2 = path2.join;
-    var normalize = path2.normalize;
-    var resolve = path2.resolve;
-    var sep = path2.sep;
+    var extname = path3.extname;
+    var join2 = path3.join;
+    var normalize = path3.normalize;
+    var resolve = path3.resolve;
+    var sep = path3.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module.exports = send;
-    function send(req, path3, options) {
-      return new SendStream(req, path3, options);
+    function send(req, path4, options) {
+      return new SendStream(req, path4, options);
     }
-    function SendStream(req, path3, options) {
+    function SendStream(req, path4, options) {
       Stream.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path3;
+      this.path = path4;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -22796,10 +22796,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path3) {
+    SendStream.prototype.redirect = function redirect(path4) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path3);
+        this.emit("directory", res, path4);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -22819,38 +22819,38 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path3 = decode(this.path);
-      if (path3 === -1) {
+      var path4 = decode(this.path);
+      if (path4 === -1) {
         this.error(400);
         return res;
       }
-      if (~path3.indexOf("\0")) {
+      if (~path4.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path3) {
-          path3 = normalize("." + sep + path3);
+        if (path4) {
+          path4 = normalize("." + sep + path4);
         }
-        if (UP_PATH_REGEXP.test(path3)) {
-          debug('malicious path "%s"', path3);
+        if (UP_PATH_REGEXP.test(path4)) {
+          debug('malicious path "%s"', path4);
           this.error(403);
           return res;
         }
-        parts = path3.split(sep);
-        path3 = normalize(join2(root, path3));
+        parts = path4.split(sep);
+        path4 = normalize(join2(root, path4));
       } else {
-        if (UP_PATH_REGEXP.test(path3)) {
-          debug('malicious path "%s"', path3);
+        if (UP_PATH_REGEXP.test(path4)) {
+          debug('malicious path "%s"', path4);
           this.error(403);
           return res;
         }
-        parts = normalize(path3).split(sep);
-        path3 = resolve(path3);
+        parts = normalize(path4).split(sep);
+        path4 = resolve(path4);
       }
       if (containsDotFile(parts)) {
-        debug('%s dotfile "%s"', this._dotfiles, path3);
+        debug('%s dotfile "%s"', this._dotfiles, path4);
         switch (this._dotfiles) {
           case "allow":
             break;
@@ -22864,13 +22864,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path3);
+        this.sendIndex(path4);
         return res;
       }
-      this.sendFile(path3);
+      this.sendFile(path4);
       return res;
     };
-    SendStream.prototype.send = function send2(path3, stat) {
+    SendStream.prototype.send = function send2(path4, stat) {
       var len = stat.size;
       var options = this.options;
       var opts = {};
@@ -22882,9 +22882,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path3);
-      this.setHeader(path3, stat);
-      this.type(path3);
+      debug('pipe "%s"', path4);
+      this.setHeader(path4, stat);
+      this.type(path4);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -22933,30 +22933,30 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path3, opts);
+      this.stream(path4, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path3) {
+    SendStream.prototype.sendFile = function sendFile(path4) {
       var i = 0;
       var self2 = this;
-      debug('stat "%s"', path3);
-      fs2.stat(path3, function onstat(err, stat) {
-        var pathEndsWithSep = path3[path3.length - 1] === sep;
-        if (err && err.code === "ENOENT" && !extname(path3) && !pathEndsWithSep) {
+      debug('stat "%s"', path4);
+      fs3.stat(path4, function onstat(err, stat) {
+        var pathEndsWithSep = path4[path4.length - 1] === sep;
+        if (err && err.code === "ENOENT" && !extname(path4) && !pathEndsWithSep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat.isDirectory()) return self2.redirect(path3);
+        if (stat.isDirectory()) return self2.redirect(path4);
         if (pathEndsWithSep) return self2.error(404);
-        self2.emit("file", path3, stat);
-        self2.send(path3, stat);
+        self2.emit("file", path4, stat);
+        self2.send(path4, stat);
       });
       function next(err) {
         if (self2._extensions.length <= i) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path3 + "." + self2._extensions[i++];
+        var p = path4 + "." + self2._extensions[i++];
         debug('stat "%s"', p);
-        fs2.stat(p, function(err2, stat) {
+        fs3.stat(p, function(err2, stat) {
           if (err2) return next(err2);
           if (stat.isDirectory()) return next();
           self2.emit("file", p, stat);
@@ -22964,7 +22964,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path3) {
+    SendStream.prototype.sendIndex = function sendIndex(path4) {
       var i = -1;
       var self2 = this;
       function next(err) {
@@ -22972,9 +22972,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join2(path3, self2._index[i]);
+        var p = join2(path4, self2._index[i]);
         debug('stat "%s"', p);
-        fs2.stat(p, function(err2, stat) {
+        fs3.stat(p, function(err2, stat) {
           if (err2) return next(err2);
           if (stat.isDirectory()) return next();
           self2.emit("file", p, stat);
@@ -22983,10 +22983,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path3, options) {
+    SendStream.prototype.stream = function stream(path4, options) {
       var self2 = this;
       var res = this.res;
-      var stream2 = fs2.createReadStream(path3, options);
+      var stream2 = fs3.createReadStream(path4, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -23001,17 +23001,17 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path3) {
+    SendStream.prototype.type = function type(path4) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var ext = extname(path3);
+      var ext = extname(path4);
       var type2 = mime.contentType(ext) || "application/octet-stream";
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2);
     };
-    SendStream.prototype.setHeader = function setHeader(path3, stat) {
+    SendStream.prototype.setHeader = function setHeader(path4, stat) {
       var res = this.res;
-      this.emit("headers", res, path3, stat);
+      this.emit("headers", res, path4, stat);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -23069,9 +23069,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path3) {
+    function decode(path4) {
       try {
-        return decodeURIComponent(path3);
+        return decodeURIComponent(path4);
       } catch (err) {
         return -1;
       }
@@ -23215,7 +23215,7 @@ var require_response = __commonJS({
     var http = __require("node:http");
     var onFinished = require_on_finished();
     var mime = require_mime_types();
-    var path2 = __require("node:path");
+    var path3 = __require("node:path");
     var pathIsAbsolute = __require("node:path").isAbsolute;
     var statuses = require_statuses();
     var sign = require_cookie_signature().sign;
@@ -23224,8 +23224,8 @@ var require_response = __commonJS({
     var setCharset = require_utils3().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path2.extname;
-    var resolve = path2.resolve;
+    var extname = path3.extname;
+    var resolve = path3.resolve;
     var vary = require_vary();
     var { Buffer: Buffer2 } = __require("node:buffer");
     var res = Object.create(http.ServerResponse.prototype);
@@ -23371,26 +23371,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path3, options, callback) {
+    res.sendFile = function sendFile(path4, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path3) {
+      if (!path4) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path3 !== "string") {
+      if (typeof path4 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !pathIsAbsolute(path3)) {
+      if (!opts.root && !pathIsAbsolute(path4)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path3);
+      var pathname = encodeURI(path4);
       opts.etag = this.app.enabled("etag");
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
@@ -23401,7 +23401,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.download = function download(path3, filename, options, callback) {
+    res.download = function download(path4, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23418,7 +23418,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path3)
+        "Content-Disposition": contentDisposition(name || path4)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23431,7 +23431,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path3) : path3;
+      var fullPath = !opts.root ? resolve(path4) : path4;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23714,11 +23714,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path2 = parseUrl(req).pathname;
-        if (path2 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path2 = "";
+        var path3 = parseUrl(req).pathname;
+        if (path3 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path3 = "";
         }
-        var stream = send(req, path2, opts);
+        var stream = send(req, path3, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -24366,8 +24366,8 @@ var require_req = __commonJS({
       if (req.originalUrl) {
         _req.url = req.originalUrl;
       } else {
-        const path2 = req.path;
-        _req.url = typeof path2 === "string" ? path2 : req.url ? req.url.path || req.url : void 0;
+        const path3 = req.path;
+        _req.url = typeof path3 === "string" ? path3 : req.url ? req.url.path || req.url : void 0;
       }
       if (req.query) {
         _req.query = req.query;
@@ -24532,14 +24532,14 @@ var require_redact = __commonJS({
       }
       return obj;
     }
-    function parsePath(path2) {
+    function parsePath(path3) {
       const parts = [];
       let current = "";
       let inBrackets = false;
       let inQuotes = false;
       let quoteChar = "";
-      for (let i = 0; i < path2.length; i++) {
-        const char = path2[i];
+      for (let i = 0; i < path3.length; i++) {
+        const char = path3[i];
         if (!inBrackets && char === ".") {
           if (current) {
             parts.push(current);
@@ -24670,10 +24670,10 @@ var require_redact = __commonJS({
       return current;
     }
     function redactPaths(obj, paths, censor, remove = false) {
-      for (const path2 of paths) {
-        const parts = parsePath(path2);
+      for (const path3 of paths) {
+        const parts = parsePath(path3);
         if (parts.includes("*")) {
-          redactWildcardPath(obj, parts, censor, path2, remove);
+          redactWildcardPath(obj, parts, censor, path3, remove);
         } else {
           if (remove) {
             removeKey(obj, parts);
@@ -24758,8 +24758,8 @@ var require_redact = __commonJS({
           }
         } else {
           if (afterWildcard.includes("*")) {
-            const wrappedCensor = typeof censor === "function" ? (value, path2) => {
-              const fullPath = [...pathArray.slice(0, pathLength), ...path2];
+            const wrappedCensor = typeof censor === "function" ? (value, path3) => {
+              const fullPath = [...pathArray.slice(0, pathLength), ...path3];
               return censor(value, fullPath);
             } : censor;
             redactWildcardPath(current, afterWildcard, wrappedCensor, originalPath, remove);
@@ -24794,8 +24794,8 @@ var require_redact = __commonJS({
         return null;
       }
       const pathStructure = /* @__PURE__ */ new Map();
-      for (const path2 of pathsToClone) {
-        const parts = parsePath(path2);
+      for (const path3 of pathsToClone) {
+        const parts = parsePath(path3);
         let current = pathStructure;
         for (let i = 0; i < parts.length; i++) {
           const part = parts[i];
@@ -24847,24 +24847,24 @@ var require_redact = __commonJS({
       }
       return cloneSelectively(obj, pathStructure);
     }
-    function validatePath(path2) {
-      if (typeof path2 !== "string") {
+    function validatePath(path3) {
+      if (typeof path3 !== "string") {
         throw new Error("Paths must be (non-empty) strings");
       }
-      if (path2 === "") {
+      if (path3 === "") {
         throw new Error("Invalid redaction path ()");
       }
-      if (path2.includes("..")) {
-        throw new Error(`Invalid redaction path (${path2})`);
+      if (path3.includes("..")) {
+        throw new Error(`Invalid redaction path (${path3})`);
       }
-      if (path2.includes(",")) {
-        throw new Error(`Invalid redaction path (${path2})`);
+      if (path3.includes(",")) {
+        throw new Error(`Invalid redaction path (${path3})`);
       }
       let bracketCount = 0;
       let inQuotes = false;
       let quoteChar = "";
-      for (let i = 0; i < path2.length; i++) {
-        const char = path2[i];
+      for (let i = 0; i < path3.length; i++) {
+        const char = path3[i];
         if ((char === '"' || char === "'") && bracketCount > 0) {
           if (!inQuotes) {
             inQuotes = true;
@@ -24878,20 +24878,20 @@ var require_redact = __commonJS({
         } else if (char === "]" && !inQuotes) {
           bracketCount--;
           if (bracketCount < 0) {
-            throw new Error(`Invalid redaction path (${path2})`);
+            throw new Error(`Invalid redaction path (${path3})`);
           }
         }
       }
       if (bracketCount !== 0) {
-        throw new Error(`Invalid redaction path (${path2})`);
+        throw new Error(`Invalid redaction path (${path3})`);
       }
     }
     function validatePaths(paths) {
       if (!Array.isArray(paths)) {
         throw new TypeError("paths must be an array");
       }
-      for (const path2 of paths) {
-        validatePath(path2);
+      for (const path3 of paths) {
+        validatePath(path3);
       }
     }
     function slowRedact(options = {}) {
@@ -25059,8 +25059,8 @@ var require_redaction = __commonJS({
         if (shape[k] === null) {
           o[k] = (value) => topCensor(value, [k]);
         } else {
-          const wrappedCensor = typeof censor === "function" ? (value, path2) => {
-            return censor(value, [k, ...path2]);
+          const wrappedCensor = typeof censor === "function" ? (value, path3) => {
+            return censor(value, [k, ...path3]);
           } : censor;
           o[k] = Redact({
             paths: shape[k],
@@ -25278,10 +25278,10 @@ var require_atomic_sleep = __commonJS({
 var require_sonic_boom = __commonJS({
   "../../node_modules/.pnpm/sonic-boom@4.2.1/node_modules/sonic-boom/index.js"(exports, module) {
     "use strict";
-    var fs2 = __require("fs");
+    var fs3 = __require("fs");
     var EventEmitter = __require("events");
     var inherits = __require("util").inherits;
-    var path2 = __require("path");
+    var path3 = __require("path");
     var sleep = require_atomic_sleep();
     var assert = __require("assert");
     var BUSY_WRITE_TIMEOUT = 100;
@@ -25335,20 +25335,20 @@ var require_sonic_boom = __commonJS({
       const mode = sonic.mode;
       if (sonic.sync) {
         try {
-          if (sonic.mkdir) fs2.mkdirSync(path2.dirname(file), { recursive: true });
-          const fd = fs2.openSync(file, flags, mode);
+          if (sonic.mkdir) fs3.mkdirSync(path3.dirname(file), { recursive: true });
+          const fd = fs3.openSync(file, flags, mode);
           fileOpened(null, fd);
         } catch (err) {
           fileOpened(err);
           throw err;
         }
       } else if (sonic.mkdir) {
-        fs2.mkdir(path2.dirname(file), { recursive: true }, (err) => {
+        fs3.mkdir(path3.dirname(file), { recursive: true }, (err) => {
           if (err) return fileOpened(err);
-          fs2.open(file, flags, mode, fileOpened);
+          fs3.open(file, flags, mode, fileOpened);
         });
       } else {
-        fs2.open(file, flags, mode, fileOpened);
+        fs3.open(file, flags, mode, fileOpened);
       }
     }
     function SonicBoom(opts) {
@@ -25389,8 +25389,8 @@ var require_sonic_boom = __commonJS({
         this.flush = flushBuffer;
         this.flushSync = flushBufferSync;
         this._actualWrite = actualWriteBuffer;
-        fsWriteSync = () => fs2.writeSync(this.fd, this._writingBuf);
-        fsWrite = () => fs2.write(this.fd, this._writingBuf, this.release);
+        fsWriteSync = () => fs3.writeSync(this.fd, this._writingBuf);
+        fsWrite = () => fs3.write(this.fd, this._writingBuf, this.release);
       } else if (contentMode === void 0 || contentMode === kContentModeUtf8) {
         this._writingBuf = "";
         this.write = write;
@@ -25399,15 +25399,15 @@ var require_sonic_boom = __commonJS({
         this._actualWrite = actualWrite;
         fsWriteSync = () => {
           if (Buffer.isBuffer(this._writingBuf)) {
-            return fs2.writeSync(this.fd, this._writingBuf);
+            return fs3.writeSync(this.fd, this._writingBuf);
           }
-          return fs2.writeSync(this.fd, this._writingBuf, "utf8");
+          return fs3.writeSync(this.fd, this._writingBuf, "utf8");
         };
         fsWrite = () => {
           if (Buffer.isBuffer(this._writingBuf)) {
-            return fs2.write(this.fd, this._writingBuf, this.release);
+            return fs3.write(this.fd, this._writingBuf, this.release);
           }
-          return fs2.write(this.fd, this._writingBuf, "utf8", this.release);
+          return fs3.write(this.fd, this._writingBuf, "utf8", this.release);
         };
       } else {
         throw new Error(`SonicBoom supports "${kContentModeUtf8}" and "${kContentModeBuffer}", but passed ${contentMode}`);
@@ -25464,7 +25464,7 @@ var require_sonic_boom = __commonJS({
           }
         }
         if (this._fsync) {
-          fs2.fsyncSync(this.fd);
+          fs3.fsyncSync(this.fd);
         }
         const len = this._len;
         if (this._reopening) {
@@ -25578,7 +25578,7 @@ var require_sonic_boom = __commonJS({
       const onDrain = () => {
         if (!this._fsync) {
           try {
-            fs2.fsync(this.fd, (err) => {
+            fs3.fsync(this.fd, (err) => {
               this._flushPending = false;
               cb(err);
             });
@@ -25680,7 +25680,7 @@ var require_sonic_boom = __commonJS({
       const fd = this.fd;
       this.once("ready", () => {
         if (fd !== this.fd) {
-          fs2.close(fd, (err) => {
+          fs3.close(fd, (err) => {
             if (err) {
               return this.emit("error", err);
             }
@@ -25729,7 +25729,7 @@ var require_sonic_boom = __commonJS({
           buf = this._bufs[0];
         }
         try {
-          const n = Buffer.isBuffer(buf) ? fs2.writeSync(this.fd, buf) : fs2.writeSync(this.fd, buf, "utf8");
+          const n = Buffer.isBuffer(buf) ? fs3.writeSync(this.fd, buf) : fs3.writeSync(this.fd, buf, "utf8");
           const releasedBufObj = releaseWritingBuf(buf, this._len, n);
           buf = releasedBufObj.writingBuf;
           this._len = releasedBufObj.len;
@@ -25745,7 +25745,7 @@ var require_sonic_boom = __commonJS({
         }
       }
       try {
-        fs2.fsyncSync(this.fd);
+        fs3.fsyncSync(this.fd);
       } catch {
       }
     }
@@ -25766,7 +25766,7 @@ var require_sonic_boom = __commonJS({
           buf = mergeBuf(this._bufs[0], this._lens[0]);
         }
         try {
-          const n = fs2.writeSync(this.fd, buf);
+          const n = fs3.writeSync(this.fd, buf);
           buf = buf.subarray(n);
           this._len = Math.max(this._len - n, 0);
           if (buf.length <= 0) {
@@ -25794,13 +25794,13 @@ var require_sonic_boom = __commonJS({
       this._writingBuf = this._writingBuf.length ? this._writingBuf : this._bufs.shift() || "";
       if (this.sync) {
         try {
-          const written = Buffer.isBuffer(this._writingBuf) ? fs2.writeSync(this.fd, this._writingBuf) : fs2.writeSync(this.fd, this._writingBuf, "utf8");
+          const written = Buffer.isBuffer(this._writingBuf) ? fs3.writeSync(this.fd, this._writingBuf) : fs3.writeSync(this.fd, this._writingBuf, "utf8");
           release(null, written);
         } catch (err) {
           release(err);
         }
       } else {
-        fs2.write(this.fd, this._writingBuf, release);
+        fs3.write(this.fd, this._writingBuf, release);
       }
     }
     function actualWriteBuffer() {
@@ -25809,7 +25809,7 @@ var require_sonic_boom = __commonJS({
       this._writingBuf = this._writingBuf.length ? this._writingBuf : mergeBuf(this._bufs.shift(), this._lens.shift());
       if (this.sync) {
         try {
-          const written = fs2.writeSync(this.fd, this._writingBuf);
+          const written = fs3.writeSync(this.fd, this._writingBuf);
           release(null, written);
         } catch (err) {
           release(err);
@@ -25818,7 +25818,7 @@ var require_sonic_boom = __commonJS({
         if (kCopyBuffer) {
           this._writingBuf = Buffer.from(this._writingBuf);
         }
-        fs2.write(this.fd, this._writingBuf, release);
+        fs3.write(this.fd, this._writingBuf, release);
       }
     }
     function actualClose(sonic) {
@@ -25834,12 +25834,12 @@ var require_sonic_boom = __commonJS({
       sonic._lens = [];
       assert(typeof sonic.fd === "number", `sonic.fd must be a number, got ${typeof sonic.fd}`);
       try {
-        fs2.fsync(sonic.fd, closeWrapped);
+        fs3.fsync(sonic.fd, closeWrapped);
       } catch {
       }
       function closeWrapped() {
         if (sonic.fd !== 1 && sonic.fd !== 2) {
-          fs2.close(sonic.fd, done);
+          fs3.close(sonic.fd, done);
         } else {
           done();
         }
@@ -25873,10 +25873,10 @@ var require_on_exit_leak_free = __commonJS({
       exit: onExit,
       beforeExit: onBeforeExit
     };
-    var registry;
+    var registry2;
     function ensureRegistry() {
-      if (registry === void 0) {
-        registry = new FinalizationRegistry(clear);
+      if (registry2 === void 0) {
+        registry2 = new FinalizationRegistry(clear);
       }
     }
     function install(event) {
@@ -25891,7 +25891,7 @@ var require_on_exit_leak_free = __commonJS({
       }
       process.removeListener(event, functions[event]);
       if (refs.exit.length === 0 && refs.beforeExit.length === 0) {
-        registry = void 0;
+        registry2 = void 0;
       }
     }
     function onExit() {
@@ -25925,7 +25925,7 @@ var require_on_exit_leak_free = __commonJS({
       const ref = new WeakRef(obj);
       ref.fn = fn;
       ensureRegistry();
-      registry.register(obj, ref);
+      registry2.register(obj, ref);
       refs[event].push(ref);
     }
     function register(obj, fn) {
@@ -25935,10 +25935,10 @@ var require_on_exit_leak_free = __commonJS({
       _register("beforeExit", obj, fn);
     }
     function unregister(obj) {
-      if (registry === void 0) {
+      if (registry2 === void 0) {
         return;
       }
-      registry.unregister(obj);
+      registry2.unregister(obj);
       for (const event of ["exit", "beforeExit"]) {
         refs[event] = refs[event].filter((ref) => {
           const _obj = ref.deref();
@@ -26123,7 +26123,7 @@ var require_thread_stream = __commonJS({
     };
     var FinalizationRegistry2 = process.env.NODE_V8_COVERAGE ? FakeFinalizationRegistry : global.FinalizationRegistry || FakeFinalizationRegistry;
     var WeakRef2 = process.env.NODE_V8_COVERAGE ? FakeWeakRef : global.WeakRef || FakeWeakRef;
-    var registry = new FinalizationRegistry2((worker) => {
+    var registry2 = new FinalizationRegistry2((worker) => {
       if (worker.exited) {
         return;
       }
@@ -26151,7 +26151,7 @@ var require_thread_stream = __commonJS({
       worker.stream = new FakeWeakRef(stream);
       worker.on("message", onWorkerMessage);
       worker.on("exit", onWorkerExit);
-      registry.register(stream, worker);
+      registry2.register(stream, worker);
       return worker;
     }
     function drain(stream) {
@@ -26245,7 +26245,7 @@ var require_thread_stream = __commonJS({
       if (stream === void 0) {
         return;
       }
-      registry.unregister(stream);
+      registry2.unregister(stream);
       stream.worker.exited = true;
       stream.worker.off("exit", onWorkerExit);
       destroy(stream, code !== 0 ? new Error("the worker thread exited") : null);
@@ -28203,9 +28203,9 @@ var require_pino = __commonJS({
   "../../node_modules/.pnpm/pino@9.14.0/node_modules/pino/pino.js"(exports, module) {
     function pinoBundlerAbsolutePath(p) {
       try {
-        const path2 = __require("path");
+        const path3 = __require("path");
         const outputDir = "/home/runner/workspace/artifacts/api-server/dist";
-        return path2.resolve(outputDir, p.replace(/^\.\//, ""));
+        return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
         return f(p);
@@ -37377,11 +37377,11 @@ var require_mime_types2 = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path2) {
-      if (!path2 || typeof path2 !== "string") {
+    function lookup(path3) {
+      if (!path3 || typeof path3 !== "string") {
         return false;
       }
-      var extension2 = extname("x." + path2).toLowerCase().substr(1);
+      var extension2 = extname("x." + path3).toLowerCase().substr(1);
       if (!extension2) {
         return false;
       }
@@ -37890,19 +37890,19 @@ var require_utils4 = __commonJS({
       if (decode)
         return decode(data, hint);
     }
-    function basename(path2) {
-      if (typeof path2 !== "string")
+    function basename(path3) {
+      if (typeof path3 !== "string")
         return "";
-      for (let i = path2.length - 1; i >= 0; --i) {
-        switch (path2.charCodeAt(i)) {
+      for (let i = path3.length - 1; i >= 0; --i) {
+        switch (path3.charCodeAt(i)) {
           case 47:
           // '/'
           case 92:
-            path2 = path2.slice(i + 1);
-            return path2 === ".." || path2 === "." ? "" : path2;
+            path3 = path3.slice(i + 1);
+            return path3 === ".." || path3 === "." ? "" : path3;
         }
       }
-      return path2 === ".." || path2 === "." ? "" : path2;
+      return path3 === ".." || path3 === "." ? "" : path3;
     }
     var TOKEN = [
       0,
@@ -41759,12 +41759,12 @@ var require_make_middleware = __commonJS({
 // ../../node_modules/.pnpm/multer@2.2.0/node_modules/multer/storage/disk.js
 var require_disk = __commonJS({
   "../../node_modules/.pnpm/multer@2.2.0/node_modules/multer/storage/disk.js"(exports, module) {
-    var fs2 = __require("fs");
+    var fs3 = __require("fs");
     var os = __require("os");
-    var path2 = __require("path");
-    var crypto2 = __require("crypto");
+    var path3 = __require("path");
+    var crypto3 = __require("crypto");
     function getFilename(req, file, cb) {
-      crypto2.randomBytes(16, function(err, raw) {
+      crypto3.randomBytes(16, function(err, raw) {
         cb(err, err ? void 0 : raw.toString("hex"));
       });
     }
@@ -41774,7 +41774,7 @@ var require_disk = __commonJS({
     function DiskStorage(opts) {
       this.getFilename = opts.filename || getFilename;
       if (typeof opts.destination === "string") {
-        fs2.mkdirSync(opts.destination, { recursive: true });
+        fs3.mkdirSync(opts.destination, { recursive: true });
         this.getDestination = function($0, $1, cb) {
           cb(null, opts.destination);
         };
@@ -41788,9 +41788,9 @@ var require_disk = __commonJS({
         if (err) return cb(err);
         that.getFilename(req, file, function(err2, filename) {
           if (err2) return cb(err2);
-          var finalPath = path2.join(destination, filename);
+          var finalPath = path3.join(destination, filename);
           if (file.stream.destroyed) return;
-          var outStream = fs2.createWriteStream(finalPath);
+          var outStream = fs3.createWriteStream(finalPath);
           file.path = finalPath;
           file.stream.pipe(outStream);
           outStream.on("error", cb);
@@ -41806,11 +41806,11 @@ var require_disk = __commonJS({
       });
     };
     DiskStorage.prototype._removeFile = function _removeFile(req, file, cb) {
-      var path3 = file.path;
+      var path4 = file.path;
       delete file.destination;
       delete file.filename;
       delete file.path;
-      fs2.unlink(path3, cb);
+      fs3.unlink(path4, cb);
     };
     module.exports = function(opts) {
       return new DiskStorage(opts);
@@ -45697,8 +45697,8 @@ function getErrorMap() {
 
 // ../../node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path2, errorMaps, issueData } = params;
-  const fullPath = [...path2, ...issueData.path || []];
+  const { data, path: path3, errorMaps, issueData } = params;
+  const fullPath = [...path3, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -45813,11 +45813,11 @@ var errorUtil;
 
 // ../../node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path2, key) {
+  constructor(parent, value, path3, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path2;
+    this._path = path3;
     this._key = key;
   }
   get path() {
@@ -49804,11 +49804,17 @@ var health_default = router;
 
 // src/routes/botAdmin.ts
 var import_express2 = __toESM(require_express2(), 1);
+import fs2 from "fs";
+import path2 from "path";
+import crypto2 from "crypto";
+import { execFile } from "child_process";
+
+// src/queue/jobQueue.ts
+import crypto from "crypto";
+
+// src/lib/dataUtils.ts
 import fs from "fs";
 import path from "path";
-import crypto from "crypto";
-import { execFile } from "child_process";
-var router2 = (0, import_express2.Router)();
 var DATA_DIR = process.env.DATA_DIR ?? path.resolve(process.cwd(), "../../data");
 function dataFile(name) {
   return path.join(DATA_DIR, `${name}.json`);
@@ -49833,26 +49839,360 @@ function writeJson(name, data) {
   }
   fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
 }
+function now() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+
+// src/queue/jobQueue.ts
+var jobs = [];
+var initialised = false;
+var MAX_DONE_JOBS = 300;
+function _persist() {
+  writeJson("health_jobs", jobs);
+}
+function _ensureInit() {
+  if (initialised) return;
+  initialised = true;
+  const persisted = readJson("health_jobs", []) ?? [];
+  jobs = persisted.map(
+    (j) => j.status === "running" ? {
+      ...j,
+      status: "failed",
+      finishedAt: now(),
+      result: {
+        status: "error",
+        message: "Server kh\u1EDFi \u0111\u1ED9ng l\u1EA1i trong khi \u0111ang ki\u1EC3m tra",
+        responseTime: null
+      }
+    } : j
+  );
+  if (persisted.some((j) => j.status === "running")) {
+    _persist();
+  }
+}
+function enqueue(account) {
+  _ensureInit();
+  const existing = jobs.find(
+    (j) => j.accountId === account.id && (j.status === "queued" || j.status === "running")
+  );
+  if (existing) return existing;
+  const job = {
+    id: crypto.randomUUID().slice(0, 12),
+    accountId: account.id,
+    email: account.email,
+    type: account.type ?? "",
+    status: "queued",
+    createdAt: now(),
+    startedAt: null,
+    finishedAt: null,
+    result: null
+  };
+  jobs.push(job);
+  _persist();
+  return job;
+}
+function getNextQueued() {
+  _ensureInit();
+  return jobs.find((j) => j.status === "queued") ?? null;
+}
+function countRunning() {
+  _ensureInit();
+  return jobs.filter((j) => j.status === "running").length;
+}
+function updateJob(id, patch) {
+  _ensureInit();
+  const idx = jobs.findIndex((j) => j.id === id);
+  if (idx < 0) return;
+  jobs[idx] = { ...jobs[idx], ...patch };
+  _persist();
+}
+function getJobs(filter) {
+  _ensureInit();
+  let result = [...jobs];
+  if (filter?.accountId) {
+    result = result.filter((j) => j.accountId === filter.accountId);
+  }
+  if (filter?.status) {
+    const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+    result = result.filter((j) => statuses.includes(j.status));
+  }
+  return result.reverse();
+}
+function clearDoneJobs(accountId) {
+  _ensureInit();
+  if (accountId) {
+    jobs = jobs.filter(
+      (j) => !(j.accountId === accountId && (j.status === "done" || j.status === "failed"))
+    );
+  } else {
+    jobs = jobs.filter(
+      (j) => j.status === "queued" || j.status === "running"
+    );
+  }
+  _persist();
+}
+function trimOldJobs() {
+  _ensureInit();
+  const active = jobs.filter(
+    (j) => j.status === "queued" || j.status === "running"
+  );
+  const done = jobs.filter(
+    (j) => j.status === "done" || j.status === "failed"
+  );
+  if (done.length <= MAX_DONE_JOBS) return;
+  jobs = [...active, ...done.slice(-MAX_DONE_JOBS)];
+  _persist();
+}
+
+// src/checkers/grok.ts
+var grokPlugin = {
+  id: "grok",
+  name: "Grok AI (X / Twitter)",
+  async check(email, password, options = {}) {
+    const timeoutMs = options.timeoutMs ?? 6e4;
+    const start = Date.now();
+    let browser = null;
+    const elapsed = () => Date.now() - start;
+    try {
+      const { chromium } = await import("playwright");
+      browser = await chromium.launch({
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-blink-features=AutomationControlled",
+          "--window-size=1280,800"
+        ]
+      });
+      const ctx = await browser.newContext({
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        viewport: { width: 1280, height: 800 },
+        locale: "en-US",
+        timezoneId: "America/New_York"
+      });
+      await ctx.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", {
+          get: () => void 0
+        });
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+      });
+      const page = await ctx.newPage();
+      page.setDefaultTimeout(timeoutMs);
+      await page.goto("https://x.com/login", {
+        waitUntil: "domcontentloaded",
+        timeout: 3e4
+      });
+      await page.waitForTimeout(2e3);
+      const emailSel = 'input[autocomplete="username"], input[name="text"], input[type="text"]';
+      const emailInput = page.locator(emailSel).first();
+      await emailInput.waitFor({ state: "visible", timeout: 15e3 });
+      await emailInput.click();
+      await page.waitForTimeout(400);
+      await emailInput.fill(email);
+      await page.waitForTimeout(400);
+      await page.locator(
+        '[data-testid="LoginForm_Forward_Button"], [role="button"]:has-text("Next"), button:has-text("Next")'
+      ).first().click();
+      await page.waitForTimeout(2500);
+      const usernameConfirmInput = page.locator(
+        'input[data-testid="ocfEnterTextTextInput"]'
+      );
+      if (await usernameConfirmInput.isVisible({ timeout: 2500 }).catch(() => false)) {
+        const username = email.includes("@") ? email.split("@")[0] : email;
+        await usernameConfirmInput.fill(username);
+        await page.waitForTimeout(400);
+        await page.locator('[data-testid="ocfEnterTextNextButton"]').click().catch(() => page.keyboard.press("Enter"));
+        await page.waitForTimeout(2500);
+      }
+      const pwInput = page.locator('input[type="password"]').first();
+      const pwVisible = await pwInput.isVisible({ timeout: 12e3 }).catch(() => false);
+      if (!pwVisible) {
+        const url = page.url();
+        if (url.includes("/home")) {
+          return {
+            status: "healthy",
+            message: "\u0110\xE3 \u0111\u0103ng nh\u1EADp (phi\xEAn c\xF2n hi\u1EC7u l\u1EF1c)",
+            responseTime: elapsed()
+          };
+        }
+        return {
+          status: "error",
+          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 nh\u1EADp m\u1EADt kh\u1EA9u \u2014 URL: ${url.split("?")[0]}`,
+          responseTime: elapsed()
+        };
+      }
+      await pwInput.click();
+      await page.waitForTimeout(300);
+      await pwInput.fill(password);
+      await page.waitForTimeout(400);
+      const loginBtn = page.locator('[data-testid="LoginForm_Login_Button"]');
+      if (await loginBtn.isVisible({ timeout: 2e3 }).catch(() => false)) {
+        await loginBtn.click();
+      } else {
+        await pwInput.press("Enter");
+      }
+      await page.waitForTimeout(6e3);
+      const finalUrl = page.url();
+      const responseTime = elapsed();
+      if (finalUrl.includes("/home") || finalUrl.match(/x\.com\/?$/) || finalUrl.match(/twitter\.com\/?$/)) {
+        return {
+          status: "healthy",
+          message: `\u0110\u0103ng nh\u1EADp th\xE0nh c\xF4ng (${responseTime}ms)`,
+          responseTime
+        };
+      }
+      const hasFeed = await page.locator('[data-testid="primaryColumn"]').isVisible({ timeout: 2e3 }).catch(() => false);
+      if (hasFeed) {
+        return {
+          status: "healthy",
+          message: `\u0110\u0103ng nh\u1EADp th\xE0nh c\xF4ng (${responseTime}ms)`,
+          responseTime
+        };
+      }
+      const toastText = await page.locator('[data-testid="toast"], [role="alert"]').first().textContent({ timeout: 2e3 }).catch(() => "");
+      if (finalUrl.includes("/login") || finalUrl.includes("/i/flow/login")) {
+        if (toastText && /wrong|incorrect|didn't match/i.test(toastText)) {
+          return {
+            status: "unhealthy",
+            message: "Sai m\u1EADt kh\u1EA9u",
+            responseTime,
+            detail: toastText.trim()
+          };
+        }
+        if (toastText && /too many|rate limit|unusual/i.test(toastText)) {
+          return {
+            status: "error",
+            message: `Rate-limited / Ho\u1EA1t \u0111\u1ED9ng b\u1EA5t th\u01B0\u1EDDng \u2014 ${toastText.trim().slice(0, 100)}`,
+            responseTime
+          };
+        }
+        return {
+          status: "unhealthy",
+          message: toastText ? `\u0110\u0103ng nh\u1EADp th\u1EA5t b\u1EA1i: ${toastText.trim().slice(0, 120)}` : "\u0110\u0103ng nh\u1EADp th\u1EA5t b\u1EA1i (kh\xF4ng r\xF5 l\xFD do)",
+          responseTime
+        };
+      }
+      if (finalUrl.includes("challenge") || finalUrl.includes("verification") || finalUrl.includes("/i/flow/")) {
+        return {
+          status: "unhealthy",
+          message: `Y\xEAu c\u1EA7u x\xE1c minh (2FA / s\u1ED1 \u0111i\u1EC7n tho\u1EA1i) \u2014 ${finalUrl.split("?")[0]}`,
+          responseTime
+        };
+      }
+      const bodySnippet = await page.locator("body").innerText().catch(() => "");
+      if (/suspended|account has been suspended/i.test(bodySnippet)) {
+        return {
+          status: "unhealthy",
+          message: "T\xE0i kho\u1EA3n b\u1ECB t\u1EA1m ng\u1EEBng (suspended)",
+          responseTime
+        };
+      }
+      return {
+        status: "error",
+        message: `Kh\xF4ng x\xE1c \u0111\u1ECBnh \u0111\u01B0\u1EE3c tr\u1EA1ng th\xE1i \u2014 URL: ${finalUrl.split("?")[0]}`,
+        responseTime
+      };
+    } catch (e) {
+      const responseTime = elapsed();
+      const msg = e?.message ?? String(e);
+      if (/timeout/i.test(msg)) {
+        return {
+          status: "error",
+          message: `Timeout sau ${timeoutMs}ms`,
+          responseTime
+        };
+      }
+      if (/Executable doesn't exist|browserType\.launch/i.test(msg)) {
+        return {
+          status: "error",
+          message: "Chromium ch\u01B0a \u0111\u01B0\u1EE3c c\xE0i \u0111\u1EB7t. Ch\u1EA1y: npx playwright install chromium --with-deps",
+          responseTime
+        };
+      }
+      return {
+        status: "error",
+        message: `Playwright error: ${msg.slice(0, 200)}`,
+        responseTime
+      };
+    } finally {
+      await browser?.close().catch(() => {
+      });
+    }
+  }
+};
+var grok_default = grokPlugin;
+
+// src/checkers/index.ts
+var registry = /* @__PURE__ */ new Map();
+function registerAll(plugins) {
+  for (const p of plugins) {
+    registry.set(p.id.toLowerCase(), p);
+  }
+}
+function getPlugin(accountType) {
+  return registry.get((accountType ?? "").toLowerCase().trim());
+}
+function listPlugins() {
+  return [...registry.values()];
+}
+registerAll([
+  grok_default
+  // Add more here as they are implemented:
+  // chatgptPlugin,
+  // geminiPlugin,
+  // claudePlugin,
+]);
+
+// src/routes/botAdmin.ts
+var router2 = (0, import_express2.Router)();
+var DATA_DIR2 = process.env.DATA_DIR ?? path2.resolve(process.cwd(), "../../data");
+function dataFile2(name) {
+  return path2.join(DATA_DIR2, `${name}.json`);
+}
+function readJson2(name, fallback = null) {
+  const file = dataFile2(name);
+  if (!fs2.existsSync(file)) return fallback;
+  try {
+    return JSON.parse(fs2.readFileSync(file, "utf-8"));
+  } catch {
+    return fallback;
+  }
+}
+function writeJson2(name, data) {
+  fs2.mkdirSync(DATA_DIR2, { recursive: true });
+  const file = dataFile2(name);
+  if (fs2.existsSync(file)) {
+    try {
+      fs2.copyFileSync(file, dataFile2(name + ".bak"));
+    } catch {
+    }
+  }
+  fs2.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+}
 function addLog(action, user = "", admin = "") {
-  const logs = readJson("logs", []) ?? [];
+  const logs = readJson2("logs", []) ?? [];
   logs.push({ time: (/* @__PURE__ */ new Date()).toISOString(), action, user, admin });
   if (logs.length > 1e3) logs.splice(0, logs.length - 1e3);
-  writeJson("logs", logs);
+  writeJson2("logs", logs);
 }
-function now() {
+function now2() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
 function normalizeAccount(acc) {
   if (!acc || typeof acc !== "object") {
-    return { id: crypto.randomUUID().slice(0, 8), email: String(acc), password: "", status: "available", type: "", note: "", addedAt: now(), distributedTo: null, distributedAt: null };
+    return { id: crypto2.randomUUID().slice(0, 8), email: String(acc), password: "", status: "available", type: "", note: "", addedAt: now2(), distributedTo: null, distributedAt: null };
   }
   return {
-    id: acc.id ?? crypto.randomUUID().slice(0, 8),
+    id: acc.id ?? crypto2.randomUUID().slice(0, 8),
     type: acc.type ?? "",
     email: acc.email ?? "",
     password: acc.password ?? "",
     note: acc.note ?? "",
-    addedAt: acc.addedAt ?? now(),
+    addedAt: acc.addedAt ?? now2(),
     status: acc.status ?? "available",
     distributedTo: acc.distributedTo ?? null,
     distributedAt: acc.distributedAt ?? null
@@ -49887,7 +50227,7 @@ function readSettings() {
     refund_custom_text: "",
     require_channel_check: false
   };
-  return { ...defaults, ...readJson("settings", {}) ?? {} };
+  return { ...defaults, ...readJson2("settings", {}) ?? {} };
 }
 function settingsToApi(s) {
   return {
@@ -49915,15 +50255,15 @@ router2.post("/bot/auth", (req, res) => {
 });
 router2.get("/bot/stats", requireAuth, (_req, res) => {
   const s = readSettings();
-  const users = readJson("users", {}) ?? {};
-  const accounts = (readJson("accounts", []) ?? []).map(normalizeAccount);
-  const banned = readJson("banned_users", []) ?? [];
-  const claimed = readJson("claimed_users", {}) ?? {};
-  const orders = readJson("orders", {}) ?? {};
-  const warranty = readJson("warranty_requests", []) ?? [];
+  const users = readJson2("users", {}) ?? {};
+  const accounts = (readJson2("accounts", []) ?? []).map(normalizeAccount);
+  const banned = readJson2("banned_users", []) ?? [];
+  const claimed = readJson2("claimed_users", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
+  const warranty = readJson2("warranty_requests", []) ?? [];
   const roundClaims = claimed[s.round_id] ?? {};
   const stock = accounts.filter((a) => a.status === "available").length;
-  const ns = readJson("notification_settings", {}) ?? {};
+  const ns = readJson2("notification_settings", {}) ?? {};
   const urgentMinutes = ns.urgentMinutes ?? 30;
   const nowMs = Date.now();
   res.json({
@@ -49947,13 +50287,13 @@ router2.get("/bot/stats", requireAuth, (_req, res) => {
 });
 router2.get("/bot/notification-settings", requireAuth, (_req, res) => {
   const defaults = { enabled: true, adminIds: [], reminderEnabled: true, reminder1Minutes: 5, reminder2Minutes: 15, urgentMinutes: 30 };
-  const stored = readJson("notification_settings", {}) ?? {};
+  const stored = readJson2("notification_settings", {}) ?? {};
   res.json({ ...defaults, ...stored });
 });
 router2.put("/bot/notification-settings", requireAuth, (req, res) => {
-  const current = readJson("notification_settings", {}) ?? {};
+  const current = readJson2("notification_settings", {}) ?? {};
   const updated = { ...current, ...req.body };
-  writeJson("notification_settings", updated);
+  writeJson2("notification_settings", updated);
   addLog("NOTIF_SETTINGS_UPDATE", JSON.stringify(updated).slice(0, 120), "web-admin");
   res.json(updated);
 });
@@ -49961,7 +50301,7 @@ router2.get("/bot/settings", requireAuth, (_req, res) => {
   res.json(settingsToApi(readSettings()));
 });
 router2.put("/bot/settings", requireAuth, (req, res) => {
-  const s = readJson("settings", {}) ?? {};
+  const s = readJson2("settings", {}) ?? {};
   const b = req.body ?? {};
   const map = {
     shopLink: "shop_link",
@@ -49980,33 +50320,33 @@ router2.put("/bot/settings", requireAuth, (req, res) => {
   for (const [k, v] of Object.entries(map)) {
     if (b[k] !== void 0) s[v] = k === "cooldownHours" ? Number(b[k]) : b[k];
   }
-  writeJson("settings", s);
+  writeJson2("settings", s);
   addLog("UPDATE_SETTINGS", "", "web-admin");
   res.json(settingsToApi({ ...readSettings(), ...s }));
 });
 router2.get("/bot/accounts", requireAuth, (_req, res) => {
-  const accounts = (readJson("accounts", []) ?? []).map(normalizeAccount);
+  const accounts = (readJson2("accounts", []) ?? []).map(normalizeAccount);
   res.json(accounts);
 });
 router2.post("/bot/accounts", requireAuth, (req, res) => {
   const incoming = Array.isArray(req.body?.accounts) ? req.body.accounts : [];
-  const accounts = (readJson("accounts", []) ?? []).map(normalizeAccount);
+  const accounts = (readJson2("accounts", []) ?? []).map(normalizeAccount);
   const existing = new Set(accounts.map((a) => a.email));
   let added = 0;
   for (const acc of incoming) {
     if (acc.email && !existing.has(acc.email)) {
-      accounts.push(normalizeAccount({ ...acc, addedAt: now(), status: "available" }));
+      accounts.push(normalizeAccount({ ...acc, addedAt: now2(), status: "available" }));
       existing.add(acc.email);
       added++;
     }
   }
-  writeJson("accounts", accounts);
+  writeJson2("accounts", accounts);
   addLog("ADD_ACCOUNTS", `added=${added}`, "web-admin");
   res.json({ added, total: accounts.length });
 });
 router2.put("/bot/accounts/:email", requireAuth, (req, res) => {
   const email = decodeURIComponent(req.params.email);
-  const accounts = (readJson("accounts", []) ?? []).map(normalizeAccount);
+  const accounts = (readJson2("accounts", []) ?? []).map(normalizeAccount);
   const idx = accounts.findIndex((a) => a.email === email);
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
@@ -50016,23 +50356,23 @@ router2.put("/bot/accounts/:email", requireAuth, (req, res) => {
   for (const k of allowed) {
     if (req.body[k] !== void 0) accounts[idx][k] = req.body[k];
   }
-  writeJson("accounts", accounts);
+  writeJson2("accounts", accounts);
   res.json({ ok: true, message: "\u0110\xE3 c\u1EADp nh\u1EADt" });
 });
 router2.delete("/bot/accounts/:email", requireAuth, (req, res) => {
   const email = decodeURIComponent(req.params.email);
-  const accounts = (readJson("accounts", []) ?? []).map(normalizeAccount);
+  const accounts = (readJson2("accounts", []) ?? []).map(normalizeAccount);
   const filtered = accounts.filter((a) => a.email !== email);
   if (filtered.length === accounts.length) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
     return;
   }
-  writeJson("accounts", filtered);
+  writeJson2("accounts", filtered);
   addLog("DELETE_ACCOUNT", email, "web-admin");
   res.json({ ok: true, message: `\u0110\xE3 xo\xE1 ${email}` });
 });
 router2.get("/bot/users", requireAuth, (_req, res) => {
-  const users = readJson("users", {}) ?? {};
+  const users = readJson2("users", {}) ?? {};
   const result = Object.entries(users).map(([uid, u]) => ({
     userId: uid,
     username: u.username ?? "",
@@ -50048,50 +50388,50 @@ router2.get("/bot/users", requireAuth, (_req, res) => {
 });
 router2.post("/bot/users/:userId/ban", requireAuth, (req, res) => {
   const uid = req.params.userId;
-  const banned = readJson("banned_users", []) ?? [];
+  const banned = readJson2("banned_users", []) ?? [];
   if (!banned.includes(uid)) banned.push(uid);
-  writeJson("banned_users", banned);
-  const users = readJson("users", {}) ?? {};
+  writeJson2("banned_users", banned);
+  const users = readJson2("users", {}) ?? {};
   if (users[uid]) {
     users[uid].banned = true;
-    writeJson("users", users);
+    writeJson2("users", users);
   }
   addLog("BAN", uid, "web-admin");
   res.json({ ok: true, message: `\u0110\xE3 ch\u1EB7n ${uid}` });
 });
 router2.post("/bot/users/:userId/unban", requireAuth, (req, res) => {
   const uid = req.params.userId;
-  const banned = (readJson("banned_users", []) ?? []).filter((b) => b !== uid);
-  writeJson("banned_users", banned);
-  const users = readJson("users", {}) ?? {};
+  const banned = (readJson2("banned_users", []) ?? []).filter((b) => b !== uid);
+  writeJson2("banned_users", banned);
+  const users = readJson2("users", {}) ?? {};
   if (users[uid]) {
     users[uid].banned = false;
-    writeJson("users", users);
+    writeJson2("users", users);
   }
   addLog("UNBAN", uid, "web-admin");
   res.json({ ok: true, message: `\u0110\xE3 b\u1ECF ch\u1EB7n ${uid}` });
 });
 router2.post("/bot/users/:userId/reset-gift", requireAuth, (req, res) => {
   const uid = req.params.userId;
-  const users = readJson("users", {}) ?? {};
+  const users = readJson2("users", {}) ?? {};
   if (!users[uid]) {
     res.status(404).json({ ok: false, message: "User kh\xF4ng t\u1ED3n t\u1EA1i" });
     return;
   }
   users[uid].has_received_gift = false;
   users[uid].gift_received = null;
-  writeJson("users", users);
+  writeJson2("users", users);
   addLog("RESET_GIFT", uid, "web-admin");
   res.json({ ok: true, message: `\u0110\xE3 reset qu\xE0 cho ${uid}` });
 });
 router2.get("/bot/logs", requireAuth, (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 100), 500);
-  const logs = readJson("logs", []) ?? [];
+  const logs = readJson2("logs", []) ?? [];
   res.json(logs.slice(-limit).reverse());
 });
 router2.get("/bot/receivers", requireAuth, (_req, res) => {
   const s = readSettings();
-  const claimed = readJson("claimed_users", {}) ?? {};
+  const claimed = readJson2("claimed_users", {}) ?? {};
   const roundClaims = claimed[s.round_id] ?? {};
   const result = Object.values(roundClaims).map((r) => ({
     userId: String(r.user_id ?? ""),
@@ -50109,9 +50449,9 @@ router2.post("/bot/broadcast", requireAuth, (req, res) => {
     res.status(400).json({ ok: false, message: "message l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
-  const pending = readJson("pending_broadcasts", []) ?? [];
-  pending.push({ message, target, queued_at: now() });
-  writeJson("pending_broadcasts", pending);
+  const pending = readJson2("pending_broadcasts", []) ?? [];
+  pending.push({ message, target, queued_at: now2() });
+  writeJson2("pending_broadcasts", pending);
   addLog("QUEUE_BROADCAST", `target=${target}`, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 th\xEAm v\xE0o h\xE0ng \u0111\u1EE3i" });
 });
@@ -50121,30 +50461,30 @@ router2.post("/bot/round", requireAuth, (req, res) => {
     res.status(400).json({ ok: false, message: "roundId l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
-  const s = readJson("settings", {}) ?? {};
+  const s = readJson2("settings", {}) ?? {};
   const oldRound = s.round_id ?? "dot1";
   s.round_id = roundId;
-  writeJson("settings", s);
-  const claimed = readJson("claimed_users", {}) ?? {};
+  writeJson2("settings", s);
+  const claimed = readJson2("claimed_users", {}) ?? {};
   delete claimed[oldRound];
-  writeJson("claimed_users", claimed);
+  writeJson2("claimed_users", claimed);
   addLog("NEW_ROUND", roundId, "web-admin");
   res.json({ ok: true, message: `\u0110\xE3 m\u1EDF \u0111\u1EE3t m\u1EDBi: ${roundId}` });
 });
 router2.get("/bot/orders", requireAuth, (_req, res) => {
-  const orders = readJson("orders", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
   res.json(Object.values(orders));
 });
 router2.post("/bot/orders", requireAuth, (req, res) => {
   const body = req.body ?? {};
-  const orders = readJson("orders", {}) ?? {};
-  const orderId = body.orderCode ? String(body.orderCode).trim().toUpperCase() : "ORD" + crypto.randomUUID().slice(0, 6).toUpperCase();
+  const orders = readJson2("orders", {}) ?? {};
+  const orderId = body.orderCode ? String(body.orderCode).trim().toUpperCase() : "ORD" + crypto2.randomUUID().slice(0, 6).toUpperCase();
   const { orderCode: _oc, ...rest } = body;
-  const order = { ...rest, orderId, createdAt: now() };
+  const order = { ...rest, orderId, createdAt: now2() };
   orders[orderId] = order;
-  writeJson("orders", orders);
+  writeJson2("orders", orders);
   if (order.email) {
-    const orderItems = readJson("order_items", {}) ?? {};
+    const orderItems = readJson2("order_items", {}) ?? {};
     if (!orderItems[orderId]) orderItems[orderId] = [];
     const alreadyExists = orderItems[orderId].some(
       (it) => it.email?.toLowerCase() === order.email.toLowerCase()
@@ -50164,21 +50504,21 @@ router2.post("/bot/orders", requireAuth, (req, res) => {
         itemWarrantyEnd = (order.warrantyExpiry || order.warrantyDate || "").slice(0, 10) || null;
       }
       orderItems[orderId].push({
-        itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
+        itemId: crypto2.randomUUID().slice(0, 8).toUpperCase(),
         email: order.email,
         original_account: order.email,
         current_account: order.email,
         current_replacement_number: 0,
-        original_delivered_at: order.purchaseDate || now(),
+        original_delivered_at: order.purchaseDate || now2(),
         warranty_days: itemWd || null,
         warranty_end_date: itemWarrantyEnd,
         item_status: order.status ?? "active",
         password: order.password ?? null,
         twoFA: order.twoFA ?? null,
         status: order.status ?? "active",
-        createdAt: now()
+        createdAt: now2()
       });
-      writeJson("order_items", orderItems);
+      writeJson2("order_items", orderItems);
     }
   }
   addLog("CREATE_ORDER", orderId, "web-admin");
@@ -50191,8 +50531,8 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
     res.status(400).json({ ok: false, message: "productName, purchaseDate v\xE0 accounts l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
-  const orders = readJson("orders", {}) ?? {};
-  const orderItems = readJson("order_items", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
+  const orderItems = readJson2("order_items", {}) ?? {};
   const errors = [];
   let added = 0, skipped = 0;
   if (orderCode) {
@@ -50219,7 +50559,7 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
         notes: notes ?? null,
         status: status ?? "active",
         quantity: 0,
-        createdAt: now()
+        createdAt: now2()
       };
     }
     if (!orderItems[sharedId]) orderItems[sharedId] = [];
@@ -50247,26 +50587,26 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
       }
       if (!bWarrantyEnd && warrantyExpiry) bWarrantyEnd = warrantyExpiry.slice(0, 10) || null;
       orderItems[sharedId].push({
-        itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
+        itemId: crypto2.randomUUID().slice(0, 8).toUpperCase(),
         email,
         original_account: email,
         current_account: email,
         current_replacement_number: 0,
-        original_delivered_at: purchaseDate || now(),
+        original_delivered_at: purchaseDate || now2(),
         warranty_days: bWd || null,
         warranty_end_date: bWarrantyEnd,
         item_status: "active",
         password: acc.password || null,
         twoFA: acc.twoFA || null,
         status: "active",
-        createdAt: now()
+        createdAt: now2()
       });
       existingItemEmails.add(email.toLowerCase());
       added++;
     }
     orders[sharedId].quantity = orderItems[sharedId].length;
-    writeJson("orders", orders);
-    writeJson("order_items", orderItems);
+    writeJson2("orders", orders);
+    writeJson2("order_items", orderItems);
     addLog("BULK_CREATE_ORDERS", `orderCode=${sharedId} added=${added} skipped=${skipped}`, "web-admin");
     return res.json({ added, skipped, errors, orderId: sharedId });
   }
@@ -50285,7 +50625,7 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
       skipped++;
       continue;
     }
-    const orderId = "ORD" + crypto.randomUUID().slice(0, 6).toUpperCase();
+    const orderId = "ORD" + crypto2.randomUUID().slice(0, 6).toUpperCase();
     orders[orderId] = {
       orderId,
       email,
@@ -50300,7 +50640,7 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
       warrantyPeriod: warrantyPeriod ?? null,
       notes: notes ?? null,
       status: "active",
-      createdAt: now()
+      createdAt: now2()
     };
     if (!orderItems[orderId]) orderItems[orderId] = [];
     const lWd = Number(warrantyDays || 0);
@@ -50315,25 +50655,25 @@ router2.post("/bot/orders/bulk", requireAuth, (req, res) => {
     }
     if (!lWarrantyEnd && warrantyExpiry) lWarrantyEnd = warrantyExpiry.slice(0, 10) || null;
     orderItems[orderId].push({
-      itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
+      itemId: crypto2.randomUUID().slice(0, 8).toUpperCase(),
       email,
       original_account: email,
       current_account: email,
       current_replacement_number: 0,
-      original_delivered_at: purchaseDate || now(),
+      original_delivered_at: purchaseDate || now2(),
       warranty_days: lWd || null,
       warranty_end_date: lWarrantyEnd,
       item_status: "active",
       password: acc.password || null,
       twoFA: acc.twoFA || null,
       status: "active",
-      createdAt: now()
+      createdAt: now2()
     });
     existingEmails.add(email.toLowerCase());
     added++;
   }
-  writeJson("orders", orders);
-  writeJson("order_items", orderItems);
+  writeJson2("orders", orders);
+  writeJson2("order_items", orderItems);
   addLog("BULK_CREATE_ORDERS", `added=${added} skipped=${skipped}`, "web-admin");
   res.json({ added, skipped, errors });
 });
@@ -50343,8 +50683,8 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
     res.status(400).json({ ok: false, message: "rows is required" });
     return;
   }
-  const orders = readJson("orders", {}) ?? {};
-  const orderItems = readJson("order_items", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
+  const orderItems = readJson2("order_items", {}) ?? {};
   const existingItemEmails = /* @__PURE__ */ new Set();
   for (const itemList of Object.values(orderItems)) {
     for (const it of itemList) {
@@ -50411,8 +50751,8 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
         usageDays: ud || null,
         customerName: customerName || null,
         status: status || "active",
-        createdAt: existingOrder?.createdAt ?? now(),
-        updatedAt: now()
+        createdAt: existingOrder?.createdAt ?? now2(),
+        updatedAt: now2()
       };
       if (!existingOrder) {
         orders[orderId] = orderObj;
@@ -50449,7 +50789,7 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
             dupAccountsTotal++;
             continue;
           }
-          const delAt = (originalDeliveredAt || purchaseDate || "").slice(0, 10) || now().slice(0, 10);
+          const delAt = (originalDeliveredAt || purchaseDate || "").slice(0, 10) || now2().slice(0, 10);
           let warrantyEnd = (warrantyEndDate || "").slice(0, 10) || null;
           if (!warrantyEnd && delAt && wd) {
             try {
@@ -50460,7 +50800,7 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
             }
           }
           orderItems[orderId].push({
-            itemId: crypto.randomUUID().slice(0, 8).toUpperCase(),
+            itemId: crypto2.randomUUID().slice(0, 8).toUpperCase(),
             email,
             original_account: email,
             current_account: email,
@@ -50472,7 +50812,7 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
             password: acc.password || null,
             twoFA: acc.twoFA || null,
             status: "active",
-            createdAt: now()
+            createdAt: now2()
           });
           existingItemEmails.add(emailLower);
           orderEmailSet.add(emailLower);
@@ -50480,8 +50820,8 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
         }
       }
       orders[orderId].quantity = orderItems[orderId].length;
-      writeJson("orders", orders);
-      writeJson("order_items", orderItems);
+      writeJson2("orders", orders);
+      writeJson2("order_items", orderItems);
       addLog("XLSX_IMPORT_ORDER", orderId, "web-admin");
       if (!existingOrder) {
         newCount++;
@@ -50500,7 +50840,7 @@ router2.post("/bot/orders/xlsx-import", requireAuth, (req, res) => {
   res.json({ ok: true, new: newCount, updated: updatedCount, unchanged: unchangedCount, success: newCount + updatedCount, failed: failCount, skipped: skippedCount, accountsAdded, dupOrders, dupAccounts: dupAccountsTotal, results });
 });
 router2.get("/bot/orders/:orderId", requireAuth, (req, res) => {
-  const orders = readJson("orders", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
   const order = orders[req.params.orderId];
   if (!order) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng" });
@@ -50509,26 +50849,26 @@ router2.get("/bot/orders/:orderId", requireAuth, (req, res) => {
   res.json(order);
 });
 router2.put("/bot/orders/:orderId", requireAuth, (req, res) => {
-  const orders = readJson("orders", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
   const id = req.params.orderId;
   if (!orders[id]) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng" });
     return;
   }
-  orders[id] = { ...orders[id], ...req.body, orderId: id, updatedAt: now() };
-  writeJson("orders", orders);
+  orders[id] = { ...orders[id], ...req.body, orderId: id, updatedAt: now2() };
+  writeJson2("orders", orders);
   addLog("UPDATE_ORDER", id, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 c\u1EADp nh\u1EADt" });
 });
 router2.delete("/bot/orders/:orderId", requireAuth, (req, res) => {
-  const orders = readJson("orders", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
   const id = req.params.orderId;
   if (!orders[id]) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
     return;
   }
   delete orders[id];
-  writeJson("orders", orders);
+  writeJson2("orders", orders);
   addLog("DELETE_ORDER", id, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 xo\xE1" });
 });
@@ -50537,7 +50877,7 @@ function _recomputeGroupStatus(req) {
   const statuses = accs.map((a) => a.status ?? "pending");
   if (statuses.length > 0 && statuses.every((s) => ["resolved", "rejected"].includes(s))) {
     req.status = "resolved";
-    if (!req.resolvedAt) req.resolvedAt = now();
+    if (!req.resolvedAt) req.resolvedAt = now2();
     req.reminderEnabled = false;
     req.nextReminderAt = null;
     req.reminderProcessing = false;
@@ -50546,7 +50886,7 @@ function _recomputeGroupStatus(req) {
   }
 }
 router2.get("/bot/warranty", requireAuth, (_req, res) => {
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   res.json(requests.sort((a, b) => b.submittedAt?.localeCompare(a.submittedAt ?? "") ?? 0));
 });
 var TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
@@ -50567,7 +50907,7 @@ async function sendTelegramMessage(userId, message) {
   }
 }
 function buildReplacementMessage(req_, email, password, twoFA, note) {
-  const userLang = req_.userLang ?? readJson("user_states", {})?.[req_.userId]?.lang ?? "vi";
+  const userLang = req_.userLang ?? readJson2("user_states", {})?.[req_.userId]?.lang ?? "vi";
   const isEN = userLang === "en";
   const lines = [];
   if (isEN) {
@@ -50606,7 +50946,7 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
     res.status(400).json({ ok: false, message: "Email v\xE0 m\u1EADt kh\u1EA9u l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id);
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
@@ -50618,18 +50958,18 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
     replacementPassword: password,
     replacementTwoFA: twoFA || null,
     replacementNote: note || null,
-    resolvedAt: now(),
+    resolvedAt: now2(),
     resolvedBy: "web-admin"
   };
   const message = buildReplacementMessage(req_, email, password, twoFA, note);
   const result = await sendTelegramMessage(req_.userId, message);
-  const orders = readJson("orders", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
   if (req_.orderId && orders[req_.orderId]) {
     orders[req_.orderId].status = "warranted";
-    writeJson("orders", orders);
+    writeJson2("orders", orders);
   }
   if (req_.orderId && req_.email) {
-    const orderItems = readJson("order_items", {}) ?? {};
+    const orderItems = readJson2("order_items", {}) ?? {};
     const itemList = orderItems[req_.orderId] ?? [];
     const prevEmailLower = (req_.email || "").toLowerCase();
     const itemIdx = itemList.findIndex(
@@ -50638,10 +50978,10 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
     if (itemIdx !== -1) {
       const item = itemList[itemIdx];
       const repNumber = (item.current_replacement_number ?? 0) + 1;
-      const allReps = readJson("account_replacements", {}) ?? {};
+      const allReps = readJson2("account_replacements", {}) ?? {};
       if (!allReps[item.itemId]) allReps[item.itemId] = [];
       allReps[item.itemId].push({
-        id: crypto.randomUUID().slice(0, 12),
+        id: crypto2.randomUUID().slice(0, 12),
         orderId: req_.orderId,
         orderItemId: item.itemId,
         previousAccount: item.current_account || item.email || "",
@@ -50649,14 +50989,14 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
         newPassword: password,
         newTwoFA: twoFA || null,
         replacementNumber: repNumber,
-        deliveredAt: now(),
+        deliveredAt: now2(),
         reason: note || "",
         supportTicketId: id,
         createdBy: "web-admin",
-        createdAt: now(),
+        createdAt: now2(),
         status: "delivered"
       });
-      writeJson("account_replacements", allReps);
+      writeJson2("account_replacements", allReps);
       itemList[itemIdx] = {
         ...item,
         current_account: email,
@@ -50664,28 +51004,28 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
         current_two_fa: twoFA || null,
         current_replacement_number: repNumber,
         item_status: "active",
-        updatedAt: now()
+        updatedAt: now2()
       };
       orderItems[req_.orderId] = itemList;
-      writeJson("order_items", orderItems);
+      writeJson2("order_items", orderItems);
     }
   }
   const reminderOff = { reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   if (result.ok) {
-    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "resolved", resolution: `replacement:${email}`, sentStatus: "sent", sentAt: now(), sentError: null };
-    writeJson("warranty_requests", requests);
+    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "resolved", resolution: `replacement:${email}`, sentStatus: "sent", sentAt: now2(), sentError: null };
+    writeJson2("warranty_requests", requests);
     addLog("WARRANTY_REPLACEMENT", `${id} \u2192 ${email} | sent OK`, "web-admin");
     res.json({ ok: true, sentStatus: "sent", message: "\u0110\xE3 g\u1EEDi t\xE0i kho\u1EA3n thay th\u1EBF cho kh\xE1ch" });
   } else {
     requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "send_failed", resolution: `replacement:${email}`, sentStatus: "failed", sentError: result.error, sentAt: null };
-    writeJson("warranty_requests", requests);
+    writeJson2("warranty_requests", requests);
     addLog("WARRANTY_REPLACEMENT_FAIL", `${id} \u2192 ${email} | ${result.error}`, "web-admin");
     res.json({ ok: false, sentStatus: "failed", message: `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
   }
 });
 router2.post("/bot/warranty/:id/resend-ack", requireAuth, async (req, res) => {
   const { id } = req.params;
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id);
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
@@ -50704,13 +51044,13 @@ M\xE3 \u0111\u01A1n: <code>${orderId}</code>
 Shop \u0111\xE3 nh\u1EADn \u0111\u01B0\u1EE3c y\xEAu c\u1EA7u b\u1EA3o h\xE0nh c\u1EE7a b\u1EA1n v\xE0 \u0111ang ti\u1EBFn h\xE0nh ki\u1EC3m tra. K\u1EBFt qu\u1EA3 x\u1EED l\xFD s\u1EBD \u0111\u01B0\u1EE3c bot th\xF4ng b\xE1o ngay khi ho\xE0n t\u1EA5t. Vui l\xF2ng ch\u1EDD v\xE0 kh\xF4ng g\u1EEDi l\u1EA1i y\xEAu c\u1EA7u tr\xF9ng l\u1EB7p.`;
   const result = await sendTelegramMessage(req_.userId, msg);
   if (result.ok) {
-    requests[idx] = { ...req_, ackNotifSentStatus: "sent", ackNotifSentAt: now(), ackNotifError: null };
-    writeJson("warranty_requests", requests);
+    requests[idx] = { ...req_, ackNotifSentStatus: "sent", ackNotifSentAt: now2(), ackNotifError: null };
+    writeJson2("warranty_requests", requests);
     addLog("WARRANTY_ACK_RESEND", `${id} \u2192 sent OK`, "web-admin");
     res.json({ ok: true, message: "\u0110\xE3 g\u1EEDi l\u1EA1i th\xF4ng b\xE1o ti\u1EBFp nh\u1EADn cho kh\xE1ch" });
   } else {
     requests[idx] = { ...req_, ackNotifSentStatus: "failed", ackNotifError: result.error };
-    writeJson("warranty_requests", requests);
+    writeJson2("warranty_requests", requests);
     res.json({ ok: false, message: `G\u1EEDi l\u1EA1i th\u1EA5t b\u1EA1i: ${result.error}` });
   }
 });
@@ -50721,7 +51061,7 @@ router2.post("/bot/warranty/:id/accounts/:accId/replacement", requireAuth, async
     res.status(400).json({ ok: false, message: "Email v\xE0 m\u1EADt kh\u1EA9u l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id && r.type === "group");
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
@@ -50764,7 +51104,7 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
   const accOrderId = acc.orderId || req_.orderId || "";
   const accEmail = (acc.email || "").toLowerCase();
   if (accOrderId && accEmail) {
-    const orderItems = readJson("order_items", {}) ?? {};
+    const orderItems = readJson2("order_items", {}) ?? {};
     const itemList = orderItems[accOrderId] ?? [];
     const itemIdx = itemList.findIndex(
       (it) => (it.original_account || it.email || "").toLowerCase() === accEmail || (it.current_account || it.email || "").toLowerCase() === accEmail
@@ -50772,10 +51112,10 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
     if (itemIdx !== -1) {
       const item = itemList[itemIdx];
       const repNumber = (item.current_replacement_number ?? 0) + 1;
-      const allReps = readJson("account_replacements", {}) ?? {};
+      const allReps = readJson2("account_replacements", {}) ?? {};
       if (!allReps[item.itemId]) allReps[item.itemId] = [];
       allReps[item.itemId].push({
-        id: crypto.randomUUID().slice(0, 12),
+        id: crypto2.randomUUID().slice(0, 12),
         orderId: accOrderId,
         orderItemId: item.itemId,
         previousAccount: item.current_account || item.email || "",
@@ -50783,14 +51123,14 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
         newPassword: password,
         newTwoFA: twoFA || null,
         replacementNumber: repNumber,
-        deliveredAt: now(),
+        deliveredAt: now2(),
         reason: note || "",
         supportTicketId: id,
         createdBy: "web-admin",
-        createdAt: now(),
+        createdAt: now2(),
         status: "delivered"
       });
-      writeJson("account_replacements", allReps);
+      writeJson2("account_replacements", allReps);
       itemList[itemIdx] = {
         ...item,
         current_account: email,
@@ -50798,23 +51138,23 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
         current_two_fa: twoFA || null,
         current_replacement_number: repNumber,
         item_status: "active",
-        updatedAt: now()
+        updatedAt: now2()
       };
       orderItems[accOrderId] = itemList;
-      writeJson("order_items", orderItems);
+      writeJson2("order_items", orderItems);
     }
   }
-  const replacementData = { replacementEmail: email, replacementPassword: password, replacementTwoFA: twoFA || null, replacementNote: note || null, resolvedAt: now(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "sent" : "failed", sentAt: result.ok ? now() : null, sentError: result.ok ? null : result.error };
+  const replacementData = { replacementEmail: email, replacementPassword: password, replacementTwoFA: twoFA || null, replacementNote: note || null, resolvedAt: now2(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "sent" : "failed", sentAt: result.ok ? now2() : null, sentError: result.ok ? null : result.error };
   requests[idx].accounts[accIdx] = { ...acc, ...replacementData };
   _recomputeGroupStatus(requests[idx]);
-  writeJson("warranty_requests", requests);
+  writeJson2("warranty_requests", requests);
   addLog("GROUP_REPLACEMENT", `${id}/${accId} \u2192 ${email}`, "web-admin");
   res.json({ ok: result.ok, sentStatus: result.ok ? "sent" : "failed", message: result.ok ? "\u0110\xE3 g\u1EEDi t\xE0i kho\u1EA3n thay th\u1EBF cho kh\xE1ch" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
 });
 router2.post("/bot/warranty/:id/accounts/:accId/refund", requireAuth, async (req, res) => {
   const { id, accId } = req.params;
   const { amount, note } = req.body ?? {};
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id && r.type === "group");
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
@@ -50831,15 +51171,15 @@ router2.post("/bot/warranty/:id/accounts/:accId/refund", requireAuth, async (req
     res.status(400).json({ ok: false, code: "ORDER_ALREADY_REFUNDED", message: "T\xE0i kho\u1EA3n n\xE0y \u0111\xE3 \u0111\u01B0\u1EE3c ho\xE0n ti\u1EC1n r\u1ED3i." });
     return;
   }
-  const refundedAt = now();
+  const refundedAt = now2();
   requests[idx].accounts[accIdx] = { ...acc, status: "resolved", resolution: `refund:${amount}`, resolvedAt: refundedAt, resolvedBy: "web-admin" };
   _recomputeGroupStatus(requests[idx]);
-  writeJson("warranty_requests", requests);
+  writeJson2("warranty_requests", requests);
   const accOrderId = acc.orderId || req_.orderId || "";
   const accEmailLower = (acc.email || "").toLowerCase();
   let foundItemId = null;
   if (accOrderId && accEmailLower) {
-    const orderItems = readJson("order_items", {}) ?? {};
+    const orderItems = readJson2("order_items", {}) ?? {};
     const itemList = orderItems[accOrderId] ?? [];
     for (let i = 0; i < itemList.length; i++) {
       const it = itemList[i];
@@ -50852,21 +51192,21 @@ router2.post("/bot/warranty/:id/accounts/:accId/refund", requireAuth, async (req
       }
     }
     orderItems[accOrderId] = itemList;
-    writeJson("order_items", orderItems);
+    writeJson2("order_items", orderItems);
     const allRefunded = itemList.every((it) => it.item_status === "refunded");
     if (allRefunded) {
-      const orders = readJson("orders", {}) ?? {};
+      const orders = readJson2("orders", {}) ?? {};
       if (orders[accOrderId]) {
         orders[accOrderId].status = "refunded";
         orders[accOrderId].refundedAt = refundedAt;
         orders[accOrderId].refundAmount = Number(amount);
-        writeJson("orders", orders);
+        writeJson2("orders", orders);
       }
     }
   }
-  const history = readJson("refund_history", []) ?? [];
+  const history = readJson2("refund_history", []) ?? [];
   history.push({
-    id: crypto.randomUUID(),
+    id: crypto2.randomUUID(),
     warrantyRequestId: id,
     orderId: accOrderId || null,
     orderItemId: foundItemId,
@@ -50880,7 +51220,7 @@ router2.post("/bot/warranty/:id/accounts/:accId/refund", requireAuth, async (req
     reason: note || "",
     supportTicketId: id
   });
-  writeJson("refund_history", history);
+  writeJson2("refund_history", history);
   const msg = `\u{1F4B0} <b>Ho\xE0n ti\u1EC1n t\xE0i kho\u1EA3n: <code>${acc.email}</code></b>
 
 S\u1ED1 ti\u1EC1n: <b>${Number(amount).toLocaleString("vi")}\u0111</b>${note ? `
@@ -50896,7 +51236,7 @@ router2.post("/bot/warranty/:id/accounts/:accId/reject", requireAuth, async (req
     res.status(400).json({ ok: false, message: "L\xFD do l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id && r.type === "group");
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
@@ -50909,9 +51249,9 @@ router2.post("/bot/warranty/:id/accounts/:accId/reject", requireAuth, async (req
     return;
   }
   const acc = req_.accounts[accIdx];
-  requests[idx].accounts[accIdx] = { ...acc, status: "rejected", resolution: `reject:${reason}`, resolvedAt: now(), resolvedBy: "web-admin" };
+  requests[idx].accounts[accIdx] = { ...acc, status: "rejected", resolution: `reject:${reason}`, resolvedAt: now2(), resolvedBy: "web-admin" };
   _recomputeGroupStatus(requests[idx]);
-  writeJson("warranty_requests", requests);
+  writeJson2("warranty_requests", requests);
   const msg = `\u274C <b>T\xE0i kho\u1EA3n <code>${acc.email}</code> kh\xF4ng \u0111\u01B0\u1EE3c b\u1EA3o h\xE0nh.</b>
 
 L\xFD do: ${reason}`;
@@ -50921,7 +51261,7 @@ L\xFD do: ${reason}`;
 });
 router2.post("/bot/warranty/:id/accounts/:accId/resend", requireAuth, async (req, res) => {
   const { id, accId } = req.params;
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id && r.type === "group");
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
@@ -50942,16 +51282,16 @@ router2.post("/bot/warranty/:id/accounts/:accId/resend", requireAuth, async (req
   const message = buildReplacementMessage(fakeReq, acc.replacementEmail, acc.replacementPassword, acc.replacementTwoFA, acc.replacementNote);
   const result = await sendTelegramMessage(req_.userId, message);
   if (result.ok) {
-    requests[idx].accounts[accIdx] = { ...acc, sentStatus: "sent", sentAt: now(), sentError: null };
+    requests[idx].accounts[accIdx] = { ...acc, sentStatus: "sent", sentAt: now2(), sentError: null };
   } else {
     requests[idx].accounts[accIdx] = { ...acc, sentStatus: "failed", sentError: result.error };
   }
-  writeJson("warranty_requests", requests);
+  writeJson2("warranty_requests", requests);
   res.json({ ok: result.ok, message: result.ok ? "\u0110\xE3 g\u1EEDi l\u1EA1i th\xE0nh c\xF4ng" : `G\u1EEDi l\u1EA1i th\u1EA5t b\u1EA1i: ${result.error}` });
 });
 router2.post("/bot/warranty/:id/resend", requireAuth, async (req, res) => {
   const { id } = req.params;
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id);
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
@@ -50965,20 +51305,20 @@ router2.post("/bot/warranty/:id/resend", requireAuth, async (req, res) => {
   const message = buildReplacementMessage(req_, req_.replacementEmail, req_.replacementPassword, req_.replacementTwoFA, req_.replacementNote);
   const result = await sendTelegramMessage(req_.userId, message);
   if (result.ok) {
-    requests[idx] = { ...req_, status: "resolved", sentStatus: "sent", sentAt: now(), sentError: null };
-    writeJson("warranty_requests", requests);
+    requests[idx] = { ...req_, status: "resolved", sentStatus: "sent", sentAt: now2(), sentError: null };
+    writeJson2("warranty_requests", requests);
     addLog("WARRANTY_RESEND", `${id} \u2192 ${req_.replacementEmail} | OK`, "web-admin");
     res.json({ ok: true, message: "\u0110\xE3 g\u1EEDi l\u1EA1i th\xE0nh c\xF4ng" });
   } else {
     requests[idx] = { ...req_, sentStatus: "failed", sentError: result.error };
-    writeJson("warranty_requests", requests);
+    writeJson2("warranty_requests", requests);
     res.status(500).json({ ok: false, message: `G\u1EEDi l\u1EA1i th\u1EA5t b\u1EA1i: ${result.error}` });
   }
 });
 router2.post("/bot/warranty/:id/refund", requireAuth, async (req, res) => {
   const { id } = req.params;
   const { amount, note, adminName } = req.body ?? {};
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id);
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
@@ -50990,7 +51330,7 @@ router2.post("/bot/warranty/:id/refund", requireAuth, async (req, res) => {
     return;
   }
   const resolvedBy = adminName || "web-admin";
-  const refundedAt = now();
+  const refundedAt = now2();
   const email = req_.email || req_.accounts && req_.accounts[0]?.originalEmail || "";
   requests[idx] = { ...req_, status: "resolved", resolution: `refund:${amount}`, resolvedAt: refundedAt, resolvedBy, reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   for (let i = 0; i < requests.length; i++) {
@@ -51001,8 +51341,8 @@ router2.post("/bot/warranty/:id/refund", requireAuth, async (req, res) => {
       requests[i] = { ...r, status: "refunded", resolvedAt: refundedAt, resolvedBy, reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
     }
   }
-  writeJson("warranty_requests", requests);
-  const orderItems = readJson("order_items", {}) ?? {};
+  writeJson2("warranty_requests", requests);
+  const orderItems = readJson2("order_items", {}) ?? {};
   const emailLower = email.toLowerCase();
   let foundItemId = null;
   if (req_.orderId && emailLower) {
@@ -51018,28 +51358,28 @@ router2.post("/bot/warranty/:id/refund", requireAuth, async (req, res) => {
       }
     }
     orderItems[req_.orderId] = itemList;
-    writeJson("order_items", orderItems);
+    writeJson2("order_items", orderItems);
     const allRefunded = itemList.every((it) => it.item_status === "refunded");
-    const orders = readJson("orders", {}) ?? {};
+    const orders = readJson2("orders", {}) ?? {};
     if (allRefunded && orders[req_.orderId]) {
       orders[req_.orderId].status = "refunded";
       orders[req_.orderId].refundedAt = refundedAt;
       orders[req_.orderId].refundAmount = Number(amount);
-      writeJson("orders", orders);
+      writeJson2("orders", orders);
     } else if (!allRefunded && req_.orderId && orders[req_.orderId]) {
     }
   } else if (req_.orderId) {
-    const orders = readJson("orders", {}) ?? {};
+    const orders = readJson2("orders", {}) ?? {};
     if (orders[req_.orderId]) {
       orders[req_.orderId].status = "refunded";
       orders[req_.orderId].refundedAt = refundedAt;
       orders[req_.orderId].refundAmount = Number(amount);
-      writeJson("orders", orders);
+      writeJson2("orders", orders);
     }
   }
-  const history = readJson("refund_history", []) ?? [];
+  const history = readJson2("refund_history", []) ?? [];
   history.push({
-    id: crypto.randomUUID(),
+    id: crypto2.randomUUID(),
     warrantyRequestId: id,
     orderId: req_.orderId || null,
     orderItemId: foundItemId,
@@ -51053,7 +51393,7 @@ router2.post("/bot/warranty/:id/refund", requireAuth, async (req, res) => {
     reason: note || "",
     supportTicketId: id
   });
-  writeJson("refund_history", history);
+  writeJson2("refund_history", history);
   const amountStr = Number(amount).toLocaleString("vi");
   const msg = `\u{1F4B0} <b>Ho\xE0n ti\u1EC1n th\xE0nh c\xF4ng</b>
 
@@ -51069,16 +51409,16 @@ Ti\u1EC1n ho\xE0n s\u1EBD \u0111\u01B0\u1EE3c c\u1ED9ng tr\u1EF1c ti\u1EBFp v\xE
   res.json({ ok: true, message: "\u0110\xE3 x\u1EED l\xFD ho\xE0n ti\u1EC1n" });
 });
 router2.get("/bot/required-channels", requireAuth, (_req, res) => {
-  res.json(readJson("required_channels", []) ?? []);
+  res.json(readJson2("required_channels", []) ?? []);
 });
 router2.put("/bot/required-channels", requireAuth, (req, res) => {
   const channels = Array.isArray(req.body) ? req.body : [];
-  writeJson("required_channels", channels);
+  writeJson2("required_channels", channels);
   addLog("UPDATE_REQUIRED_CHANNELS", `${channels.length} channel(s)`, "web-admin");
   res.json(channels);
 });
 router2.get("/bot/rate-violations", requireAuth, (req, res) => {
-  const violations = readJson("rate_violations", []) ?? [];
+  const violations = readJson2("rate_violations", []) ?? [];
   const { user_id, action, from, to, is_locked } = req.query;
   let result = [...violations].reverse();
   if (user_id) result = result.filter((r) => String(r.user_id) === String(user_id));
@@ -51099,8 +51439,8 @@ router2.get("/bot/rate-violations", requireAuth, (req, res) => {
 });
 router2.get("/bot/rate-limits/user/:userId", requireAuth, (req, res) => {
   const { userId } = req.params;
-  const data = readJson("rate_limits", {}) ?? {};
-  const now2 = Date.now() / 1e3;
+  const data = readJson2("rate_limits", {}) ?? {};
+  const now3 = Date.now() / 1e3;
   const userState = data[String(userId)] ?? {};
   const result = {};
   for (const [action, state] of Object.entries(userState)) {
@@ -51108,10 +51448,10 @@ router2.get("/bot/rate-limits/user/:userId", requireAuth, (req, res) => {
     const cooldownUntil = state.cooldown_until ?? null;
     result[action] = {
       violation_count: state.violation_count ?? 0,
-      is_locked: !!(lockUntil && now2 < lockUntil),
-      lock_remaining_s: lockUntil && now2 < lockUntil ? Math.max(0, Math.round(lockUntil - now2)) : 0,
-      is_on_cooldown: !!(cooldownUntil && now2 < cooldownUntil),
-      cooldown_remaining_s: cooldownUntil && now2 < cooldownUntil ? Math.max(0, Math.round(cooldownUntil - now2)) : 0,
+      is_locked: !!(lockUntil && now3 < lockUntil),
+      lock_remaining_s: lockUntil && now3 < lockUntil ? Math.max(0, Math.round(lockUntil - now3)) : 0,
+      is_on_cooldown: !!(cooldownUntil && now3 < cooldownUntil),
+      cooldown_remaining_s: cooldownUntil && now3 < cooldownUntil ? Math.max(0, Math.round(cooldownUntil - now3)) : 0,
       last_violation_at: state.last_violation_at ?? null
     };
   }
@@ -51120,7 +51460,7 @@ router2.get("/bot/rate-limits/user/:userId", requireAuth, (req, res) => {
 router2.delete("/bot/rate-limits/user/:userId", requireAuth, (req, res) => {
   const { userId } = req.params;
   const { action } = req.query;
-  const data = readJson("rate_limits", {}) ?? {};
+  const data = readJson2("rate_limits", {}) ?? {};
   const uid = String(userId);
   if (!data[uid]) {
     res.json({ ok: true, message: "Kh\xF4ng t\xECm th\u1EA5y d\u1EEF li\u1EC7u cho user n\xE0y" });
@@ -51133,11 +51473,11 @@ router2.delete("/bot/rate-limits/user/:userId", requireAuth, (req, res) => {
     delete data[uid];
     addLog("RATE_LIMIT_CLEARED", `user ${uid} all actions`, "web-admin");
   }
-  writeJson("rate_limits", data);
+  writeJson2("rate_limits", data);
   res.json({ ok: true, message: "\u0110\xE3 x\xF3a rate limit" });
 });
 router2.get("/bot/refund-history", requireAuth, (req, res) => {
-  const history = readJson("refund_history", []) ?? [];
+  const history = readJson2("refund_history", []) ?? [];
   const { orderId, email, from, to } = req.query;
   let result = [...history].reverse();
   if (orderId) result = result.filter((r) => (r.orderId || "").includes(String(orderId)));
@@ -51153,15 +51493,15 @@ router2.post("/bot/warranty/:id/reject", requireAuth, async (req, res) => {
     res.status(400).json({ ok: false, message: "L\xFD do l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
-  const requests = readJson("warranty_requests", []) ?? [];
+  const requests = readJson2("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id);
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
     return;
   }
   const req_ = requests[idx];
-  requests[idx] = { ...req_, status: "rejected", resolution: `reject:${reason}`, resolvedAt: now(), resolvedBy: "web-admin", reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
-  writeJson("warranty_requests", requests);
+  requests[idx] = { ...req_, status: "rejected", resolution: `reject:${reason}`, resolvedAt: now2(), resolvedBy: "web-admin", reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
+  writeJson2("warranty_requests", requests);
   const msg = `\u274C <b>Y\xEAu c\u1EA7u b\u1EA3o h\xE0nh kh\xF4ng \u0111\u01B0\u1EE3c ch\u1EA5p nh\u1EADn.</b>
 
 L\xFD do: ${reason}`;
@@ -51175,10 +51515,10 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
     res.status(400).json({ found: false, error: "query l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
-  const orders = readJson("orders", {}) ?? {};
-  const orderItems = readJson("order_items", {}) ?? {};
-  const allReps = readJson("account_replacements", {}) ?? {};
-  const settings = readJson("settings", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
+  const orderItems = readJson2("order_items", {}) ?? {};
+  const allReps = readJson2("account_replacements", {}) ?? {};
+  const settings = readJson2("settings", {}) ?? {};
   const normalized = query.replace(/^(?:m[aã]\s*[đd][oơ]n|order\s*(?:code|id)?|email\s*\/?\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*[:：]\s*/i, "").trim();
   function calcWarranty(item, order) {
     if (item.item_status === "refunded") {
@@ -51365,12 +51705,12 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
   return res.json({ found: false });
 });
 router2.get("/bot/orders/:orderId/items", requireAuth, (req, res) => {
-  const orderItems = readJson("order_items", {}) ?? {};
+  const orderItems = readJson2("order_items", {}) ?? {};
   res.json(orderItems[req.params.orderId] ?? []);
 });
 router2.get("/bot/orders/:orderId/items/:itemId/replacements", requireAuth, (req, res) => {
   const { itemId } = req.params;
-  const allReps = readJson("account_replacements", {}) ?? {};
+  const allReps = readJson2("account_replacements", {}) ?? {};
   const reps = (allReps[itemId] ?? []).sort(
     (a, b) => (a.replacementNumber ?? 0) - (b.replacementNumber ?? 0)
   );
@@ -51378,7 +51718,7 @@ router2.get("/bot/orders/:orderId/items/:itemId/replacements", requireAuth, (req
 });
 router2.post("/bot/orders/:orderId/items", requireAuth, (req, res) => {
   const { orderId } = req.params;
-  const orders = readJson("orders", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
   if (!orders[orderId]) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng" });
     return;
@@ -51388,7 +51728,7 @@ router2.post("/bot/orders/:orderId/items", requireAuth, (req, res) => {
     res.status(400).json({ ok: false, message: "email l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
-  const orderItems = readJson("order_items", {}) ?? {};
+  const orderItems = readJson2("order_items", {}) ?? {};
   if (!orderItems[orderId]) orderItems[orderId] = [];
   const order = orders[orderId];
   const iWd = Number(order.warrantyDays || 0);
@@ -51404,48 +51744,48 @@ router2.post("/bot/orders/:orderId/items", requireAuth, (req, res) => {
   if (!iWarrantyEnd && (order.warrantyExpiry || order.warrantyDate)) {
     iWarrantyEnd = (order.warrantyExpiry || order.warrantyDate || "").slice(0, 10) || null;
   }
-  const itemId = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const itemId = crypto2.randomUUID().slice(0, 8).toUpperCase();
   const item = {
     itemId,
     email,
     original_account: email,
     current_account: email,
     current_replacement_number: 0,
-    original_delivered_at: order.purchaseDate || now(),
+    original_delivered_at: order.purchaseDate || now2(),
     warranty_days: iWd || null,
     warranty_end_date: iWarrantyEnd,
     item_status: "active",
     password: password ?? null,
     twoFA: twoFA ?? null,
     status: "active",
-    createdAt: now()
+    createdAt: now2()
   };
   orderItems[orderId].push(item);
-  writeJson("order_items", orderItems);
+  writeJson2("order_items", orderItems);
   addLog("CREATE_ORDER_ITEM", `${orderId}/${itemId}`, "web-admin");
   res.json({ ok: true, item });
 });
 router2.put("/bot/orders/:orderId/items/:itemId", requireAuth, (req, res) => {
   const { orderId, itemId } = req.params;
-  const orderItems = readJson("order_items", {}) ?? {};
+  const orderItems = readJson2("order_items", {}) ?? {};
   const items = orderItems[orderId] ?? [];
   const idx = items.findIndex((it) => it.itemId === itemId);
   if (idx === -1) {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y item" });
     return;
   }
-  items[idx] = { ...items[idx], ...req.body, itemId, updatedAt: now() };
+  items[idx] = { ...items[idx], ...req.body, itemId, updatedAt: now2() };
   orderItems[orderId] = items;
-  writeJson("order_items", orderItems);
+  writeJson2("order_items", orderItems);
   addLog("UPDATE_ORDER_ITEM", `${orderId}/${itemId}`, "web-admin");
   res.json({ ok: true, item: items[idx] });
 });
 router2.get("/bot/intro", requireAuth, (_req, res) => {
   const defaults = { title: "Gi\u1EDBi thi\u1EC7u", content: "", titleEn: "Introduction", contentEn: "", photoUrl: "", videoUrl: "", buttons: [] };
-  res.json({ ...defaults, ...readJson("intro", {}) ?? {} });
+  res.json({ ...defaults, ...readJson2("intro", {}) ?? {} });
 });
 router2.put("/bot/intro", requireAuth, (req, res) => {
-  writeJson("intro", req.body ?? {});
+  writeJson2("intro", req.body ?? {});
   addLog("UPDATE_INTRO", "", "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 c\u1EADp nh\u1EADt gi\u1EDBi thi\u1EC7u" });
 });
@@ -51455,11 +51795,11 @@ router2.get("/giveaway/membership-debug/:telegramUserId", requireAuth, async (re
     res.status(503).json({ error: "TELEGRAM_BOT_TOKEN not configured" });
     return;
   }
-  const channels = readJson("required_channels", []) ?? [];
+  const channels = readJson2("required_channels", []) ?? [];
   const enabled = channels.filter((c) => c.enabled !== false);
   const JOINED = /* @__PURE__ */ new Set(["member", "administrator", "creator"]);
   const CACHE_TTL_HOURS = 6;
-  const allMemberships = readJson("user_channel_memberships", {}) ?? {};
+  const allMemberships = readJson2("user_channel_memberships", {}) ?? {};
   const userCache = allMemberships[telegramUserId] ?? {};
   function channelCacheKey(ch) {
     const cid = (ch.chatId || ch.username || ch.id || "").trim();
@@ -51577,12 +51917,12 @@ router2.get("/bot/check-channel/:channelId", requireAuth, async (req, res) => {
   }
 });
 router2.get("/bot/shop-channels", requireAuth, (_req, res) => {
-  const channels = readJson("shop_channels", []) ?? [];
+  const channels = readJson2("shop_channels", []) ?? [];
   channels.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
   res.json(channels);
 });
 router2.post("/bot/shop-channels", requireAuth, (req, res) => {
-  const channels = readJson("shop_channels", []) ?? [];
+  const channels = readJson2("shop_channels", []) ?? [];
   const { name, username, link, icon, enabled } = req.body ?? {};
   if (!name?.trim() || !link?.trim()) return res.status(400).json({ error: "name v\xE0 link l\xE0 b\u1EAFt bu\u1ED9c" });
   const maxOrder = channels.reduce((m, c) => Math.max(m, c.order ?? 0), 0);
@@ -51596,46 +51936,46 @@ router2.post("/bot/shop-channels", requireAuth, (req, res) => {
     enabled: enabled !== false
   };
   channels.push(ch);
-  writeJson("shop_channels", channels);
+  writeJson2("shop_channels", channels);
   addLog("SHOP_CHANNEL_ADD", ch.name, "web-admin");
   res.json(ch);
 });
 router2.put("/bot/shop-channels/reorder", requireAuth, (req, res) => {
   const { ids } = req.body ?? {};
   if (!Array.isArray(ids)) return res.status(400).json({ error: "ids array required" });
-  const channels = readJson("shop_channels", []) ?? [];
+  const channels = readJson2("shop_channels", []) ?? [];
   const ordered = ids.map((id, idx) => {
     const ch = channels.find((c) => c.id === id);
     return ch ? { ...ch, order: idx + 1 } : null;
   }).filter(Boolean);
-  writeJson("shop_channels", ordered);
+  writeJson2("shop_channels", ordered);
   res.json(ordered);
 });
 router2.put("/bot/shop-channels/:id", requireAuth, (req, res) => {
-  const channels = readJson("shop_channels", []) ?? [];
+  const channels = readJson2("shop_channels", []) ?? [];
   const idx = channels.findIndex((c) => c.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y k\xEAnh" });
   channels[idx] = { ...channels[idx], ...req.body, id: req.params.id };
-  writeJson("shop_channels", channels);
+  writeJson2("shop_channels", channels);
   addLog("SHOP_CHANNEL_UPDATE", channels[idx].name, "web-admin");
   res.json(channels[idx]);
 });
 router2.delete("/bot/shop-channels/:id", requireAuth, (req, res) => {
-  const channels = readJson("shop_channels", []) ?? [];
+  const channels = readJson2("shop_channels", []) ?? [];
   const ch = channels.find((c) => c.id === req.params.id);
   if (!ch) return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y k\xEAnh" });
   const updated = channels.filter((c) => c.id !== req.params.id);
-  writeJson("shop_channels", updated);
+  writeJson2("shop_channels", updated);
   addLog("SHOP_CHANNEL_DELETE", ch.name, "web-admin");
   res.json({ ok: true });
 });
 router2.get("/bot/gift-shop-channels", requireAuth, (_req, res) => {
-  const channels = readJson("gift_shop_channels", []) ?? [];
+  const channels = readJson2("gift_shop_channels", []) ?? [];
   channels.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
   res.json(channels);
 });
 router2.post("/bot/gift-shop-channels", requireAuth, (req, res) => {
-  const channels = readJson("gift_shop_channels", []) ?? [];
+  const channels = readJson2("gift_shop_channels", []) ?? [];
   const { name, username, link, icon, enabled } = req.body ?? {};
   if (!name?.trim() || !link?.trim()) return res.status(400).json({ error: "name v\xE0 link l\xE0 b\u1EAFt bu\u1ED9c" });
   const maxOrder = channels.reduce((m, c) => Math.max(m, c.order ?? 0), 0);
@@ -51649,40 +51989,40 @@ router2.post("/bot/gift-shop-channels", requireAuth, (req, res) => {
     enabled: enabled !== false
   };
   channels.push(ch);
-  writeJson("gift_shop_channels", channels);
+  writeJson2("gift_shop_channels", channels);
   addLog("GIFT_SHOP_CHANNEL_ADD", ch.name, "web-admin");
   res.json(ch);
 });
 router2.put("/bot/gift-shop-channels/reorder", requireAuth, (req, res) => {
   const { ids } = req.body ?? {};
   if (!Array.isArray(ids)) return res.status(400).json({ error: "ids array required" });
-  const channels = readJson("gift_shop_channels", []) ?? [];
+  const channels = readJson2("gift_shop_channels", []) ?? [];
   const ordered = ids.map((id, idx) => {
     const ch = channels.find((c) => c.id === id);
     return ch ? { ...ch, order: idx + 1 } : null;
   }).filter(Boolean);
-  writeJson("gift_shop_channels", ordered);
+  writeJson2("gift_shop_channels", ordered);
   res.json(ordered);
 });
 router2.put("/bot/gift-shop-channels/:id", requireAuth, (req, res) => {
-  const channels = readJson("gift_shop_channels", []) ?? [];
+  const channels = readJson2("gift_shop_channels", []) ?? [];
   const idx = channels.findIndex((c) => c.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y k\xEAnh" });
   channels[idx] = { ...channels[idx], ...req.body, id: req.params.id };
-  writeJson("gift_shop_channels", channels);
+  writeJson2("gift_shop_channels", channels);
   addLog("GIFT_SHOP_CHANNEL_UPDATE", channels[idx].name, "web-admin");
   res.json(channels[idx]);
 });
 router2.delete("/bot/gift-shop-channels/:id", requireAuth, (req, res) => {
-  const channels = readJson("gift_shop_channels", []) ?? [];
+  const channels = readJson2("gift_shop_channels", []) ?? [];
   const ch = channels.find((c) => c.id === req.params.id);
   if (!ch) return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y k\xEAnh" });
-  writeJson("gift_shop_channels", channels.filter((c) => c.id !== req.params.id));
+  writeJson2("gift_shop_channels", channels.filter((c) => c.id !== req.params.id));
   addLog("GIFT_SHOP_CHANNEL_DELETE", ch.name, "web-admin");
   res.json({ ok: true });
 });
 router2.get("/bot/sync-robot/config", requireAuth, (_req, res) => {
-  const cfg = readJson("sync_robot_config", {}) ?? {};
+  const cfg = readJson2("sync_robot_config", {}) ?? {};
   res.json({
     enabled: cfg.enabled ?? false,
     site_url: cfg.site_url ?? "",
@@ -51695,7 +52035,7 @@ router2.get("/bot/sync-robot/config", requireAuth, (_req, res) => {
 });
 router2.put("/bot/sync-robot/config", requireAuth, (req, res) => {
   const body = req.body ?? {};
-  const current = readJson("sync_robot_config", {}) ?? {};
+  const current = readJson2("sync_robot_config", {}) ?? {};
   const updated = {
     ...current,
     enabled: body.enabled !== void 0 ? !!body.enabled : current.enabled ?? false,
@@ -51708,26 +52048,26 @@ router2.put("/bot/sync-robot/config", requireAuth, (req, res) => {
   if (body.password && body.password !== "***") {
     updated.password = String(body.password);
   }
-  writeJson("sync_robot_config", updated);
+  writeJson2("sync_robot_config", updated);
   addLog("SYNC_ROBOT_CONFIG", `enabled=${updated.enabled} interval=${updated.interval_s}s`, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 l\u01B0u c\u1EA5u h\xECnh robot" });
 });
 router2.get("/bot/sync-robot/status", requireAuth, (_req, res) => {
-  res.json(readJson("sync_robot_status", { running: false, last_run: null, next_run_at: null }) ?? {});
+  res.json(readJson2("sync_robot_status", { running: false, last_run: null, next_run_at: null }) ?? {});
 });
 router2.get("/bot/sync-robot/logs", requireAuth, (req, res) => {
-  const logs = readJson("sync_robot_logs", []) ?? [];
+  const logs = readJson2("sync_robot_logs", []) ?? [];
   const limit = Math.min(Number(req.query.limit ?? 200), 500);
   res.json(logs.slice(-limit));
 });
 router2.post("/bot/sync-robot/trigger", requireAuth, (_req, res) => {
-  writeJson("sync_robot_trigger", { trigger: true, triggered_at: now(), triggered_by: "web-admin" });
+  writeJson2("sync_robot_trigger", { trigger: true, triggered_at: now2(), triggered_by: "web-admin" });
   addLog("SYNC_ROBOT_TRIGGER", "manual trigger via admin panel", "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 k\xEDch ho\u1EA1t \u0111\u1ED3ng b\u1ED9 ngay" });
 });
 router2.post("/bot/sync-robot/test-login", requireAuth, (req, res) => {
   const body = req.body ?? {};
-  const current = readJson("sync_robot_config", {}) ?? {};
+  const current = readJson2("sync_robot_config", {}) ?? {};
   const cfg = {
     ...current,
     site_url: body.site_url ?? current.site_url ?? "",
@@ -51738,12 +52078,12 @@ router2.post("/bot/sync-robot/test-login", requireAuth, (req, res) => {
   if (body.password && body.password !== "***") {
     cfg.password = body.password;
   }
-  writeJson("sync_robot_config", cfg);
+  writeJson2("sync_robot_config", cfg);
   addLog("SYNC_ROBOT_TEST_LOGIN", `email=${cfg.email}`, "web-admin");
-  const robotScript = path.resolve(DATA_DIR, "..", "sync_robot.py");
+  const robotScript = path2.resolve(DATA_DIR2, "..", "sync_robot.py");
   const env = {
     ...process.env,
-    DATA_DIR,
+    DATA_DIR: DATA_DIR2,
     API_BASE_URL: process.env["API_BASE_URL"] ?? "http://localhost:8080"
   };
   execFile("python3", [robotScript, "--test-login"], { env, timeout: 12e4, maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -51771,7 +52111,7 @@ router2.post("/bot/sync-robot/test-login", requireAuth, (req, res) => {
       result = { ok: false, message: `L\u1ED7i: ${msg}`, steps: [] };
     }
     try {
-      const logs = readJson("sync_robot_logs", []) ?? [];
+      const logs = readJson2("sync_robot_logs", []) ?? [];
       const summary = {
         type: "test_login",
         started_at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -51794,7 +52134,7 @@ router2.post("/bot/sync-robot/test-login", requireAuth, (req, res) => {
       };
       logs.push(summary);
       if (logs.length > 200) logs.splice(0, logs.length - 200);
-      writeJson("sync_robot_logs", logs);
+      writeJson2("sync_robot_logs", logs);
     } catch (_) {
     }
     res.json(result);
@@ -51805,23 +52145,23 @@ router2.get("/bot/sync-robot/screenshot/:filename", requireAuth, (req, res) => {
   if (!/^[\w\-\.]+\.jpg$/i.test(filename)) {
     return res.status(400).json({ error: "Invalid filename" });
   }
-  const screenshotsDir = path.join(DATA_DIR, "screenshots");
-  const filePath = path.join(screenshotsDir, filename);
+  const screenshotsDir = path2.join(DATA_DIR2, "screenshots");
+  const filePath = path2.join(screenshotsDir, filename);
   if (!filePath.startsWith(screenshotsDir)) {
     return res.status(400).json({ error: "Invalid path" });
   }
-  if (!fs.existsSync(filePath)) {
+  if (!fs2.existsSync(filePath)) {
     return res.status(404).json({ error: "Screenshot not found" });
   }
   res.setHeader("Content-Type", "image/jpeg");
   res.setHeader("Cache-Control", "private, max-age=86400");
-  const stream = fs.createReadStream(filePath);
+  const stream = fs2.createReadStream(filePath);
   stream.on("error", () => res.status(500).end());
   stream.pipe(res);
 });
 router2.get("/bot/sync-robot/existing-sets", requireAuth, (_req, res) => {
-  const orders = readJson("orders", {}) ?? {};
-  const orderItems = readJson("order_items", {}) ?? {};
+  const orders = readJson2("orders", {}) ?? {};
+  const orderItems = readJson2("order_items", {}) ?? {};
   const orderIds = Object.keys(orders);
   const itemEmails = [];
   for (const items of Object.values(orderItems)) {
@@ -51835,9 +52175,8 @@ router2.get("/bot/sync-robot/existing-sets", requireAuth, (_req, res) => {
   }
   res.json({ orderIds, itemEmails: [...new Set(itemEmails)] });
 });
-var MAX_HEALTH_HISTORY = 50;
 function ensureStableAccountIds() {
-  const raw = readJson("accounts", []) ?? [];
+  const raw = readJson2("accounts", []) ?? [];
   let dirty = false;
   const accounts = raw.map((acc) => {
     if (!acc || typeof acc !== "object") {
@@ -51851,12 +52190,12 @@ function ensureStableAccountIds() {
     return acc;
   });
   if (dirty) {
-    writeJson("accounts", accounts);
+    writeJson2("accounts", accounts);
   }
   return accounts;
 }
 function readHealth() {
-  return readJson("account_health", { config: {}, checks: {} }) ?? { config: {}, checks: {} };
+  return readJson2("account_health", { config: {}, checks: {} }) ?? { config: {}, checks: {} };
 }
 function healthDefaults(cfg) {
   return {
@@ -51866,9 +52205,10 @@ function healthDefaults(cfg) {
     passwordField: "password",
     successStatus: 200,
     successPattern: "",
-    timeoutMs: 1e4,
+    timeoutMs: 6e4,
     autoCheckEnabled: false,
     autoCheckIntervalMinutes: 60,
+    workerCount: 2,
     ...cfg
   };
 }
@@ -51879,7 +52219,7 @@ router2.get("/bot/accounts/health/config", requireAuth, (_req, res) => {
 router2.put("/bot/accounts/health/config", requireAuth, (req, res) => {
   const h = readHealth();
   h.config = { ...h.config ?? {}, ...req.body };
-  writeJson("account_health", h);
+  writeJson2("account_health", h);
   res.json({ ok: true, config: healthDefaults(h.config) });
 });
 router2.get("/bot/accounts/health", requireAuth, (_req, res) => {
@@ -51914,7 +52254,7 @@ router2.get("/bot/accounts/:id/health-history", requireAuth, (req, res) => {
   const history = (h.checks ?? {})[id] ?? [];
   res.json([...history].reverse());
 });
-router2.post("/bot/accounts/health/check", requireAuth, async (req, res) => {
+router2.post("/bot/accounts/health/check", requireAuth, (req, res) => {
   const body = req.body ?? {};
   const wantSingle = Object.prototype.hasOwnProperty.call(body, "accountId");
   const accountId = wantSingle ? body.accountId : void 0;
@@ -51923,98 +52263,38 @@ router2.post("/bot/accounts/health/check", requireAuth, async (req, res) => {
     return;
   }
   const accounts = ensureStableAccountIds();
-  const h = readHealth();
-  if (!h.checks) h.checks = {};
-  const cfg = healthDefaults(h.config ?? {});
   const toCheck = wantSingle ? accounts.filter((a) => a.id === accountId) : accounts;
   if (toCheck.length === 0) {
     if (wantSingle) {
       res.status(404).json({ ok: false, message: `Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n v\u1EDBi ID: ${accountId}` });
     } else {
-      res.json({ ok: true, checked: 0, healthy: 0, unhealthy: 0, error: 0, manual: 0, results: [] });
+      res.json({ ok: true, queued: 0, jobIds: [] });
     }
     return;
   }
-  const results = [];
-  if (!cfg.checkUrl) {
-    const checkedAt = now();
-    for (const acc of toCheck) {
-      const entry = {
-        checkedAt,
-        status: "manual",
-        message: "Ch\u01B0a c\u1EA5u h\xECnh URL ki\u1EC3m tra \u2014 ghi nh\u1EADn th\u1EE7 c\xF4ng",
-        responseTime: null,
-        httpStatus: null
-      };
-      if (!h.checks[acc.id]) h.checks[acc.id] = [];
-      h.checks[acc.id].push(entry);
-      if (h.checks[acc.id].length > MAX_HEALTH_HISTORY) {
-        h.checks[acc.id] = h.checks[acc.id].slice(-MAX_HEALTH_HISTORY);
-      }
-      results.push({ id: acc.id, email: acc.email, ...entry });
-    }
-    writeJson("account_health", h);
-    res.json({ ok: true, checked: toCheck.length, healthy: 0, unhealthy: 0, error: 0, manual: toCheck.length, results });
-    return;
-  }
-  for (const acc of toCheck) {
-    const start = Date.now();
-    let status = "error";
-    let message = "";
-    let httpStatus = null;
-    let responseTime = null;
-    try {
-      const bodyObj = {
-        [cfg.emailField]: acc.email,
-        [cfg.passwordField]: acc.password
-      };
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
-      const resp = await fetch(cfg.checkUrl, {
-        method: cfg.method,
-        headers: { "Content-Type": "application/json", "User-Agent": "HealthCheck/1.0" },
-        body: cfg.method !== "GET" ? JSON.stringify(bodyObj) : void 0,
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-      responseTime = Date.now() - start;
-      httpStatus = resp.status;
-      const text = await resp.text().catch(() => "");
-      const statusOk = resp.status === (cfg.successStatus ?? 200);
-      const patternOk = cfg.successPattern ? text.includes(cfg.successPattern) : true;
-      if (statusOk && patternOk) {
-        status = "healthy";
-        message = `OK (${resp.status}) \u2014 ${responseTime}ms`;
-      } else {
-        status = "unhealthy";
-        const reasons = [];
-        if (!statusOk) reasons.push(`HTTP ${resp.status} (expected ${cfg.successStatus})`);
-        if (!patternOk) reasons.push("pattern kh\xF4ng kh\u1EDBp");
-        message = reasons.join("; ");
-      }
-    } catch (e) {
-      responseTime = Date.now() - start;
-      message = e.name === "AbortError" ? `Timeout sau ${cfg.timeoutMs}ms` : `L\u1ED7i k\u1EBFt n\u1ED1i: ${e.message ?? "Unknown"}`;
-    }
-    const entry = { checkedAt: (/* @__PURE__ */ new Date()).toISOString(), status, message, responseTime, httpStatus };
-    if (!h.checks[acc.id]) h.checks[acc.id] = [];
-    h.checks[acc.id].push(entry);
-    if (h.checks[acc.id].length > MAX_HEALTH_HISTORY) {
-      h.checks[acc.id] = h.checks[acc.id].slice(-MAX_HEALTH_HISTORY);
-    }
-    results.push({ id: acc.id, email: acc.email, ...entry });
-  }
-  writeJson("account_health", h);
-  addLog("HEALTH_CHECK", `checked=${toCheck.length}`, "web-admin");
-  res.json({
-    ok: true,
-    checked: results.length,
-    healthy: results.filter((r) => r.status === "healthy").length,
-    unhealthy: results.filter((r) => r.status === "unhealthy").length,
-    error: results.filter((r) => r.status === "error").length,
-    manual: 0,
-    results
+  const jobIds = toCheck.map((acc) => enqueue(acc).id);
+  addLog("HEALTH_CHECK_ENQUEUE", `queued=${jobIds.length}`, "web-admin");
+  res.json({ ok: true, queued: jobIds.length, jobIds });
+});
+router2.get("/bot/health/jobs", requireAuth, (req, res) => {
+  const { status, accountId } = req.query ?? {};
+  const statusFilter = status ? String(status).split(",").map((s) => s.trim()).filter(Boolean) : void 0;
+  const jobs2 = getJobs({
+    status: statusFilter,
+    accountId: accountId ? String(accountId) : void 0
   });
+  const plugins = listPlugins();
+  const pluginMap = Object.fromEntries(plugins.map((p) => [p.id, p.name]));
+  const enriched = jobs2.map((j) => ({
+    ...j,
+    pluginName: pluginMap[j.type?.toLowerCase()] ?? null
+  }));
+  res.json(enriched);
+});
+router2.delete("/bot/health/jobs/done", requireAuth, (req, res) => {
+  const { accountId } = req.body ?? {};
+  clearDoneJobs(accountId);
+  res.json({ ok: true });
 });
 router2.delete("/bot/accounts/health/clear", requireAuth, (req, res) => {
   const { accountId } = req.body ?? {};
@@ -52025,15 +52305,15 @@ router2.delete("/bot/accounts/health/clear", requireAuth, (req, res) => {
   } else {
     h.checks = {};
   }
-  writeJson("account_health", h);
+  writeJson2("account_health", h);
   addLog("HEALTH_CLEAR", accountId ?? "all", "web-admin");
   res.json({ ok: true });
 });
 router2.get("/bot/backup", requireAuth, (_req, res) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
-  const backup = { exportedAt: now() };
+  const backup = { exportedAt: now2() };
   for (const f of files) {
-    backup[f] = readJson(f, null);
+    backup[f] = readJson2(f, null);
   }
   res.setHeader("Content-Disposition", `attachment; filename="backup-${Date.now()}.json"`);
   res.json(backup);
@@ -52494,6 +52774,129 @@ app.use(import_express5.default.urlencoded({ extended: true, limit: "20mb" }));
 app.use("/api", routes_default);
 var app_default = app;
 
+// src/queue/worker.ts
+var POLL_MS = 2e3;
+var MAX_HISTORY = 50;
+var running = false;
+var timer = null;
+function getWorkerCount() {
+  try {
+    const h = readJson("account_health", { config: {} }) ?? { config: {} };
+    const n = Number((h.config ?? {}).workerCount ?? 2);
+    return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : 2;
+  } catch {
+    return 2;
+  }
+}
+function saveHealthEntry(accountId, entry) {
+  const h = readJson("account_health", { config: {}, checks: {} }) ?? {
+    config: {},
+    checks: {}
+  };
+  if (!h.checks) h.checks = {};
+  if (!h.checks[accountId]) h.checks[accountId] = [];
+  h.checks[accountId].push(entry);
+  if (h.checks[accountId].length > MAX_HISTORY) {
+    h.checks[accountId] = h.checks[accountId].slice(-MAX_HISTORY);
+  }
+  writeJson("account_health", h);
+}
+async function processJob(job) {
+  let result;
+  const plugin = getPlugin(job.type);
+  if (!plugin) {
+    result = {
+      status: "no_plugin",
+      message: `Ch\u01B0a c\xF3 plugin ki\u1EC3m tra cho lo\u1EA1i t\xE0i kho\u1EA3n "${job.type || "kh\xF4ng x\xE1c \u0111\u1ECBnh"}". Plugin hi\u1EC7n c\xF3: ${["grok"].join(", ")}`,
+      responseTime: null
+    };
+  } else {
+    const accounts = readJson("accounts", []) ?? [];
+    const acc = accounts.find((a) => a.id === job.accountId);
+    const password = acc?.password ?? "";
+    const h = readJson("account_health", { config: {} }) ?? { config: {} };
+    const timeoutMs = Number((h.config ?? {}).timeoutMs ?? 6e4);
+    try {
+      result = await plugin.check(job.email, password, { timeoutMs });
+    } catch (err) {
+      result = {
+        status: "error",
+        message: `Plugin error: ${err?.message?.slice(0, 200) ?? String(err)}`,
+        responseTime: null
+      };
+    }
+  }
+  const historyStatus = result.status === "no_plugin" ? "error" : result.status;
+  saveHealthEntry(job.accountId, {
+    checkedAt: now(),
+    status: historyStatus,
+    message: result.message,
+    responseTime: result.responseTime,
+    httpStatus: null,
+    plugin: plugin?.id ?? "none"
+  });
+  const finalStatus = result.status === "healthy" || result.status === "unhealthy" ? "done" : "failed";
+  updateJob(job.id, {
+    status: finalStatus,
+    finishedAt: now(),
+    result
+  });
+  trimOldJobs();
+}
+async function tick() {
+  const workerCount = getWorkerCount();
+  const alreadyRunning = countRunning();
+  const slots = workerCount - alreadyRunning;
+  if (slots <= 0) return;
+  const toProcess = [];
+  for (let i = 0; i < slots; i++) {
+    const job = getNextQueued();
+    if (!job) break;
+    updateJob(job.id, { status: "running", startedAt: now() });
+    toProcess.push({ ...job, status: "running" });
+  }
+  if (toProcess.length === 0) return;
+  await Promise.allSettled(
+    toProcess.map(
+      (job) => processJob(job).catch((err) => {
+        console.error(`[worker] Unhandled error in job ${job.id}:`, err);
+        updateJob(job.id, {
+          status: "failed",
+          finishedAt: now(),
+          result: {
+            status: "error",
+            message: `Unhandled: ${err?.message?.slice(0, 200) ?? String(err)}`,
+            responseTime: null
+          }
+        });
+      })
+    )
+  );
+}
+function startWorker() {
+  if (running) return;
+  running = true;
+  console.log("[health-worker] Started (polling every", POLL_MS, "ms)");
+  const loop = async () => {
+    if (!running) return;
+    try {
+      await tick();
+    } catch (err) {
+      console.error("[health-worker] tick error:", err);
+    }
+    timer = setTimeout(loop, POLL_MS);
+  };
+  loop();
+}
+function stopWorker() {
+  running = false;
+  if (timer !== null) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  console.log("[health-worker] Stopped");
+}
+
 // src/index.ts
 var rawPort = process.env["PORT"];
 if (!rawPort) {
@@ -52511,6 +52914,15 @@ app_default.listen(port, (err) => {
     process.exit(1);
   }
   logger.info({ port }, "Server listening");
+  startWorker();
+});
+process.on("SIGTERM", () => {
+  stopWorker();
+  process.exit(0);
+});
+process.on("SIGINT", () => {
+  stopWorker();
+  process.exit(0);
 });
 /*! Bundled license information:
 

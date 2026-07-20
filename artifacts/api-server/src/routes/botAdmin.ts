@@ -3,6 +3,12 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { execFile } from "child_process";
+import {
+  enqueue,
+  getJobs,
+  clearDoneJobs,
+} from "../queue/jobQueue.js";
+import { listPlugins } from "../checkers/index.js";
 
 const router = Router();
 
@@ -2153,9 +2159,10 @@ function healthDefaults(cfg: any) {
     passwordField: "password",
     successStatus: 200,
     successPattern: "",
-    timeoutMs: 10000,
+    timeoutMs: 60000,
     autoCheckEnabled: false,
     autoCheckIntervalMinutes: 60,
+    workerCount: 2,
     ...cfg,
   };
 }
@@ -2214,11 +2221,10 @@ router.get("/bot/accounts/:id/health-history", requireAuth, (req: any, res: any)
 });
 
 // ── POST /bot/accounts/health/check ─────────────────────────────────────────
-// Body: { accountId?: string }  — omit accountId entirely to check all accounts.
-// Providing accountId but with an invalid/empty value is rejected with 400.
-router.post("/bot/accounts/health/check", requireAuth, async (req: any, res: any) => {
+// Enqueues one account (body: { accountId }) or all accounts (no body / empty body).
+// Returns immediately with { ok, queued, jobIds } — actual checks run in the worker.
+router.post("/bot/accounts/health/check", requireAuth, (req: any, res: any) => {
   const body = req.body ?? {};
-  // Distinguish "not provided" (check all) from "provided but invalid" (reject)
   const wantSingle = Object.prototype.hasOwnProperty.call(body, "accountId");
   const accountId: string | undefined = wantSingle ? body.accountId : undefined;
 
@@ -2228,10 +2234,6 @@ router.post("/bot/accounts/health/check", requireAuth, async (req: any, res: any
   }
 
   const accounts: any[] = ensureStableAccountIds();
-  const h = readHealth();
-  if (!h.checks) h.checks = {};
-  const cfg = healthDefaults(h.config ?? {});
-
   const toCheck = wantSingle
     ? accounts.filter((a: any) => a.id === accountId)
     : accounts;
@@ -2240,106 +2242,43 @@ router.post("/bot/accounts/health/check", requireAuth, async (req: any, res: any
     if (wantSingle) {
       res.status(404).json({ ok: false, message: `Không tìm thấy tài khoản với ID: ${accountId}` });
     } else {
-      res.json({ ok: true, checked: 0, healthy: 0, unhealthy: 0, error: 0, manual: 0, results: [] });
+      res.json({ ok: true, queued: 0, jobIds: [] });
     }
     return;
   }
 
-  const results: any[] = [];
+  const jobIds = toCheck.map((acc: any) => enqueue(acc).id);
+  addLog("HEALTH_CHECK_ENQUEUE", `queued=${jobIds.length}`, "web-admin");
+  res.json({ ok: true, queued: jobIds.length, jobIds });
+});
 
-  // No URL configured → manual ping
-  if (!cfg.checkUrl) {
-    const checkedAt = now();
-    for (const acc of toCheck) {
-      const entry = {
-        checkedAt,
-        status: "manual",
-        message: "Chưa cấu hình URL kiểm tra — ghi nhận thủ công",
-        responseTime: null,
-        httpStatus: null,
-      };
-      if (!h.checks[acc.id]) h.checks[acc.id] = [];
-      h.checks[acc.id].push(entry);
-      if (h.checks[acc.id].length > MAX_HEALTH_HISTORY) {
-        h.checks[acc.id] = h.checks[acc.id].slice(-MAX_HEALTH_HISTORY);
-      }
-      results.push({ id: acc.id, email: acc.email, ...entry });
-    }
-    writeJson("account_health", h);
-    res.json({ ok: true, checked: toCheck.length, healthy: 0, unhealthy: 0, error: 0, manual: toCheck.length, results });
-    return;
-  }
-
-  // HTTP-based health check
-  for (const acc of toCheck) {
-    const start = Date.now();
-    let status = "error";
-    let message = "";
-    let httpStatus: number | null = null;
-    let responseTime: number | null = null;
-
-    try {
-      const bodyObj: Record<string, string> = {
-        [cfg.emailField]: acc.email,
-        [cfg.passwordField]: acc.password,
-      };
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
-
-      const resp = await fetch(cfg.checkUrl, {
-        method: cfg.method,
-        headers: { "Content-Type": "application/json", "User-Agent": "HealthCheck/1.0" },
-        body: cfg.method !== "GET" ? JSON.stringify(bodyObj) : undefined,
-        signal: controller.signal,
-      } as RequestInit);
-      clearTimeout(timer);
-
-      responseTime = Date.now() - start;
-      httpStatus = resp.status;
-      const text = await resp.text().catch(() => "");
-
-      const statusOk = resp.status === (cfg.successStatus ?? 200);
-      const patternOk = cfg.successPattern ? text.includes(cfg.successPattern) : true;
-
-      if (statusOk && patternOk) {
-        status = "healthy";
-        message = `OK (${resp.status}) — ${responseTime}ms`;
-      } else {
-        status = "unhealthy";
-        const reasons = [];
-        if (!statusOk) reasons.push(`HTTP ${resp.status} (expected ${cfg.successStatus})`);
-        if (!patternOk) reasons.push("pattern không khớp");
-        message = reasons.join("; ");
-      }
-    } catch (e: any) {
-      responseTime = Date.now() - start;
-      message = e.name === "AbortError"
-        ? `Timeout sau ${cfg.timeoutMs}ms`
-        : `Lỗi kết nối: ${e.message ?? "Unknown"}`;
-    }
-
-    const entry = { checkedAt: new Date().toISOString(), status, message, responseTime, httpStatus };
-    if (!h.checks[acc.id]) h.checks[acc.id] = [];
-    h.checks[acc.id].push(entry);
-    if (h.checks[acc.id].length > MAX_HEALTH_HISTORY) {
-      h.checks[acc.id] = h.checks[acc.id].slice(-MAX_HEALTH_HISTORY);
-    }
-    results.push({ id: acc.id, email: acc.email, ...entry });
-  }
-
-  writeJson("account_health", h);
-  addLog("HEALTH_CHECK", `checked=${toCheck.length}`, "web-admin");
-
-  res.json({
-    ok: true,
-    checked: results.length,
-    healthy:  results.filter(r => r.status === "healthy").length,
-    unhealthy: results.filter(r => r.status === "unhealthy").length,
-    error:    results.filter(r => r.status === "error").length,
-    manual:   0,
-    results,
+// ── GET /bot/health/jobs ─────────────────────────────────────────────────────
+// Query params: status (comma-separated), accountId
+router.get("/bot/health/jobs", requireAuth, (req: any, res: any) => {
+  const { status, accountId } = req.query ?? {};
+  const statusFilter = status
+    ? String(status).split(",").map((s: string) => s.trim()).filter(Boolean)
+    : undefined;
+  const jobs = getJobs({
+    status: statusFilter,
+    accountId: accountId ? String(accountId) : undefined,
   });
+  // Attach plugin name for display
+  const plugins = listPlugins();
+  const pluginMap = Object.fromEntries(plugins.map(p => [p.id, p.name]));
+  const enriched = jobs.map((j: any) => ({
+    ...j,
+    pluginName: pluginMap[j.type?.toLowerCase()] ?? null,
+  }));
+  res.json(enriched);
+});
+
+// ── DELETE /bot/health/jobs/done ─────────────────────────────────────────────
+// Body: { accountId? } — omit to clear all finished jobs
+router.delete("/bot/health/jobs/done", requireAuth, (req: any, res: any) => {
+  const { accountId } = req.body ?? {};
+  clearDoneJobs(accountId);
+  res.json({ ok: true });
 });
 
 // ── DELETE /bot/accounts/health/clear ────────────────────────────────────────
