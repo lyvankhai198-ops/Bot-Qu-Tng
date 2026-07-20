@@ -49945,6 +49945,76 @@ function trimOldJobs() {
 }
 
 // src/checkers/grok.ts
+var STEALTH_SCRIPT = `
+  // 1. Xo\xE1 webdriver flag
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  delete (navigator as any).__proto__.webdriver;
+
+  // 2. Chrome runtime gi\u1EA3
+  (window as any).chrome = {
+    app: { isInstalled: false, InstallState: { DISABLED:'disabled',INSTALLED:'installed',NOT_INSTALLED:'not_installed' }, RunningState: { CANNOT_RUN:'cannot_run',READY_TO_RUN:'ready_to_run',RUNNING:'running' } },
+    csi: function(){},
+    loadTimes: function(){},
+    runtime: { PlatformOs: { MAC:'mac',WIN:'win',ANDROID:'android',CROS:'cros',LINUX:'linux',OPENBSD:'openbsd' }, PlatformArch: { ARM:'arm',X86_32:'x86-32',X86_64:'x86-64' }, PlatformNaclArch: { ARM:'arm',X86_32:'x86-32',X86_64:'x86-64' }, RequestUpdateCheckStatus: { THROTTLED:'throttled',NO_UPDATE:'no_update',UPDATE_AVAILABLE:'update_available' }, OnInstalledReason: { INSTALL:'install',UPDATE:'update',CHROME_UPDATE:'chrome_update',SHARED_MODULE_UPDATE:'shared_module_update' }, OnRestartRequiredReason: { APP_UPDATE:'app_update',OS_UPDATE:'os_update',PERIODIC:'periodic' } },
+  };
+
+  // 3. Permissions API kh\xF4ng b\u1ECB detect
+  const origQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+  (window.navigator.permissions as any).query = (parameters: any) =>
+    parameters.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
+      : origQuery(parameters);
+
+  // 4. Plugins gi\u1EA3
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+      const arr: any = [
+        { name:'Chrome PDF Plugin',    filename:'internal-pdf-viewer',  description:'Portable Document Format', length:1 },
+        { name:'Chrome PDF Viewer',    filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai', description:'',length:1 },
+        { name:'Native Client',        filename:'internal-nacl-plugin',  description:'',length:2 },
+      ];
+      arr.item   = (i: number) => arr[i];
+      arr.namedItem = (n: string) => arr.find((p: any) => p.name === n) ?? null;
+      arr.refresh   = () => {};
+      Object.setPrototypeOf(arr, PluginArray.prototype);
+      return arr;
+    },
+  });
+
+  // 5. Languages
+  Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
+
+  // 6. outerWidth / outerHeight kh\u1EDBp viewport
+  Object.defineProperty(window, 'outerWidth',  { get: () => window.innerWidth  + 16 });
+  Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 88 });
+
+  // 7. Xo\xE1 c\xE1c bi\u1EBFn Playwright/CDP
+  const toDelete = [
+    '__playwright','__pw_manual','__webdriver_evaluate','__selenium_evaluate',
+    '__fxdriver_evaluate','__driver_evaluate','__webdriver_script_func',
+    '__webdriver_script_fn','__webdriver_script_function',
+    '__selenium_unwrapped','__webdriverFunc','__lastWatirAlert',
+    '__lastWatirConfirm','__lastWatirPrompt','_WEBDRIVER_ELEM_CACHE',
+    'ChromeDriverw','cdc_adoQpoasnfa76pfcZLmcfl_Array',
+    'cdc_adoQpoasnfa76pfcZLmcfl_Promise','cdc_adoQpoasnfa76pfcZLmcfl_Symbol',
+  ];
+  for (const k of toDelete) {
+    try { delete (window as any)[k]; } catch {}
+  }
+
+  // 8. Iframe contentWindow kh\xF4ng b\u1ECB detect
+  try {
+    const origFrameGetter = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'contentWindow')!.get!;
+    Object.defineProperty(HTMLIFrameElement.prototype,'contentWindow',{
+      get() {
+        const w = origFrameGetter.call(this);
+        if (!w) return w;
+        Object.defineProperty(w.navigator, 'webdriver', { get: () => undefined });
+        return w;
+      }
+    });
+  } catch {}
+`;
 var grokPlugin = {
   id: "grok",
   name: "Grok AI (SuperGrok \u2014 grok.com)",
@@ -49956,14 +50026,39 @@ var grokPlugin = {
     const elapsed = () => Date.now() - start;
     const log = (msg) => {
       logs.push(`[${elapsed()}ms] ${msg}`);
-      console.log(`[grok-checker] ${msg}`);
+      console.log(`[grok] ${msg}`);
     };
-    const safeText = async (page, sel, t = 5e3) => page.locator(sel).first().textContent({ timeout: t }).catch(() => "");
-    const safeVisible = async (page, sel, t = 5e3) => page.locator(sel).first().isVisible({ timeout: t }).catch(() => false);
     const bodyText = async (page) => page.locator("body").innerText().catch(() => "");
+    const isVisible = async (page, sel, t = 5e3) => page.locator(sel).first().isVisible({ timeout: t }).catch(() => false);
+    const waitCloudflare = async (page, maxMs) => {
+      const deadline = Date.now() + maxMs;
+      while (Date.now() < deadline) {
+        const bt2 = await bodyText(page);
+        const url = page.url();
+        if (/Performing security verification|Just a moment|checking your browser|security service.*malicious bot/i.test(bt2)) {
+          log(`Cloudflare challenge active \u2014 waiting (${Math.round((deadline - Date.now()) / 1e3)}s left)`);
+          await page.waitForTimeout(4e3);
+          if (Date.now() + 4e3 < deadline) {
+            const stillCf = await bodyText(page);
+            if (/Performing security verification|Just a moment/i.test(stillCf)) {
+              if (deadline - Date.now() > 2e4) {
+                log("CF still active after 4s \u2014 reloading page");
+                await page.reload({ waitUntil: "domcontentloaded", timeout: 15e3 }).catch(() => {
+                });
+                await page.waitForTimeout(5e3);
+              }
+            }
+          }
+          continue;
+        }
+        return true;
+      }
+      const bt = await bodyText(page);
+      return !/Performing security verification|Just a moment|checking your browser/i.test(bt);
+    };
     try {
       const { chromium } = await import("playwright");
-      log("Launching Chromium (stealth mode)");
+      log("Launching Chromium");
       browser = await chromium.launch({
         headless: true,
         args: [
@@ -49973,8 +50068,11 @@ var grokPlugin = {
           "--disable-gpu",
           "--disable-blink-features=AutomationControlled",
           "--window-size=1280,900",
-          "--disable-web-security",
-          "--allow-running-insecure-content"
+          "--disable-features=IsolateOrigins,site-per-process",
+          "--disable-site-isolation-trials",
+          "--disable-extensions",
+          "--no-first-run",
+          "--ignore-certificate-errors"
         ]
       });
       const ctx = await browser.newContext({
@@ -49983,55 +50081,46 @@ var grokPlugin = {
         locale: "en-US",
         timezoneId: "America/New_York",
         extraHTTPHeaders: {
-          "Accept-Language": "en-US,en;q=0.9"
+          "Accept-Language": "en-US,en;q=0.9",
+          "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+          "sec-ch-ua-mobile": "?0",
+          "sec-ch-ua-platform": '"Windows"'
         }
       });
-      await ctx.addInitScript(() => {
-        Object.defineProperty(navigator, "webdriver", { get: () => void 0 });
-        window.chrome = { runtime: {} };
-        Object.defineProperty(navigator, "plugins", {
-          get: () => [1, 2, 3, 4, 5]
-        });
-        Object.defineProperty(navigator, "languages", {
-          get: () => ["en-US", "en"]
-        });
-      });
+      await ctx.addInitScript(STEALTH_SCRIPT);
       const page = await ctx.newPage();
       page.setDefaultTimeout(timeoutMs);
-      log("Navigating to https://grok.com");
+      log("Opening grok.com");
       await page.goto("https://grok.com", {
         waitUntil: "domcontentloaded",
         timeout: 3e4
       });
       await page.waitForTimeout(3e3);
       let url = page.url();
-      log(`After grok.com load \u2014 URL: ${url}`);
-      const atLoginAlready = url.includes("grok.com/auth") || url.includes("/login") || url.includes("/signin");
-      if (!atLoginAlready) {
+      log(`grok.com loaded \u2014 URL: ${url}`);
+      const alreadyAuth = url.includes("grok.com/auth") || url.includes("/login") || url.includes("/signin");
+      if (!alreadyAuth) {
         const signInSels = [
+          'button:has-text("Sign in")',
+          'a:has-text("Sign in")',
+          'button:has-text("Log in")',
+          'a:has-text("Log in")',
           'a[href*="sign-in"]',
           'a[href*="login"]',
-          'a[href*="auth"]',
-          'button:has-text("Sign in")',
-          'button:has-text("Log in")',
-          'a:has-text("Sign in")',
-          'a:has-text("Log in")',
-          '[data-testid*="login"]',
-          '[data-testid*="signin"]'
+          'a[href*="auth"]'
         ];
         let clicked = false;
         for (const sel of signInSels) {
-          const btn = page.locator(sel).first();
-          if (await btn.isVisible({ timeout: 3e3 }).catch(() => false)) {
-            log(`Clicking sign-in via selector: ${sel}`);
-            await btn.click();
+          if (await isVisible(page, sel, 3e3)) {
+            log(`Clicking: ${sel}`);
+            await page.locator(sel).first().click();
             await page.waitForTimeout(3e3);
             clicked = true;
             break;
           }
         }
         if (!clicked) {
-          log("Sign in button not found \u2192 navigating to /auth/login");
+          log("No sign-in button \u2192 going to /auth/login directly");
           await page.goto("https://grok.com/auth/login", {
             waitUntil: "domcontentloaded",
             timeout: 2e4
@@ -50040,137 +50129,145 @@ var grokPlugin = {
         }
       }
       url = page.url();
-      log(`After sign-in navigation \u2014 URL: ${url}`);
-      const emailLoginSels = [
+      log(`At auth page \u2014 URL: ${url}`);
+      {
+        const bt = await bodyText(page);
+        if (/Performing security verification|Just a moment|checking your browser|security service.*malicious bot/i.test(bt)) {
+          log("Cloudflare Managed Challenge detected \u2014 waiting up to 50s for auto-solve");
+          const passed = await waitCloudflare(page, 5e4);
+          if (!passed) {
+            return {
+              code: "CAPTCHA",
+              message: "Cloudflare bot protection kh\xF4ng th\u1EC3 bypass trong headless mode. VPS IP b\u1ECB block.",
+              responseTime: elapsed(),
+              playwrightLog: logs.join("\n")
+            };
+          }
+          url = page.url();
+          log(`After CF \u2014 URL: ${url}`);
+        }
+      }
+      const emailBtnSels = [
         'button:has-text("Continue with email")',
         'button:has-text("Sign in with email")',
-        'button:has-text("Email")',
         'a:has-text("Continue with email")',
-        'a:has-text("Sign in with email")',
-        '[data-provider="email"]',
-        'button[type="button"]:has-text("email")'
+        '[data-provider="email"]'
       ];
-      let emailLoginClicked = false;
-      for (const sel of emailLoginSels) {
-        const btn = page.locator(sel).first();
-        if (await btn.isVisible({ timeout: 4e3 }).catch(() => false)) {
-          log(`Clicking email login option: ${sel}`);
-          await btn.click();
+      for (const sel of emailBtnSels) {
+        if (await isVisible(page, sel, 4e3)) {
+          log(`Clicking email login: ${sel}`);
+          await page.locator(sel).first().click();
           await page.waitForTimeout(2500);
-          emailLoginClicked = true;
           break;
         }
       }
-      if (!emailLoginClicked) {
-        log("Email login button not found \u2014 may already be on email form");
-      }
       url = page.url();
       log(`After email option \u2014 URL: ${url}`);
-      const emailSelectors = [
+      {
+        const bt = await bodyText(page);
+        if (/Performing security verification|Just a moment/i.test(bt)) {
+          log("CF challenge after email click \u2014 waiting 30s");
+          const passed = await waitCloudflare(page, 3e4);
+          if (!passed) {
+            return {
+              code: "CAPTCHA",
+              message: "Cloudflare block \u1EDF b\u01B0\u1EDBc ch\u1ECDn email login",
+              responseTime: elapsed(),
+              playwrightLog: logs.join("\n")
+            };
+          }
+        }
+      }
+      const emailInputSels = [
         'input[type="email"]',
         'input[name="email"]',
         'input[autocomplete="email"]',
         'input[placeholder*="email" i]',
-        'input[placeholder*="Email" i]',
         'input[type="text"]'
       ];
       let emailInput = null;
-      for (const sel of emailSelectors) {
+      for (const sel of emailInputSels) {
         const el = page.locator(sel).first();
-        if (await el.isVisible({ timeout: 5e3 }).catch(() => false)) {
+        if (await el.isVisible({ timeout: 8e3 }).catch(() => false)) {
           emailInput = el;
-          log(`Found email input: ${sel}`);
+          log(`Email input found: ${sel}`);
           break;
         }
       }
       if (!emailInput) {
-        const bodySnip = (await bodyText(page)).slice(0, 500);
-        log(`Email input not found. Body: ${bodySnip}`);
-        return {
-          code: "UNKNOWN",
-          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 nh\u1EADp email tr\xEAn grok.com \u2014 URL: ${url.split("?")[0]}`,
-          responseTime: elapsed(),
-          playwrightLog: logs.join("\n")
-        };
-      }
-      log("Filling email");
-      await emailInput.click();
-      await page.waitForTimeout(300);
-      await emailInput.fill(email);
-      await page.waitForTimeout(500);
-      const nextBtns = [
-        'button:has-text("Next")',
-        'button:has-text("Continue")',
-        'button[type="submit"]',
-        'input[type="submit"]'
-      ];
-      let nextClicked = false;
-      for (const sel of nextBtns) {
-        const btn = page.locator(sel).first();
-        if (await btn.isVisible({ timeout: 3e3 }).catch(() => false)) {
-          log(`Clicking Next: ${sel}`);
-          await btn.click();
-          nextClicked = true;
-          break;
-        }
-      }
-      if (!nextClicked) {
-        log("Next button not found \u2014 pressing Enter");
-        await emailInput.press("Enter");
-      }
-      await page.waitForTimeout(3e3);
-      url = page.url();
-      log(`After email submit \u2014 URL: ${url}`);
-      const pwSelectors = [
-        'input[type="password"]',
-        'input[name="password"]',
-        'input[autocomplete="current-password"]'
-      ];
-      let pwInput = null;
-      for (const sel of pwSelectors) {
-        const el = page.locator(sel).first();
-        if (await el.isVisible({ timeout: 1e4 }).catch(() => false)) {
-          pwInput = el;
-          log(`Found password input: ${sel}`);
-          break;
-        }
-      }
-      if (!pwInput) {
-        const bt2 = (await bodyText(page)).slice(0, 600);
-        log(`Password input not found. Body: ${bt2}`);
-        if (/invalid|not found|no account|doesn't exist/i.test(bt2)) {
+        const bt = (await bodyText(page)).slice(0, 600);
+        log(`Email input not found \u2014 body: ${bt}`);
+        if (/Performing security verification|Just a moment|security service/i.test(bt)) {
           return {
-            code: "PASSWORD_INVALID",
-            message: "Email kh\xF4ng t\u1ED3n t\u1EA1i ho\u1EB7c kh\xF4ng h\u1EE3p l\u1EC7",
+            code: "CAPTCHA",
+            message: "Cloudflare bot protection ch\u1EB7n \u2014 kh\xF4ng v\xE0o \u0111\u01B0\u1EE3c form \u0111\u0103ng nh\u1EADp",
             responseTime: elapsed(),
             playwrightLog: logs.join("\n")
           };
         }
         return {
           code: "UNKNOWN",
-          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 m\u1EADt kh\u1EA9u \u2014 URL: ${url.split("?")[0]}`,
+          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 email \u2014 URL: ${url.split("?")[0]}`,
           responseTime: elapsed(),
           playwrightLog: logs.join("\n")
         };
+      }
+      log("Filling email");
+      await emailInput.click();
+      await page.waitForTimeout(400);
+      await emailInput.fill(email);
+      await page.waitForTimeout(500);
+      const nextSels = [
+        'button:has-text("Next")',
+        'button:has-text("Continue")',
+        'button[type="submit"]'
+      ];
+      let nextClicked = false;
+      for (const sel of nextSels) {
+        if (await isVisible(page, sel, 3e3)) {
+          log(`Next: ${sel}`);
+          await page.locator(sel).first().click();
+          nextClicked = true;
+          break;
+        }
+      }
+      if (!nextClicked) await emailInput.press("Enter");
+      await page.waitForTimeout(3e3);
+      url = page.url();
+      log(`After email submit \u2014 URL: ${url}`);
+      let pwInput = null;
+      for (const sel of ['input[type="password"]', 'input[name="password"]', 'input[autocomplete="current-password"]']) {
+        const el = page.locator(sel).first();
+        if (await el.isVisible({ timeout: 12e3 }).catch(() => false)) {
+          pwInput = el;
+          log(`Password input found: ${sel}`);
+          break;
+        }
+      }
+      if (!pwInput) {
+        const bt = (await bodyText(page)).slice(0, 600);
+        log(`Password not found \u2014 body: ${bt}`);
+        if (/invalid|not found|no account|doesn't exist/i.test(bt)) {
+          return { code: "PASSWORD_INVALID", message: "Email kh\xF4ng t\u1ED3n t\u1EA1i", responseTime: elapsed(), playwrightLog: logs.join("\n") };
+        }
+        return { code: "UNKNOWN", message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 m\u1EADt kh\u1EA9u \u2014 URL: ${url.split("?")[0]}`, responseTime: elapsed(), playwrightLog: logs.join("\n") };
       }
       log("Filling password");
       await pwInput.click();
       await page.waitForTimeout(300);
       await pwInput.fill(password);
       await page.waitForTimeout(500);
-      const loginBtns = [
+      const loginSels = [
         'button:has-text("Sign in")',
         'button:has-text("Log in")',
         'button:has-text("Login")',
-        'button[type="submit"]',
-        'input[type="submit"]'
+        'button[type="submit"]'
       ];
       let loginClicked = false;
-      for (const sel of loginBtns) {
-        const btn = page.locator(sel).first();
-        if (await btn.isVisible({ timeout: 3e3 }).catch(() => false)) {
-          log(`Clicking login button: ${sel}`);
-          await btn.click();
+      for (const sel of loginSels) {
+        if (await isVisible(page, sel, 3e3)) {
+          log(`Login button: ${sel}`);
+          await page.locator(sel).first().click();
           loginClicked = true;
           break;
         }
@@ -50179,62 +50276,42 @@ var grokPlugin = {
         log("Login button not found \u2014 pressing Enter");
         await pwInput.press("Enter");
       }
-      log("Waiting for login result (up to 30s)...");
+      log("Waiting for login result...");
       await page.waitForTimeout(5e3);
-      const captchaIndicators = [
-        'iframe[src*="challenges.cloudflare.com"]',
-        'iframe[src*="turnstile"]',
-        'iframe[src*="hcaptcha"]',
-        '[class*="captcha"]',
-        '[id*="captcha"]',
-        'input[name="cf-turnstile-response"]'
-      ];
-      let hasCaptcha = false;
-      for (const sel of captchaIndicators) {
-        if (await safeVisible(page, sel, 3e3)) {
-          hasCaptcha = true;
-          log(`CAPTCHA detected: ${sel} \u2014 waiting for auto-solve (30s)...`);
-          break;
-        }
-      }
-      if (hasCaptcha) {
-        let captchaResolved = false;
-        for (let i = 0; i < 6; i++) {
-          await page.waitForTimeout(5e3);
-          url = page.url();
-          if (!url.includes("/login") && !url.includes("/auth/login")) {
-            captchaResolved = true;
-            log(`CAPTCHA resolved \u2014 redirected to: ${url}`);
-            break;
+      {
+        const bt = await bodyText(page);
+        if (/Performing security verification|Just a moment|security service/i.test(bt)) {
+          log("CF challenge after submit \u2014 waiting 40s");
+          const passed = await waitCloudflare(page, 4e4);
+          if (!passed) {
+            return { code: "CAPTCHA", message: "Cloudflare block \u1EDF b\u01B0\u1EDBc submit login", responseTime: elapsed(), playwrightLog: logs.join("\n") };
           }
-          const submitBtn = page.locator('button[type="submit"], button:has-text("Sign in"), button:has-text("Continue")').first();
-          if (await submitBtn.isEnabled({ timeout: 1e3 }).catch(() => false)) {
-            const isLoading = await submitBtn.getAttribute("data-loading").catch(() => null);
-            if (!isLoading) {
-              log(`Retrying submit after captcha (attempt ${i + 1})`);
-              await submitBtn.click().catch(() => {
+          url = page.url();
+          log(`After submit CF \u2014 URL: ${url}`);
+        }
+        const hasTurnstile = await isVisible(page, 'iframe[src*="challenges.cloudflare.com"]', 2e3) || await isVisible(page, 'iframe[src*="turnstile"]', 2e3);
+        if (hasTurnstile) {
+          log("Turnstile CAPTCHA on form \u2014 waiting up to 30s for auto-solve");
+          for (let i = 0; i < 6; i++) {
+            await page.waitForTimeout(5e3);
+            url = page.url();
+            if (!url.includes("/login") && !url.includes("/auth")) break;
+            const btn = page.locator('button[type="submit"]:not([disabled])').first();
+            if (await btn.isVisible({ timeout: 1e3 }).catch(() => false)) {
+              log(`Retrying submit (${i + 1})`);
+              await btn.click().catch(() => {
               });
-              await page.waitForTimeout(3e3);
             }
-          }
-        }
-        if (!captchaResolved) {
-          url = page.url();
-          if (url.includes("/login") || url.includes("/auth")) {
-            return {
-              code: "CAPTCHA",
-              message: "Grok.com y\xEAu c\u1EA7u CAPTCHA v\xE0 kh\xF4ng th\u1EC3 t\u1EF1 gi\u1EA3i trong headless mode",
-              responseTime: elapsed(),
-              playwrightLog: logs.join("\n")
-            };
           }
         }
       }
       url = page.url();
-      log(`After login attempt \u2014 URL: ${url}`);
       if (url.includes("/login") || url.includes("/auth/login")) {
         try {
-          await page.waitForURL((u) => !u.includes("/login") && !u.includes("/auth/login"), { timeout: 15e3 });
+          await page.waitForURL(
+            (u) => !u.includes("/login") && !u.includes("/auth/login"),
+            { timeout: 2e4 }
+          );
           url = page.url();
           log(`Redirected after login \u2014 URL: ${url}`);
         } catch {
@@ -50242,40 +50319,23 @@ var grokPlugin = {
           log(`Still on login page \u2014 URL: ${url}`);
         }
       }
-      const bt = await bodyText(page);
+      const afterBt = await bodyText(page);
       if (url.includes("/login") || url.includes("/auth/login")) {
-        if (/invalid.*password|wrong.*password|incorrect.*password|password.*incorrect/i.test(bt) || /invalid.*email|wrong.*email|email.*not.*found/i.test(bt)) {
-          return {
-            code: "PASSWORD_INVALID",
-            message: "Sai email ho\u1EB7c m\u1EADt kh\u1EA9u",
-            responseTime: elapsed(),
-            playwrightLog: logs.join("\n")
-          };
+        if (/invalid.*password|wrong.*password|incorrect.*password|password.*incorrect|incorrect.*email/i.test(afterBt)) {
+          return { code: "PASSWORD_INVALID", message: "Sai email ho\u1EB7c m\u1EADt kh\u1EA9u", responseTime: elapsed(), playwrightLog: logs.join("\n") };
         }
-        if (/verify.*email|confirm.*email|check.*email/i.test(bt)) {
-          return {
-            code: "REQUIRE_2FA",
-            message: "C\u1EA7n x\xE1c minh email",
-            responseTime: elapsed(),
-            playwrightLog: logs.join("\n")
-          };
+        if (/verify.*email|confirm.*email|check.*email/i.test(afterBt)) {
+          return { code: "REQUIRE_2FA", message: "C\u1EA7n x\xE1c minh email", responseTime: elapsed(), playwrightLog: logs.join("\n") };
         }
-        if (/two.factor|2fa|authenticator|verification code/i.test(bt)) {
-          return {
-            code: "REQUIRE_2FA",
-            message: "C\u1EA7n x\xE1c minh 2FA",
-            responseTime: elapsed(),
-            playwrightLog: logs.join("\n")
-          };
+        if (/two.factor|2fa|authenticator/i.test(afterBt)) {
+          return { code: "REQUIRE_2FA", message: "C\u1EA7n x\xE1c minh 2FA", responseTime: elapsed(), playwrightLog: logs.join("\n") };
         }
-        return {
-          code: "UNKNOWN",
-          message: `\u0110\u0103ng nh\u1EADp kh\xF4ng th\xE0nh c\xF4ng \u2014 v\u1EABn \u1EDF trang login: ${url.split("?")[0]}`,
-          responseTime: elapsed(),
-          playwrightLog: logs.join("\n")
-        };
+        if (/Performing security verification|Just a moment/i.test(afterBt)) {
+          return { code: "CAPTCHA", message: "Cloudflare block sau login", responseTime: elapsed(), playwrightLog: logs.join("\n") };
+        }
+        return { code: "UNKNOWN", message: `Login kh\xF4ng th\xE0nh c\xF4ng \u2014 URL: ${url.split("?")[0]}`, responseTime: elapsed(), playwrightLog: logs.join("\n") };
       }
-      log("Login successful \u2014 reloading grok.com to check subscription");
+      log("Login OK \u2014 reloading grok.com to check subscription");
       await page.goto("https://grok.com", {
         waitUntil: "domcontentloaded",
         timeout: 2e4
@@ -50283,111 +50343,93 @@ var grokPlugin = {
       await page.waitForTimeout(4e3);
       url = page.url();
       log(`After reload \u2014 URL: ${url}`);
-      if (url.includes("/login") || url.includes("/auth/login")) {
-        return {
-          code: "UNKNOWN",
-          message: "\u0110\u0103ng nh\u1EADp b\u1ECB reset sau reload \u2014 session kh\xF4ng gi\u1EEF \u0111\u01B0\u1EE3c",
-          responseTime: elapsed(),
-          playwrightLog: logs.join("\n")
-        };
+      if (url.includes("/login") || url.includes("/auth")) {
+        return { code: "UNKNOWN", message: "Session b\u1ECB reset sau reload", responseTime: elapsed(), playwrightLog: logs.join("\n") };
       }
       let isSuper = false;
       let subscriptionPlan = "";
-      const pageBody = await bodyText(page);
-      log(`Body snippet (500): ${pageBody.slice(0, 500)}`);
-      if (/supergrok|super\s*grok|grok\s*super|SuperGrok/i.test(pageBody)) {
+      const homeBody = await bodyText(page);
+      log(`Home body (500): ${homeBody.slice(0, 500)}`);
+      if (/supergrok|super\s*grok|grok\s*super|SuperGrok/i.test(homeBody)) {
         isSuper = true;
         subscriptionPlan = "SuperGrok";
-        log("Found SuperGrok in page body");
+        log("Found SuperGrok in home body");
       }
       if (!isSuper) {
         try {
-          const sessionData = await page.evaluate(async () => {
+          const sess = await page.evaluate(async () => {
             const r = await fetch("/api/auth/session", { credentials: "include" }).catch(() => null);
             return r ? r.json().catch(() => null) : null;
           });
-          if (sessionData) {
-            const sessionStr = JSON.stringify(sessionData);
-            log(`Session API: ${sessionStr.slice(0, 400)}`);
-            if (/super|pro|premium|subscription|active/i.test(sessionStr)) {
+          if (sess) {
+            const s = JSON.stringify(sess);
+            log(`Session: ${s.slice(0, 400)}`);
+            if (/super|pro|premium|subscription/i.test(s)) {
               isSuper = true;
-              const m = sessionStr.match(/(SuperGrok|super_grok|grok_pro|grokPro|premium)/i);
-              if (m) subscriptionPlan = m[0];
-              log(`Found subscription in session: ${subscriptionPlan}`);
+              const m = s.match(/(SuperGrok|super_grok|grok_pro|premium)/i);
+              subscriptionPlan = m?.[0] ?? "SuperGrok";
+              log(`Found in session: ${subscriptionPlan}`);
             }
           }
-        } catch (err) {
-          log(`Session API error: ${err?.message?.slice(0, 80)}`);
+        } catch {
         }
       }
       if (!isSuper) {
         try {
-          log("Checking /settings for subscription info");
-          await page.goto("https://grok.com/settings", {
-            waitUntil: "domcontentloaded",
-            timeout: 15e3
-          });
+          await page.goto("https://grok.com/settings", { waitUntil: "domcontentloaded", timeout: 15e3 });
           await page.waitForTimeout(3e3);
-          const settingsText = await bodyText(page);
-          log(`Settings body (800): ${settingsText.slice(0, 800)}`);
-          const planMatch = settingsText.match(
-            /(SuperGrok|Super\s*Grok|Grok\s*Super|annual|monthly|subscriber|Premium|Pro Plan)/i
-          );
-          if (planMatch) {
-            subscriptionPlan = planMatch[0];
+          const st = await bodyText(page);
+          log(`Settings (800): ${st.slice(0, 800)}`);
+          const m = st.match(/(SuperGrok|Super\s*Grok|annual|monthly|subscriber|Premium|Pro\s*Plan)/i);
+          if (m) {
             isSuper = true;
-            log(`Found subscription in settings: ${subscriptionPlan}`);
+            subscriptionPlan = m[0];
+            log(`Found in settings: ${subscriptionPlan}`);
           }
-          const badges = await page.locator('[class*="badge"], [class*="plan"], [class*="tier"], [class*="subscription"], [class*="premium"]').allTextContents().catch(() => []);
-          if (badges.some((b) => /super|pro|premium/i.test(b))) {
+          const badges = await page.locator('[class*="badge"],[class*="plan"],[class*="tier"],[class*="subscription"],[class*="premium"]').allTextContents().catch(() => []);
+          const hit = badges.find((b) => /super|pro|premium/i.test(b));
+          if (hit) {
             isSuper = true;
-            subscriptionPlan = badges.find((b) => /super|pro|premium/i.test(b)) ?? "SuperGrok";
-            log(`Found subscription badge: ${subscriptionPlan}`);
+            subscriptionPlan = hit;
+            log(`Found badge: ${subscriptionPlan}`);
           }
         } catch (err) {
-          log(`Settings error: ${err?.message?.slice(0, 80)}`);
+          log(`Settings err: ${err?.message?.slice(0, 60)}`);
         }
       }
       if (!isSuper) {
         try {
-          await page.goto("https://grok.com", {
-            waitUntil: "domcontentloaded",
-            timeout: 15e3
-          });
+          await page.goto("https://grok.com", { waitUntil: "domcontentloaded", timeout: 15e3 });
           await page.waitForTimeout(3e3);
-          const planSels = [
-            '[class*="SuperGrok"], [class*="supergrok"]',
-            'span:has-text("SuperGrok"), div:has-text("SuperGrok")',
-            '[data-testid*="plan"], [data-testid*="subscription"]',
-            "nav span, aside span"
-          ];
-          for (const sel of planSels) {
-            const texts = await page.locator(sel).allTextContents().catch(() => []);
-            const hit = texts.find((t) => /super|pro/i.test(t));
+          for (const sel of [
+            '[class*="SuperGrok"],[class*="supergrok"]',
+            'span:has-text("SuperGrok"),div:has-text("SuperGrok")',
+            '[data-testid*="plan"],[data-testid*="subscription"]'
+          ]) {
+            const txts = await page.locator(sel).allTextContents().catch(() => []);
+            const hit = txts.find((t) => /super|pro/i.test(t));
             if (hit) {
               isSuper = true;
               subscriptionPlan = hit.trim();
-              log(`Found via selector "${sel}": ${subscriptionPlan}`);
+              log(`Found via ${sel}: ${subscriptionPlan}`);
               break;
             }
           }
-          const profileBtn = page.locator(
-            '[data-testid="user-menu"], [aria-label*="menu" i], button[aria-label*="profile" i], [data-testid*="avatar"]'
-          ).first();
-          if (!isSuper && await profileBtn.isVisible({ timeout: 3e3 }).catch(() => false)) {
-            await profileBtn.click().catch(() => {
+          const pBtn = page.locator('[data-testid="user-menu"],[aria-label*="menu" i],button[aria-label*="profile" i]').first();
+          if (!isSuper && await pBtn.isVisible({ timeout: 3e3 }).catch(() => false)) {
+            await pBtn.click().catch(() => {
             });
             await page.waitForTimeout(1500);
-            const menuText = await bodyText(page);
-            if (/SuperGrok|super\s*grok|super\s*plan/i.test(menuText)) {
+            const mt = await bodyText(page);
+            const m = mt.match(/SuperGrok|super\s*grok|super\s*plan/i);
+            if (m) {
               isSuper = true;
-              const m = menuText.match(/SuperGrok|super\s*grok|super\s*plan/i);
-              subscriptionPlan = m?.[0] ?? "SuperGrok";
-              log(`Found SuperGrok in profile menu: ${subscriptionPlan}`);
+              subscriptionPlan = m[0];
+              log(`Found in profile menu: ${subscriptionPlan}`);
             }
           }
         } catch (err) {
-          log(`Home page check error: ${err?.message?.slice(0, 80)}`);
+          log(`Home check err: ${err?.message?.slice(0, 60)}`);
         }
       }
       const finalTime = elapsed();
@@ -50409,36 +50451,12 @@ var grokPlugin = {
       const responseTime = elapsed();
       const msg = e?.message ?? String(e);
       log(`Exception: ${msg.slice(0, 300)}`);
-      if (/timeout/i.test(msg)) {
-        return {
-          code: "TIMEOUT",
-          message: `Timeout sau ${timeoutMs}ms`,
-          responseTime,
-          playwrightLog: logs.join("\n")
-        };
+      if (/timeout/i.test(msg)) return { code: "TIMEOUT", message: `Timeout sau ${timeoutMs}ms`, responseTime, playwrightLog: logs.join("\n") };
+      if (/Executable doesn't exist|browserType\.launch|Cannot find browser|Failed to launch|spawn.*ENOENT|Cannot find package.*playwright/i.test(msg)) {
+        return { code: "NETWORK_ERROR", message: "Chromium/playwright ch\u01B0a c\xE0i. Ch\u1EA1y: npx playwright install chromium --with-deps", responseTime, playwrightLog: logs.join("\n") };
       }
-      if (/Executable doesn't exist|browserType\.launch|Cannot find browser|browser.*not.*found|Failed to launch|spawn.*ENOENT|Cannot find package.*playwright/i.test(msg)) {
-        return {
-          code: "NETWORK_ERROR",
-          message: "Chromium / playwright ch\u01B0a c\xE0i. Ch\u1EA1y: npx playwright install chromium --with-deps",
-          responseTime,
-          playwrightLog: logs.join("\n")
-        };
-      }
-      if (/net::|ERR_/i.test(msg)) {
-        return {
-          code: "NETWORK_ERROR",
-          message: `L\u1ED7i k\u1EBFt n\u1ED1i: ${msg.slice(0, 150)}`,
-          responseTime,
-          playwrightLog: logs.join("\n")
-        };
-      }
-      return {
-        code: "UNKNOWN",
-        message: `Playwright error: ${msg.slice(0, 200)}`,
-        responseTime,
-        playwrightLog: logs.join("\n")
-      };
+      if (/net::|ERR_/i.test(msg)) return { code: "NETWORK_ERROR", message: `L\u1ED7i k\u1EBFt n\u1ED1i: ${msg.slice(0, 150)}`, responseTime, playwrightLog: logs.join("\n") };
+      return { code: "UNKNOWN", message: `Playwright error: ${msg.slice(0, 200)}`, responseTime, playwrightLog: logs.join("\n") };
     } finally {
       await browser?.close().catch(() => {
       });
