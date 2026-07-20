@@ -167,10 +167,32 @@ const grokPlugin: CheckerPlugin = {
       log(`At X.com login — URL: ${url}`);
 
       if (url.includes("x.com") || url.includes("accounts.x.com")) {
+        // Đợi trang load xong trước khi tìm input
+        await page.waitForLoadState("domcontentloaded").catch(() => {});
+        await page.waitForTimeout(3_000);
+
+        // Dismiss cookie consent nếu có
+        const cookieBtn = page.locator(
+          'button:has-text("Accept"), button:has-text("Allow"), ' +
+          '[data-testid="cookie-accept"], button:has-text("Agree")',
+        ).first();
+        if (await cookieBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+          log("Dismissing cookie/consent popup");
+          await cookieBtn.click().catch(() => {});
+          await page.waitForTimeout(1_500);
+        }
+
+        // Log HTML snippet để debug khi cần
+        const bodySnippetBefore = await page.locator("body").innerHTML().catch(() => "").then(h => h.slice(0, 300));
+        log(`Body HTML snippet: ${bodySnippetBefore}`);
+
         const emailSel =
-          'input[autocomplete="username"], input[name="text"], input[type="text"]';
+          'input[autocomplete="username"], input[name="text"], ' +
+          'input[type="text"], input[type="email"], ' +
+          '[data-testid="LoginForm_InputContainer"] input';
         const emailInput = page.locator(emailSel).first();
-        await emailInput.waitFor({ state: "visible", timeout: 15_000 });
+        // Tăng timeout lên 30s — X.com OAuth có thể load chậm
+        await emailInput.waitFor({ state: "visible", timeout: 30_000 });
 
         log("Entering email");
         await emailInput.click();

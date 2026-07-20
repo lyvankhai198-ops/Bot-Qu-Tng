@@ -40,7 +40,7 @@ function getWorkerConfig(): { workerCount: number; timeoutMs: number } {
     const t = Number((h.config ?? {}).timeoutMs ?? 60_000);
     return {
       workerCount: Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10) : 2,
-      timeoutMs: Number.isFinite(t) && t >= 5_000 ? t : 60_000,
+      timeoutMs: Number.isFinite(t) && t >= 5_000 ? t : 120_000,
     };
   } catch {
     return { workerCount: 2, timeoutMs: 60_000 };
