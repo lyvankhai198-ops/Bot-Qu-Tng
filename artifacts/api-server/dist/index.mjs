@@ -50284,103 +50284,114 @@ var grokPlugin = {
           return void 0;
         }
       };
-      log("Opening grok.com/auth/signin");
-      await gotoWithRetry("https://grok.com/auth/signin", "auth/signin");
-      let url = page.url();
-      log(`Loaded \u2014 URL: ${url}`);
-      if (!url.includes("/auth/") && !url.includes("/login") && !url.includes("/signin")) {
-        log("Redirected away from auth page \u2014 may already be logged in, checking subscription");
-      }
-      {
+      const checkAndHandleCF = async (waitMs = 5e4) => {
         const bt = await bodyText(page);
         if (/Performing security verification|Just a moment|checking your browser|security service.*malicious bot/i.test(bt)) {
-          log("Cloudflare Managed Challenge detected \u2014 waiting up to 50s for auto-solve");
-          const passed = await waitCloudflare(page, 5e4);
-          if (!passed) {
-            return {
-              code: "CAPTCHA",
-              message: "Cloudflare bot protection kh\xF4ng th\u1EC3 bypass. H\xE3y d\xF9ng residential proxy ho\u1EB7c session cookie.",
-              responseTime: elapsed(),
-              screenshotBase64: await screenshot64(),
-              playwrightLog: logs.join("\n")
-            };
+          log("Cloudflare challenge detected \u2014 waiting up to " + waitMs + "ms");
+          return waitCloudflare(page, waitMs);
+        }
+        return true;
+      };
+      log("Opening https://grok.com");
+      await gotoWithRetry("https://grok.com", "grok.com");
+      let url = page.url();
+      log(`Loaded \u2014 URL: ${url}`);
+      if (!await checkAndHandleCF(5e4)) {
+        return { code: "CAPTCHA", message: "Cloudflare block t\u1EA1i grok.com root", responseTime: elapsed(), screenshotBase64: await screenshot64(), playwrightLog: logs.join("\n") };
+      }
+      log("Getting Twitter OAuth URL via NextAuth API");
+      const oauthUrl = await page.evaluate(async () => {
+        try {
+          const csrfRes = await fetch("/api/auth/csrf");
+          const csrfData = await csrfRes.json();
+          const csrfToken = csrfData.csrfToken;
+          const signinRes = await fetch("/api/auth/signin/twitter", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: "csrfToken=" + encodeURIComponent(csrfToken) + "&callbackUrl=" + encodeURIComponent("https://grok.com/"),
+            redirect: "manual"
+          });
+          const loc = signinRes.headers.get("location") || signinRes.url;
+          return loc || null;
+        } catch (e) {
+          return null;
+        }
+      }).catch(() => null);
+      log(`OAuth URL from NextAuth: ${(oauthUrl || "null").slice(0, 200)}`);
+      let onXAuth = false;
+      if (oauthUrl && (oauthUrl.includes("x.com") || oauthUrl.includes("twitter.com") || oauthUrl.includes("accounts.x.com"))) {
+        log("Navigating to X.com OAuth page");
+        await gotoWithRetry(oauthUrl, "x.com-oauth");
+        url = page.url();
+        log(`X.com OAuth URL: ${url}`);
+        onXAuth = true;
+      } else {
+        log("OAuth API failed, trying UI click approach");
+        await page.waitForTimeout(2e3);
+        const clicked = await page.evaluate(() => {
+          const allEls = Array.from(document.querySelectorAll("*"));
+          const signIn = allEls.find((el) => {
+            const txt = (el.textContent || el.getAttribute("aria-label") || "").toLowerCase().trim();
+            return (txt === "sign in" || txt === "login" || txt === "log in") && (el.tagName === "BUTTON" || el.tagName === "A" || el.getAttribute("role") === "button");
+          });
+          if (signIn) {
+            signIn.click();
+            return true;
           }
+          return false;
+        }).catch(() => false);
+        log(`UI click result: ${clicked}`);
+        await page.waitForTimeout(3e3);
+        url = page.url();
+        log(`After UI click \u2014 URL: ${url}`);
+        if (url.includes("x.com") || url.includes("twitter.com")) {
+          onXAuth = true;
+        } else {
+          log("Trying direct /api/auth/signin/twitter navigation");
+          try {
+            await page.goto("https://grok.com/api/auth/signin/twitter", { waitUntil: "networkidle", timeout: 2e4 });
+          } catch {
+          }
+          await page.waitForTimeout(2e3);
           url = page.url();
-          log(`After CF \u2014 URL: ${url}`);
+          log(`After direct signin nav \u2014 URL: ${url}`);
+          if (url.includes("x.com") || url.includes("twitter.com") || url.includes("accounts.x.com")) {
+            onXAuth = true;
+          }
         }
       }
-      await page.waitForTimeout(3e3);
-      const bodyInner = await page.evaluate(() => {
-        const body = document.body;
-        return body ? body.innerHTML.slice(0, 3e3) : "(no body)";
-      }).catch(() => "(eval error)");
-      log(`Body innerHTML (3000 chars): ${bodyInner}`);
-      const allButtons = await page.evaluate(() => {
-        const els = Array.from(document.querySelectorAll("button, a, [role='button']"));
-        return els.slice(0, 30).map((el) => ({
-          tag: el.tagName,
-          text: (el.textContent || "").trim().slice(0, 80),
-          href: el.href || "",
+      if (!await checkAndHandleCF(4e4)) {
+        return { code: "CAPTCHA", message: "Cloudflare block t\u1EA1i X.com OAuth", responseTime: elapsed(), screenshotBase64: await screenshot64(), playwrightLog: logs.join("\n") };
+      }
+      url = page.url();
+      log(`Current URL: ${url}`);
+      const allInputs = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll("input")).map((el) => ({
+          type: el.type,
+          name: el.name,
+          placeholder: el.placeholder,
           visible: el.offsetParent !== null
         }));
       }).catch(() => []);
-      log(`All buttons/links (${allButtons.length}): ${JSON.stringify(allButtons.slice(0, 15))}`);
-      const signInBtnSels = [
-        'button:has-text("Continue with email")',
-        'button:has-text("Sign in with email")',
-        'button:has-text("Email")',
-        'a:has-text("Continue with email")',
-        '[data-provider="email"]',
-        'button:has-text("Continue with X")',
-        'button:has-text("Sign in with X")',
-        'a:has-text("Continue with X")',
-        'button:has-text("Sign in")',
-        'button[type="submit"]'
-      ];
-      let clickedSignIn = false;
-      for (const sel of signInBtnSels) {
-        if (await isVisible(page, sel, 2e3)) {
-          log(`Clicking sign-in button: ${sel}`);
-          await page.locator(sel).first().click();
-          await page.waitForTimeout(3e3);
-          clickedSignIn = true;
-          break;
-        }
-      }
-      if (!clickedSignIn) {
-        const firstBtn = await page.locator("button:visible").first();
-        if (await firstBtn.isVisible({ timeout: 2e3 }).catch(() => false)) {
-          const btnText = await firstBtn.textContent().catch(() => "");
-          log(`Clicking first visible button: "${btnText}"`);
-          await firstBtn.click();
-          await page.waitForTimeout(3e3);
-        }
-      }
-      url = page.url();
-      log(`After sign-in click \u2014 URL: ${url}`);
-      {
-        const bt = await bodyText(page);
-        if (/Performing security verification|Just a moment/i.test(bt)) {
-          log("CF challenge after email click \u2014 waiting 30s");
-          const passed = await waitCloudflare(page, 3e4);
-          if (!passed) {
-            return {
-              code: "CAPTCHA",
-              message: "Cloudflare block \u1EDF b\u01B0\u1EDBc ch\u1ECDn email login",
-              responseTime: elapsed(),
-              screenshotBase64: await screenshot64(),
-              playwrightLog: logs.join("\n")
-            };
-          }
-        }
-      }
+      log(`All inputs on page: ${JSON.stringify(allInputs)}`);
+      const anyText = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll("button, a, h1, h2, label, p"));
+        return els.slice(0, 20).map((el) => ({
+          tag: el.tagName,
+          text: (el.textContent || "").trim().slice(0, 60),
+          visible: el.offsetParent !== null
+        })).filter((e) => e.text);
+      }).catch(() => []);
+      log(`Page text elements: ${JSON.stringify(anyText.slice(0, 12))}`);
       const emailInputSels = [
         'input[type="email"]',
         'input[name="email"]',
+        'input[name="text"]',
+        // X.com dùng name="text" cho username/email
         'input[autocomplete="email"]',
+        'input[autocomplete="username"]',
         'input[placeholder*="email" i]',
-        'input[placeholder*="Email" ]',
-        'form input[type="text"]',
+        'input[placeholder*="phone" i]',
         'input[type="text"]'
       ];
       let emailInput = null;
@@ -50393,26 +50404,18 @@ var grokPlugin = {
         }
       }
       if (!emailInput) {
-        const bt = (await bodyText(page)).slice(0, 400);
-        const html = await rawHtml(2e3);
+        const bt = (await bodyText(page)).slice(0, 500);
         const domCount = await page.evaluate(() => document.querySelectorAll("*").length).catch(() => 0);
-        log(`Email input not found \u2014 DOM elements: ${domCount}`);
+        log(`Email input not found \u2014 DOM: ${domCount} el, onXAuth: ${onXAuth}`);
         log(`Body text: ${bt || "(empty)"}`);
-        log(`Raw HTML: ${html}`);
         if (consoleErrors.length) log(`Console errors: ${consoleErrors.slice(0, 3).join(" | ")}`);
         const shot = await screenshot64();
-        if (/Performing security verification|Just a moment|security service/i.test(bt + html)) {
-          return {
-            code: "CAPTCHA",
-            message: "Cloudflare bot protection ch\u1EB7n \u2014 kh\xF4ng v\xE0o \u0111\u01B0\u1EE3c form \u0111\u0103ng nh\u1EADp",
-            responseTime: elapsed(),
-            screenshotBase64: shot,
-            playwrightLog: logs.join("\n")
-          };
+        if (/Performing security verification|Just a moment|security service/i.test(bt)) {
+          return { code: "CAPTCHA", message: "Cloudflare block \u2014 kh\xF4ng v\xE0o \u0111\u01B0\u1EE3c form \u0111\u0103ng nh\u1EADp", responseTime: elapsed(), screenshotBase64: shot, playwrightLog: logs.join("\n") };
         }
         return {
           code: "UNKNOWN",
-          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 email \u2014 URL: ${url.split("?")[0]} | DOM: ${domCount} el | ${bt.slice(0, 80) || html.slice(0, 80)}`,
+          message: `Kh\xF4ng t\xECm th\u1EA5y \xF4 email \u2014 URL: ${url.split("?")[0]} | onXAuth: ${onXAuth} | ${bt.slice(0, 100)}`,
           responseTime: elapsed(),
           screenshotBase64: shot,
           playwrightLog: logs.join("\n")
