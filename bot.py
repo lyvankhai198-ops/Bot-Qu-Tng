@@ -2889,7 +2889,10 @@ def main():
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
     logger.info("Bot is polling...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,   # phải có "chat_member" để nhận join event
+    )
 
 if __name__ == "__main__":
     main()
