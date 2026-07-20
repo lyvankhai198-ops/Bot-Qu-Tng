@@ -201,6 +201,10 @@ export interface OrderInput {
   expiryDate?: string | null;
   status?: string;
   notes?: string | null;
+  /** Mật khẩu đăng nhập tài khoản (dùng cho Health Check) */
+  password?: string | null;
+  /** Mã 2FA / thông tin bổ sung */
+  twoFA?: string | null;
 }
 
 export interface WarrantyAccount {

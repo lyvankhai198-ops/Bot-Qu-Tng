@@ -322,6 +322,8 @@ export default function Orders() {
         expiryDate: currentOrder.expiryDate || undefined,
         status: currentOrder.status,
         notes: currentOrder.notes || undefined,
+        password: (currentOrder as any).password || undefined,
+        twoFA: (currentOrder as any).twoFA || undefined,
       }
       if (dialogMode === "add") {
         await createOrder.mutateAsync({ data: payload })
@@ -767,6 +769,31 @@ export default function Orders() {
               <div className="grid gap-2">
                 <Label>Ghi chú</Label>
                 <Textarea value={currentOrder.notes || ""} onChange={e => setCurrentOrder({...currentOrder, notes: e.target.value})} />
+              </div>
+              {/* ── Thông tin đăng nhập (dùng cho Health Check) ────────── */}
+              <div className="rounded-lg border border-dashed border-muted-foreground/30 p-3 grid gap-3">
+                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                  <Activity className="h-3.5 w-3.5" /> Thông tin đăng nhập tài khoản (Health Check)
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid gap-2">
+                    <Label className="text-xs">Mật khẩu đăng nhập</Label>
+                    <Input
+                      type="password"
+                      placeholder="Nhập mật khẩu tài khoản..."
+                      value={(currentOrder as any).password || ""}
+                      onChange={e => setCurrentOrder({...currentOrder, password: e.target.value} as any)}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label className="text-xs">Mã 2FA / thông tin bổ sung</Label>
+                    <Input
+                      placeholder="Mã 2FA (nếu có)..."
+                      value={(currentOrder as any).twoFA || ""}
+                      onChange={e => setCurrentOrder({...currentOrder, twoFA: e.target.value} as any)}
+                    />
+                  </div>
+                </div>
               </div>
               <DialogFooter className="flex-col sm:flex-row gap-2 pt-0">
                 <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDialogOpen(null)}>Hủy</Button>
