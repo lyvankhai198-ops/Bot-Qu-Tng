@@ -566,6 +566,23 @@ def add_account_replacement(
     save("order_items", all_items)
     return rec
 
+def _infer_bhf_days(product_name: str) -> int:
+    """
+    BHF = Bảo Hành Full (toàn chu kỳ) — suy ra số ngày BH từ tên sản phẩm.
+    Ví dụ: "Grok 1 Năm BHF" → 365, "ChatGPT 6 Tháng BHF" → 180, "Tool 30 Ngày BHF" → 30.
+    Trả về 0 nếu không suy ra được.
+    """
+    import unicodedata as _ud
+    # Strip diacritics để khớp không phân biệt dấu tiếng Việt
+    norm = _ud.normalize('NFD', product_name.upper()).encode('ascii', 'ignore').decode('ascii')
+    m = re.search(r'(\d+)\s*NAM\b', norm)    # Năm / Nam
+    if m: return int(m.group(1)) * 365
+    m = re.search(r'(\d+)\s*THANG\b', norm)  # Tháng / Thang
+    if m: return int(m.group(1)) * 30
+    m = re.search(r'(\d+)\s*NGAY\b', norm)   # Ngày / Ngay
+    if m: return int(m.group(1))
+    return 0
+
 def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
     """
     Compute warranty status for a single order item.
@@ -598,6 +615,12 @@ def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
         _day_m = re.search(r'(?<!\d)(\d{1,2})D\b', _pname_upper)
         if _day_m:
             warranty_days = int(_day_m.group(1))
+
+    # BHF = Bảo Hành Full (toàn chu kỳ) — suy ra số ngày từ tên SP nếu warrantyDays = 0
+    if not _is_kbh and warranty_days == 0 and re.search(r'\bBHF\b', _pname_upper):
+        warranty_days = _infer_bhf_days(
+            item.get("productName") or order.get("productName") or ""
+        )
 
     # warranty_end_date: use stored value if present, else compute
     warranty_end = None
@@ -1312,6 +1335,11 @@ def calc_order_display(order: dict, settings: dict) -> dict:
     if not expiry_str:
         purchase_str0 = (order.get("purchaseDate") or "")[:10]
         wd0 = int(order.get("warrantyDays") or 0)
+        # BHF inference: khi warrantyDays = 0, suy ra từ tên sản phẩm
+        if not wd0:
+            _pname_bhf = (order.get("productName") or "").upper()
+            if re.search(r'\bBHF\b', _pname_bhf):
+                wd0 = _infer_bhf_days(order.get("productName") or "")
         if purchase_str0 and wd0:
             try:
                 from datetime import timedelta as _td

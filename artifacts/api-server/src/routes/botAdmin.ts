@@ -1556,6 +1556,16 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
     .replace(/^(?:m[aã]\s*[đd][oơ]n|order\s*(?:code|id)?|email\s*\/?\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*[:：]\s*/i, "")
     .trim();
 
+  // ── BHF: suy ra số ngày bảo hành từ tên sản phẩm (BHF = Bảo Hành Full) ──────
+  function inferBhfDays(productName: string): number {
+    const norm = productName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+    let m: RegExpMatchArray | null;
+    if ((m = norm.match(/(\d+)\s*NAM\b/)))   return parseInt(m[1]) * 365;  // Năm
+    if ((m = norm.match(/(\d+)\s*THANG\b/))) return parseInt(m[1]) * 30;   // Tháng
+    if ((m = norm.match(/(\d+)\s*NGAY\b/)))  return parseInt(m[1]);        // Ngày
+    return 0;
+  }
+
   // ── Warranty computation helper ──────────────────────────────────────────────
   function calcWarranty(item: any, order: any) {
     // Block if item was individually refunded
@@ -1568,7 +1578,12 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
     // §7: date priority — original_delivered_at > paymentAt > purchaseDate
     const startStr = item.original_delivered_at || item.deliveredAt ||
                      order?.paymentAt || order?.purchaseDate || "";
-    const warrantyDays = Number(item.warranty_days || order?.warrantyDays || 0);
+    const pnameRaw = item.productName || order?.productName || '';
+    let warrantyDays = Number(item.warranty_days || order?.warrantyDays || 0);
+    // BHF inference: khi warrantyDays = 0 mà tên SP chứa BHF
+    if (!warrantyDays && /\bBHF\b/i.test(pnameRaw)) {
+      warrantyDays = inferBhfDays(pnameRaw);
+    }
     let warrantyEnd: Date | null = null;
     // Prefer stored warranty_end_date, then compute, then fall back to order field
     if (item.warranty_end_date) {

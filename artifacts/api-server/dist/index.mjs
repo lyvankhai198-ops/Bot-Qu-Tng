@@ -51321,6 +51321,14 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
   const allReps = readJson("account_replacements", {}) ?? {};
   const settings = readJson("settings", {}) ?? {};
   const normalized = query.replace(/^(?:m[aã]\s*[đd][oơ]n|order\s*(?:code|id)?|email\s*\/?\s*t[àa]i\s*kho[ảa]n|email|t[àa]i\s*kho[ảa]n)\s*[:：]\s*/i, "").trim();
+  function inferBhfDays(productName) {
+    const norm = productName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+    let m;
+    if (m = norm.match(/(\d+)\s*NAM\b/)) return parseInt(m[1]) * 365;
+    if (m = norm.match(/(\d+)\s*THANG\b/)) return parseInt(m[1]) * 30;
+    if (m = norm.match(/(\d+)\s*NGAY\b/)) return parseInt(m[1]);
+    return 0;
+  }
   function calcWarranty(item, order) {
     if (item.item_status === "refunded") {
       const warrantyDaysR = Number(item.warranty_days || order?.warrantyDays || 0);
@@ -51337,7 +51345,11 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
     const today = /* @__PURE__ */ new Date();
     today.setHours(0, 0, 0, 0);
     const startStr = item.original_delivered_at || item.deliveredAt || order?.paymentAt || order?.purchaseDate || "";
-    const warrantyDays = Number(item.warranty_days || order?.warrantyDays || 0);
+    const pnameRaw = item.productName || order?.productName || "";
+    let warrantyDays = Number(item.warranty_days || order?.warrantyDays || 0);
+    if (!warrantyDays && /\bBHF\b/i.test(pnameRaw)) {
+      warrantyDays = inferBhfDays(pnameRaw);
+    }
     let warrantyEnd = null;
     if (item.warranty_end_date) {
       try {

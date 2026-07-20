@@ -195,6 +195,11 @@ def _fmt_order(L: str, order: dict, settings: dict,
         if not _expiry_raw:
             _pd = (order.get("purchaseDate") or "")[:10]
             _wd = int(order.get("warrantyDays") or 0)
+            # BHF inference: khi warrantyDays = 0, suy ra từ tên SP
+            if not _wd:
+                _pn2 = (order.get("productName") or "").upper()
+                if re.search(r'\bBHF\b', _pn2):
+                    _wd = db._infer_bhf_days(order.get("productName") or "")
             if _pd and _wd:
                 try:
                     from datetime import timedelta as _td2
@@ -1033,7 +1038,10 @@ def _mw_summary_text(L: str, found: list, not_found: list, blocked: list, expire
     if expired:
         lines.append(f"\n❌ <b>{'Hết bảo hành — không thể báo lỗi' if vi else 'Warranty expired — cannot report'} ({len(expired)})</b>:")
         for a in expired:
-            lines.append(f"  • <code>{a['email']}</code> — {a.get('productName','?')}")
+            _e = a.get('email') or ""
+            _o = a.get('orderId') or ""
+            _ref_label = f"<code>{_e}</code>" if _e else (f"Đơn <code>{_o}</code>" if _o else "")
+            lines.append(f"  • {_ref_label + ' — ' if _ref_label else ''}{a.get('productName','?')}")
     if not_found:
         lines.append(f"\n🔍 <b>{'Không tìm thấy' if vi else 'Not found'} ({len(not_found)})</b>:")
         for e in not_found:
