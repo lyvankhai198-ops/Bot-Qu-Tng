@@ -4,12 +4,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
+import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
-import { Truck, RefreshCw, Loader2, Send, Clock, CheckCircle2, XCircle, Package } from "lucide-react"
+import { Truck, RefreshCw, Loader2, Send, Clock, CheckCircle2, XCircle, Package, Banknote, RotateCcw } from "lucide-react"
 import { format } from "date-fns"
 
 function authHeader() {
@@ -24,18 +25,20 @@ interface DeliveryRequest {
   orderId: string
   userLang: string
   submittedAt: string
-  status: "pending" | "sent" | "failed"
+  status: "pending" | "sent" | "failed" | "refunded"
   sentAt: string | null
   sentBy: string | null
+  refundedAt: string | null
+  refundAmount: number | null
+  refundNote: string | null
   accountInfo: { account: string; password: string; twoFA: string | null } | null
 }
 
 function StatusBadge({ status }: { status: string }) {
-  if (status === "sent")
-    return <Badge className="bg-green-100 text-green-800 border-green-300">✅ Đã giao</Badge>
-  if (status === "failed")
-    return <Badge className="bg-red-100 text-red-800 border-red-300">❌ Giao thất bại</Badge>
-  return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300">⏳ Chờ xử lý</Badge>
+  if (status === "sent")     return <Badge className="bg-green-100 text-green-800 border-green-300 whitespace-nowrap">✅ Đã giao</Badge>
+  if (status === "failed")   return <Badge className="bg-red-100 text-red-800 border-red-300 whitespace-nowrap">❌ Giao thất bại</Badge>
+  if (status === "refunded") return <Badge className="bg-purple-100 text-purple-800 border-purple-300 whitespace-nowrap">💰 Đã hoàn tiền</Badge>
+  return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300 whitespace-nowrap">⏳ Chờ xử lý</Badge>
 }
 
 function parseAccountLine(line: string): { account: string; password: string; twoFA: string } {
@@ -51,15 +54,21 @@ export default function Delivery() {
   const { toast } = useToast()
   const [requests, setRequests] = useState<DeliveryRequest[]>([])
   const [loading, setLoading] = useState(true)
+
+  // --- Send dialog ---
   const [selected, setSelected] = useState<DeliveryRequest | null>(null)
   const [sending, setSending] = useState(false)
-
-  // Form fields
   const [account, setAccount] = useState("")
   const [password, setPassword] = useState("")
   const [twoFA, setTwoFA] = useState("")
   const [rawLine, setRawLine] = useState("")
   const [useRaw, setUseRaw] = useState(false)
+
+  // --- Refund dialog ---
+  const [refundTarget, setRefundTarget] = useState<DeliveryRequest | null>(null)
+  const [refunding, setRefunding] = useState(false)
+  const [refundAmount, setRefundAmount] = useState("")
+  const [refundNote, setRefundNote] = useState("")
 
   const fetchRequests = useCallback(async () => {
     setLoading(true)
@@ -76,37 +85,25 @@ export default function Delivery() {
 
   useEffect(() => { fetchRequests() }, [fetchRequests])
 
-  function openModal(req: DeliveryRequest) {
+  function openSendModal(req: DeliveryRequest) {
     setSelected(req)
-    setAccount("")
-    setPassword("")
-    setTwoFA("")
-    setRawLine("")
-    setUseRaw(false)
+    setAccount(""); setPassword(""); setTwoFA(""); setRawLine(""); setUseRaw(false)
   }
+  function closeSendModal() { setSelected(null) }
 
-  function closeModal() {
-    setSelected(null)
+  function openRefundModal(req: DeliveryRequest) {
+    setRefundTarget(req); setRefundAmount(""); setRefundNote("")
   }
+  function closeRefundModal() { setRefundTarget(null) }
 
   async function handleSend() {
     if (!selected) return
-    let acc = account.trim()
-    let pwd = password.trim()
-    let tfa = twoFA.trim()
-
-    if (useRaw) {
-      const parsed = parseAccountLine(rawLine)
-      acc = parsed.account
-      pwd = parsed.password
-      tfa = parsed.twoFA
-    }
-
+    let acc = account.trim(), pwd = password.trim(), tfa = twoFA.trim()
+    if (useRaw) { const p = parseAccountLine(rawLine); acc = p.account; pwd = p.password; tfa = p.twoFA }
     if (!acc || !pwd) {
       toast({ title: "Thiếu thông tin", description: "Vui lòng nhập tài khoản và mật khẩu", variant: "destructive" })
       return
     }
-
     setSending(true)
     try {
       const res = await fetch(`/api/bot/delivery/${selected.id}/send`, {
@@ -117,18 +114,39 @@ export default function Delivery() {
       const data = await res.json()
       if (!res.ok || !data.ok) throw new Error(data.message ?? "Lỗi không xác định")
       toast({ title: "✅ Thành công", description: "Tài khoản đã được gửi cho người dùng" })
-      closeModal()
-      fetchRequests()
+      closeSendModal(); fetchRequests()
     } catch (e: any) {
       toast({ title: "Lỗi", description: e.message ?? "Không thể gửi tài khoản", variant: "destructive" })
-    } finally {
-      setSending(false)
-    }
+    } finally { setSending(false) }
   }
 
-  const pending = requests.filter(r => r.status === "pending").length
-  const sent    = requests.filter(r => r.status === "sent").length
-  const failed  = requests.filter(r => r.status === "failed").length
+  async function handleRefund() {
+    if (!refundTarget) return
+    const amt = refundAmount.trim().replace(/[.,\s]/g, "")
+    if (!amt || isNaN(Number(amt))) {
+      toast({ title: "Thiếu thông tin", description: "Vui lòng nhập số tiền hoàn hợp lệ", variant: "destructive" })
+      return
+    }
+    setRefunding(true)
+    try {
+      const res = await fetch(`/api/bot/delivery/${refundTarget.id}/refund`, {
+        method: "POST",
+        headers: { ...authHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(amt), note: refundNote.trim() || undefined }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.message ?? "Lỗi không xác định")
+      toast({ title: "💰 Đã hoàn tiền", description: "Khách hàng đã được thông báo qua Telegram" })
+      closeRefundModal(); fetchRequests()
+    } catch (e: any) {
+      toast({ title: "Lỗi", description: e.message ?? "Không thể hoàn tiền", variant: "destructive" })
+    } finally { setRefunding(false) }
+  }
+
+  const pending  = requests.filter(r => r.status === "pending").length
+  const sent     = requests.filter(r => r.status === "sent").length
+  const refunded = requests.filter(r => r.status === "refunded").length
+  const failed   = requests.filter(r => r.status === "failed").length
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -147,7 +165,7 @@ export default function Delivery() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6 text-center">
             <Clock className="h-8 w-8 mx-auto mb-2 text-yellow-500" />
@@ -160,6 +178,13 @@ export default function Delivery() {
             <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-500" />
             <div className="text-2xl font-bold">{sent}</div>
             <div className="text-sm text-muted-foreground">Đã giao</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6 text-center">
+            <Banknote className="h-8 w-8 mx-auto mb-2 text-purple-500" />
+            <div className="text-2xl font-bold">{refunded}</div>
+            <div className="text-sm text-muted-foreground">Đã hoàn tiền</div>
           </CardContent>
         </Card>
         <Card>
@@ -195,7 +220,7 @@ export default function Delivery() {
                   <TableRow>
                     <TableHead>Mã đơn</TableHead>
                     <TableHead>Người dùng</TableHead>
-                    <TableHead>Telegram ID</TableHead>
+                    <TableHead className="hidden md:table-cell">Telegram ID</TableHead>
                     <TableHead>Thời gian</TableHead>
                     <TableHead>Trạng thái</TableHead>
                     <TableHead className="text-right">Thao tác</TableHead>
@@ -203,26 +228,51 @@ export default function Delivery() {
                 </TableHeader>
                 <TableBody>
                   {requests.map(req => (
-                    <TableRow key={req.id} className={req.status === "pending" ? "bg-yellow-50/40" : ""}>
-                      <TableCell className="font-mono font-medium">{req.orderId}</TableCell>
+                    <TableRow key={req.id} className={req.status === "pending" ? "bg-yellow-50/40 dark:bg-yellow-950/20" : ""}>
+                      <TableCell className="font-mono font-medium text-xs">{req.orderId}</TableCell>
                       <TableCell>
                         <div className="font-medium">{req.firstName || "—"}</div>
                         {req.username && <div className="text-xs text-muted-foreground">@{req.username}</div>}
                       </TableCell>
-                      <TableCell className="font-mono text-sm">{req.userId}</TableCell>
+                      <TableCell className="hidden md:table-cell font-mono text-sm">{req.userId}</TableCell>
                       <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                         {format(new Date(req.submittedAt), "dd/MM/yyyy HH:mm")}
                       </TableCell>
-                      <TableCell><StatusBadge status={req.status} /></TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <StatusBadge status={req.status} />
+                          {req.status === "refunded" && req.refundAmount != null && (
+                            <div className="text-xs text-muted-foreground">
+                              {req.refundAmount.toLocaleString("vi-VN")}đ
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant={req.status === "pending" ? "default" : "outline"}
-                          onClick={() => openModal(req)}
-                        >
-                          <Send className="h-3 w-3 mr-1" />
-                          {req.status === "pending" ? "Giao tài khoản" : "Giao lại"}
-                        </Button>
+                        <div className="flex gap-1 justify-end flex-wrap">
+                          {/* Refund button — show for pending/failed, hide when already refunded */}
+                          {req.status !== "refunded" && req.status !== "sent" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-purple-600 border-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/30"
+                              onClick={() => openRefundModal(req)}
+                            >
+                              <Banknote className="h-3 w-3 mr-1" /> Hoàn tiền
+                            </Button>
+                          )}
+                          {/* Send button — show for all (re-deliver for sent/refunded) */}
+                          <Button
+                            size="sm"
+                            variant={req.status === "pending" ? "default" : "outline"}
+                            onClick={() => openSendModal(req)}
+                          >
+                            {req.status === "pending"
+                              ? <><Send className="h-3 w-3 mr-1" />Giao tài khoản</>
+                              : <><RotateCcw className="h-3 w-3 mr-1" />Giao lại</>
+                            }
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -233,8 +283,8 @@ export default function Delivery() {
         </CardContent>
       </Card>
 
-      {/* Send Account Dialog */}
-      <Dialog open={!!selected} onOpenChange={open => { if (!open) closeModal() }}>
+      {/* ── Send Account Dialog ── */}
+      <Dialog open={!!selected} onOpenChange={open => { if (!open) closeSendModal() }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -248,20 +298,13 @@ export default function Delivery() {
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {/* Toggle input mode */}
             <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant={!useRaw ? "default" : "outline"}
-                onClick={() => setUseRaw(false)}
-                className="flex-1"
-              >Nhập riêng từng ô</Button>
-              <Button
-                size="sm"
-                variant={useRaw ? "default" : "outline"}
-                onClick={() => setUseRaw(true)}
-                className="flex-1"
-              >Định dạng email|pass|2FA</Button>
+              <Button size="sm" variant={!useRaw ? "default" : "outline"} onClick={() => setUseRaw(false)} className="flex-1">
+                Nhập riêng từng ô
+              </Button>
+              <Button size="sm" variant={useRaw ? "default" : "outline"} onClick={() => setUseRaw(true)} className="flex-1">
+                Định dạng email|pass|2FA
+              </Button>
             </div>
 
             {useRaw ? (
@@ -275,14 +318,11 @@ export default function Delivery() {
                 />
                 {rawLine && (
                   <div className="text-xs text-muted-foreground bg-muted rounded p-2 font-mono space-y-1">
-                    {(() => {
-                      const p = parseAccountLine(rawLine)
-                      return <>
-                        <div>📧 {p.account || "—"}</div>
-                        <div>🔒 {p.password || "—"}</div>
-                        {p.twoFA && <div>🛡 {p.twoFA}</div>}
-                      </>
-                    })()}
+                    {(() => { const p = parseAccountLine(rawLine); return <>
+                      <div>📧 {p.account || "—"}</div>
+                      <div>🔒 {p.password || "—"}</div>
+                      {p.twoFA && <div>🛡 {p.twoFA}</div>}
+                    </> })()}
                   </div>
                 )}
               </div>
@@ -290,40 +330,90 @@ export default function Delivery() {
               <div className="space-y-3">
                 <div className="space-y-1">
                   <Label htmlFor="del-account">📧 Tài khoản</Label>
-                  <Input
-                    id="del-account"
-                    placeholder="email@example.com"
-                    value={account}
-                    onChange={e => setAccount(e.target.value)}
-                  />
+                  <Input id="del-account" placeholder="email@example.com" value={account} onChange={e => setAccount(e.target.value)} />
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="del-password">🔒 Mật khẩu</Label>
-                  <Input
-                    id="del-password"
-                    placeholder="Mật khẩu"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                  />
+                  <Input id="del-password" placeholder="Mật khẩu" value={password} onChange={e => setPassword(e.target.value)} />
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="del-2fa">🛡 2FA (tuỳ chọn)</Label>
-                  <Input
-                    id="del-2fa"
-                    placeholder="Để trống nếu không có"
-                    value={twoFA}
-                    onChange={e => setTwoFA(e.target.value)}
-                  />
+                  <Input id="del-2fa" placeholder="Để trống nếu không có" value={twoFA} onChange={e => setTwoFA(e.target.value)} />
                 </div>
               </div>
             )}
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={closeModal} disabled={sending}>Huỷ</Button>
+            <Button variant="outline" onClick={closeSendModal} disabled={sending}>Huỷ</Button>
             <Button onClick={handleSend} disabled={sending}>
               {sending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
               Gửi tài khoản
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Refund Dialog ── */}
+      <Dialog open={!!refundTarget} onOpenChange={open => { if (!open) closeRefundModal() }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-purple-700 dark:text-purple-400">
+              <Banknote className="h-5 w-5" /> Hoàn tiền
+            </DialogTitle>
+            <DialogDescription>
+              Mã đơn: <span className="font-mono font-medium">{refundTarget?.orderId}</span>
+              {" · "}Người dùng:{" "}
+              {refundTarget?.username ? `@${refundTarget.username}` : refundTarget?.firstName || refundTarget?.userId}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="rounded-lg border border-purple-200 bg-purple-50 dark:bg-purple-950/20 dark:border-purple-800 p-3 text-sm text-purple-800 dark:text-purple-300">
+              ⚠️ Không có tài khoản để giao — bot sẽ gửi thông báo hoàn tiền cho khách qua Telegram.
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="refund-amount">💵 Số tiền hoàn (VNĐ) <span className="text-destructive">*</span></Label>
+              <Input
+                id="refund-amount"
+                type="text"
+                inputMode="numeric"
+                placeholder="VD: 200000"
+                value={refundAmount}
+                onChange={e => setRefundAmount(e.target.value.replace(/[^0-9.,]/g, ""))}
+                className="font-mono"
+              />
+              {refundAmount && !isNaN(Number(refundAmount.replace(/[.,]/g, ""))) && (
+                <div className="text-xs text-muted-foreground">
+                  = {Number(refundAmount.replace(/[.,\s]/g, "")).toLocaleString("vi-VN")}đ
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="refund-note">📝 Ghi chú <span className="text-muted-foreground text-xs">(tuỳ chọn)</span></Label>
+              <Textarea
+                id="refund-note"
+                placeholder="VD: Hết hàng, hoàn tiền trong vòng 24h..."
+                value={refundNote}
+                onChange={e => setRefundNote(e.target.value)}
+                rows={3}
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={closeRefundModal} disabled={refunding} className="w-full sm:w-auto">
+              Huỷ
+            </Button>
+            <Button
+              onClick={handleRefund}
+              disabled={refunding}
+              className="w-full sm:w-auto bg-purple-600 hover:bg-purple-700 text-white"
+            >
+              {refunding ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Banknote className="h-4 w-4 mr-2" />}
+              Xác nhận hoàn tiền
             </Button>
           </DialogFooter>
         </DialogContent>
