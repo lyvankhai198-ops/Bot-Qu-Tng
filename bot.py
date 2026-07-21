@@ -2580,6 +2580,22 @@ def _tg_send(token: str, chat_id: int, text: str) -> bool:
     except Exception:
         return False
 
+def _tg_send_checkin(token: str, chat_id: int, text: str, btn_label: str) -> bool:
+    """Send a message with a single inline [Điểm danh] button."""
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = _json.dumps({
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "reply_markup": {"inline_keyboard": [[{"text": btn_label, "callback_data": "checkin"}]]},
+        }).encode()
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
 def broadcast_worker():
     while True:
         time.sleep(30)
@@ -2605,6 +2621,46 @@ def broadcast_worker():
                         pass
                     continue
 
+                # ── Điểm danh hằng ngày ──────────────────────────────────────
+                if target == "checkin_notify":
+                    ci_settings = db.get_checkin_settings()
+                    pts = int(ci_settings.get("points_per_day", 10))
+                    today_str = datetime.now().strftime("%d/%m/%Y")
+                    today_key = datetime.now().strftime("%Y-%m-%d")
+                    sent = 0; failed = 0
+                    for uid_str, udata in users.items():
+                        ul = udata.get("lang") or "vi"
+                        rec = db.get_checkin_record(int(uid_str))
+                        streak = rec.get("streak", 0)
+                        if ul == "vi":
+                            streak_line = f"\n🔥 Chuỗi hiện tại: <b>{streak} ngày</b>" if streak > 0 else ""
+                            msg = (
+                                f"🎯 <b>Điểm danh hôm nay!</b>\n\n"
+                                f"📅 {today_str}"
+                                f"{streak_line}\n"
+                                f"💎 Nhận <b>+{pts} điểm</b> mỗi ngày điểm danh\n\n"
+                                f"👇 Bấm nút bên dưới để điểm danh:"
+                            )
+                            btn = "✅ Điểm danh ngay"
+                        else:
+                            streak_line = f"\n🔥 Current streak: <b>{streak} days</b>" if streak > 0 else ""
+                            msg = (
+                                f"🎯 <b>Daily check-in!</b>\n\n"
+                                f"📅 {today_str}"
+                                f"{streak_line}\n"
+                                f"💎 Earn <b>+{pts} points</b> per day\n\n"
+                                f"👇 Tap the button below to check in:"
+                            )
+                            btn = "✅ Check in now"
+                        if _tg_send_checkin(TOKEN, int(uid_str), msg, btn):
+                            sent += 1
+                        else:
+                            failed += 1
+                    db.update_checkin_log_sent(today_key, sent, failed)
+                    db.add_log("CHECKIN_BROADCAST", f"sent={sent} failed={failed}", "scheduler")
+                    logger.info(f"[checkin] Notification sent={sent} failed={failed}")
+                    continue
+
                 sent = 0
                 for uid_str, udata in users.items():
                     if target == "has_received" and not udata.get("has_received_gift"):
@@ -2619,6 +2675,89 @@ def broadcast_worker():
                 logger.info(f"Broadcast sent to {sent} users (target={target})")
         except Exception as e:
             logger.error(f"Broadcast worker error: {e}")
+
+# ─── Check-in scheduler ───────────────────────────────────────────────────────
+
+def checkin_scheduler_worker():
+    """
+    Runs every 60 s. At the configured hour:minute (in the configured timezone),
+    automatically queues the daily check-in notification if not already sent today.
+    """
+    while True:
+        time.sleep(60)
+        try:
+            settings = db.get_checkin_settings()
+            if not settings.get("enabled", True):
+                continue
+            tz_name     = settings.get("timezone", "Asia/Ho_Chi_Minh")
+            target_hour = int(settings.get("hour",   7))
+            target_min  = int(settings.get("minute", 0))
+
+            try:
+                from zoneinfo import ZoneInfo
+                now_tz = datetime.now(tz=ZoneInfo(tz_name))
+            except Exception:
+                # Fallback: UTC+7 for Asia/Ho_Chi_Minh
+                now_tz = datetime.utcnow() + timedelta(hours=7)
+
+            if now_tz.hour == target_hour and now_tz.minute == target_min:
+                if not db.was_checkin_notif_sent_today(tz_name):
+                    db.mark_checkin_triggered(tz_name)   # prevent double-fire
+                    db.queue_broadcast("__CHECKIN_NOTIFICATION__", "checkin_notify")
+                    logger.info(f"[checkin] Scheduled notification queued at {now_tz.strftime('%H:%M')} {tz_name}")
+        except Exception as e:
+            logger.error(f"Checkin scheduler error: {e}")
+
+# ─── Check-in callback ────────────────────────────────────────────────────────
+
+async def callback_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """User taps [Điểm danh ngay] button in the daily notification."""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    L    = lang(user.id)
+    vi   = L == "vi"
+
+    result = db.do_checkin(user.id)
+
+    if result.get("already"):
+        streak = result.get("streak", 0)
+        total  = result.get("total_points", 0)
+        msg = (
+            f"⚠️ <b>Bạn đã điểm danh hôm nay rồi!</b>\n\n"
+            f"🔥 Chuỗi: {streak} ngày\n"
+            f"💰 Tổng điểm: {total}"
+        ) if vi else (
+            f"⚠️ <b>You've already checked in today!</b>\n\n"
+            f"🔥 Streak: {streak} days\n"
+            f"💰 Total points: {total}"
+        )
+    else:
+        pts    = result.get("points", 0)
+        bonus  = result.get("bonus",  0)
+        streak = result.get("streak", 0)
+        total  = result.get("total_points", 0)
+        if vi:
+            bonus_line = f"\n🎉 Bonus chuỗi {streak} ngày: <b>+{bonus} điểm</b>!" if bonus else ""
+            msg = (
+                f"✅ <b>Điểm danh thành công!</b>\n\n"
+                f"💎 +{pts} điểm{bonus_line}\n"
+                f"🔥 Chuỗi: {streak} ngày\n"
+                f"💰 Tổng điểm: {total}"
+            )
+        else:
+            bonus_line = f"\n🎉 {streak}-day streak bonus: <b>+{bonus} points</b>!" if bonus else ""
+            msg = (
+                f"✅ <b>Check-in successful!</b>\n\n"
+                f"💎 +{pts} points{bonus_line}\n"
+                f"🔥 Streak: {streak} days\n"
+                f"💰 Total points: {total}"
+            )
+
+    try:
+        await query.edit_message_text(msg, parse_mode=ParseMode.HTML)
+    except Exception:
+        await context.bot.send_message(user.id, msg, parse_mode=ParseMode.HTML)
 
 # ─── Flask keep-alive ─────────────────────────────────────────────────────────
 
@@ -2647,6 +2786,9 @@ def main():
 
     Thread(target=broadcast_worker, daemon=True).start()
     logger.info("Broadcast worker started.")
+
+    Thread(target=checkin_scheduler_worker, daemon=True).start()
+    logger.info("Check-in scheduler started.")
 
     # Startup: clear stale locks from crashed mid-send, migrate old ticket fields
     locked = db.reset_stale_reminder_locks()
@@ -2703,6 +2845,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_check_join,    pattern=r"^check_join$"))
     app.add_handler(CallbackQueryHandler(callback_back_main,     pattern=r"^back_main$"))
     app.add_handler(CallbackQueryHandler(callback_gift_box,      pattern=r"^gbox[_:]"))
+    app.add_handler(CallbackQueryHandler(callback_checkin,       pattern=r"^checkin$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
