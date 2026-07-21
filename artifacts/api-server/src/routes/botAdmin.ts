@@ -3235,12 +3235,13 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
   // ─────────────────────────────────────────────────────────────────────────
 
   // ── Đặt delivery request → pending_unlock ────────────────────────────────
+  const firstAcc = accountList[0];
   requests[idx] = {
     ...dr,
     status: "pending_unlock",
     sentAt: deliveredAt,
     sentBy: "web-admin",
-    accountInfo: { account, password, twoFA: twoFA || null },
+    accountInfo: { account: firstAcc.account, password: firstAcc.password, twoFA: firstAcc.twoFA || null },
     reminderEnabled: false,
     nextReminderAt: null,
     reminderProcessing: false,
