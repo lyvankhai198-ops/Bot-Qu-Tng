@@ -1111,19 +1111,78 @@ async def handle_support_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 async def handle_yeu_cau_giao_hang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Placeholder cho tính năng Yêu cầu giao hàng (chưa triển khai)."""
+    """Bước 1: Hỏi mã đơn hàng, đặt state delivery_input."""
     user = update.effective_user
     L = lang(user.id)
     vi = L == "vi"
+    db.set_user_state(user.id, "conv_state", "delivery_input")
     msg = (
         "📦 <b>Yêu cầu giao hàng</b>\n\n"
-        "Tính năng đang được phát triển. Vui lòng liên hệ admin để được hỗ trợ giao hàng."
+        "Vui lòng nhập <b>mã đơn hàng</b> của bạn:"
         if vi else
         "📦 <b>Delivery Request</b>\n\n"
-        "This feature is under development. Please contact admin for delivery support."
+        "Please enter your <b>order ID</b>:"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML,
+                                    reply_markup=back_keyboard(user.id))
+
+
+async def handle_delivery_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Bước 2: Nhận mã đơn, tạo yêu cầu, thông báo admin."""
+    user = update.effective_user
+    L = lang(user.id)
+    vi = L == "vi"
+    order_id = update.message.text.strip()
+    if not order_id:
+        await update.message.reply_text(
+            "⚠️ Mã đơn hàng không được để trống. Vui lòng nhập lại." if vi else
+            "⚠️ Order ID cannot be empty. Please try again.",
+            reply_markup=back_keyboard(user.id)
+        )
+        return
+
+    req_id = db.add_delivery_request(
+        user_id=user.id,
+        username=user.username or "",
+        first_name=user.first_name or "",
+        order_id=order_id,
+        user_lang=L,
+    )
+    db.set_user_state(user.id, "conv_state", None)
+
+    confirm = (
+        f"✅ <b>Yêu cầu giao hàng đã được gửi!</b>\n\n"
+        f"📦 Mã đơn: <code>{order_id}</code>\n\n"
+        f"Admin sẽ xử lý và gửi tài khoản cho bạn sớm nhất có thể."
+        if vi else
+        f"✅ <b>Delivery request submitted!</b>\n\n"
+        f"📦 Order: <code>{order_id}</code>\n\n"
+        f"Admin will process and send your account as soon as possible."
+    )
+    await update.message.reply_text(confirm, parse_mode=ParseMode.HTML,
                                     reply_markup=support_menu_keyboard(user.id))
+
+    # Notify admin in background
+    from threading import Thread
+    Thread(target=_notify_admin_delivery, args=(req_id, user, order_id), daemon=True).start()
+
+
+def _notify_admin_delivery(req_id: str, user, order_id: str) -> None:
+    """Gửi thông báo cho admin khi có yêu cầu giao hàng mới."""
+    try:
+        if not ADMIN_ID:
+            return
+        uname = f"@{user.username}" if user.username else user.first_name or str(user.id)
+        msg = (
+            f"📦 <b>YÊU CẦU GIAO HÀNG MỚI</b>\n\n"
+            f"👤 Người dùng: {uname} (<code>{user.id}</code>)\n"
+            f"📋 Mã đơn: <code>{order_id}</code>\n"
+            f"🆔 Request ID: <code>{req_id}</code>\n\n"
+            f"➡️ Vào <b>Admin Panel → Giao tài khoản</b> để xử lý."
+        )
+        _tg_send(TOKEN, ADMIN_ID, msg)
+    except Exception as e:
+        logger.error(f"_notify_admin_delivery error: {e}")
 
 async def handle_support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -1897,6 +1956,8 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await handle_multi_warranty_desc(update, context)
         elif state == "report_issue":
             await handle_report_issue_input(update, context)
+        elif state == "delivery_input":
+            await handle_delivery_input(update, context)
         else:
             # Check secret code before falling back to unknown-command reply
             if await _process_secret_code(update, context, text):

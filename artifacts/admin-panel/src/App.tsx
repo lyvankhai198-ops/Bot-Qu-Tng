@@ -22,6 +22,7 @@ import SyncRobot from "@/pages/sync-robot";
 import Checkin from "@/pages/checkin";
 import GiftBoxes from "@/pages/gift-boxes";
 import SecretCodes from "@/pages/secret-codes";
+import Delivery from "@/pages/delivery";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -81,6 +82,7 @@ function Router() {
       <Route path="/checkin"><ProtectedRoute component={Checkin} /></Route>
       <Route path="/gift-boxes"><ProtectedRoute component={GiftBoxes} /></Route>
       <Route path="/secret-codes"><ProtectedRoute component={SecretCodes} /></Route>
+      <Route path="/delivery"><ProtectedRoute component={Delivery} /></Route>
       <Route component={NotFound} />
     </Switch>
   );
