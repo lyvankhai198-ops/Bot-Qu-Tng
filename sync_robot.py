@@ -453,7 +453,9 @@ def parse_xlsx_to_rows(xlsx_path: str, known_products: list, existing_order_ids:
         product_name_raw = str(get(cells, "productName") or "").strip()
         qty_raw = get(cells, "quantity")
         try:
-            quantity = int(str(qty_raw).strip()) if qty_raw is not None else 1
+            quantity = int(float(str(qty_raw).strip())) if qty_raw is not None else 1
+            if quantity < 1:
+                quantity = 1
         except Exception:
             quantity = 1
         total_price        = parse_price(get(cells, "totalPrice"))
