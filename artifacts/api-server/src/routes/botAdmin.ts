@@ -2120,13 +2120,14 @@ router.put("/bot/sync-robot/config", requireAuth, (req: any, res: any) => {
     orders_url: body.orders_url !== undefined ? String(body.orders_url).trim() : (current.orders_url ?? ""),
     email:      body.email      !== undefined ? String(body.email).trim()      : (current.email      ?? ""),
     interval_s: body.interval_s !== undefined ? Number(body.interval_s)        : (current.interval_s ?? 300),
+    sync_mode:  (body.sync_mode === "new_only" ? "new_only" : (body.sync_mode === "full" ? "full" : (current.sync_mode ?? "full"))),
   };
   // Only update password if provided and not the masked sentinel "***"
   if (body.password && body.password !== "***") {
     updated.password = String(body.password);
   }
   writeJson("sync_robot_config", updated);
-  addLog("SYNC_ROBOT_CONFIG", `enabled=${updated.enabled} interval=${updated.interval_s}s`, "web-admin");
+  addLog("SYNC_ROBOT_CONFIG", `enabled=${updated.enabled} interval=${updated.interval_s}s mode=${updated.sync_mode}`, "web-admin");
   res.json({ ok: true, message: "Đã lưu cấu hình robot" });
 });
 

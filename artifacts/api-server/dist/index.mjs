@@ -51864,13 +51864,14 @@ router2.put("/bot/sync-robot/config", requireAuth, (req, res) => {
     login_url: body.login_url !== void 0 ? String(body.login_url).trim() : current.login_url ?? "",
     orders_url: body.orders_url !== void 0 ? String(body.orders_url).trim() : current.orders_url ?? "",
     email: body.email !== void 0 ? String(body.email).trim() : current.email ?? "",
-    interval_s: body.interval_s !== void 0 ? Number(body.interval_s) : current.interval_s ?? 300
+    interval_s: body.interval_s !== void 0 ? Number(body.interval_s) : current.interval_s ?? 300,
+    sync_mode: body.sync_mode === "new_only" ? "new_only" : body.sync_mode === "full" ? "full" : current.sync_mode ?? "full"
   };
   if (body.password && body.password !== "***") {
     updated.password = String(body.password);
   }
   writeJson("sync_robot_config", updated);
-  addLog("SYNC_ROBOT_CONFIG", `enabled=${updated.enabled} interval=${updated.interval_s}s`, "web-admin");
+  addLog("SYNC_ROBOT_CONFIG", `enabled=${updated.enabled} interval=${updated.interval_s}s mode=${updated.sync_mode}`, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 l\u01B0u c\u1EA5u h\xECnh robot" });
 });
 router2.get("/bot/sync-robot/status", requireAuth, (_req, res) => {
