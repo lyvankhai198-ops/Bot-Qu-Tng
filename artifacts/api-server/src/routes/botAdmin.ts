@@ -110,6 +110,21 @@ router.post("/bot/auth", (req: any, res: any) => {
   res.json({ token: ADMIN_SECRET });
 });
 
+// ── GET /bot/pending-counts ─────────────────────────────────────────────────
+// Lightweight single-request summary used by the sidebar badge system.
+router.get("/bot/pending-counts", requireAuth, (_req: any, res: any) => {
+  const warranty:  any[] = readJson("warranty_requests", []) ?? [];
+  const delivery:  any[] = readJson("delivery_requests", []) ?? [];
+  const syncStatus: any  = readJson("sync_robot_status", {}) ?? {};
+
+  const deliveryPending  = delivery.filter((r: any) => r.status === "pending").length;
+  const warrantyPending  = warranty.filter((w: any) => ["pending", "processing"].includes(w.status)).length;
+  // Sync-robot badge: errors reported in last run (errors > 0)
+  const syncErrors       = Number(syncStatus?.last_run?.errors ?? 0);
+
+  res.json({ delivery: deliveryPending, warranty: warrantyPending, syncRobot: syncErrors });
+});
+
 // ── GET /bot/stats ──────────────────────────────────────────────────────────
 router.get("/bot/stats", requireAuth, (_req: any, res: any) => {
   const s = readSettings();

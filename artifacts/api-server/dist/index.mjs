@@ -49913,6 +49913,15 @@ router2.post("/bot/auth", (req, res) => {
   }
   res.json({ token: ADMIN_SECRET });
 });
+router2.get("/bot/pending-counts", requireAuth, (_req, res) => {
+  const warranty = readJson("warranty_requests", []) ?? [];
+  const delivery = readJson("delivery_requests", []) ?? [];
+  const syncStatus = readJson("sync_robot_status", {}) ?? {};
+  const deliveryPending = delivery.filter((r) => r.status === "pending").length;
+  const warrantyPending = warranty.filter((w) => ["pending", "processing"].includes(w.status)).length;
+  const syncErrors = Number(syncStatus?.last_run?.errors ?? 0);
+  res.json({ delivery: deliveryPending, warranty: warrantyPending, syncRobot: syncErrors });
+});
 router2.get("/bot/stats", requireAuth, (_req, res) => {
   const s = readSettings();
   const users = readJson("users", {}) ?? {};
