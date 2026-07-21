@@ -10,12 +10,14 @@ import { useToast } from "@/hooks/use-toast"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
-import { Truck, RefreshCw, Loader2, Send, Clock, CheckCircle2, XCircle, Package, Banknote, RotateCcw, BadgeCheck } from "lucide-react"
+import { Truck, RefreshCw, Loader2, Send, Clock, CheckCircle2, XCircle, Package, Banknote, RotateCcw, BadgeCheck, Lock, ExternalLink } from "lucide-react"
 import { format } from "date-fns"
 
 function authHeader() {
   return { Authorization: `Bearer ${localStorage.getItem("admin_token") ?? ""}` }
 }
+
+const UNLOCK_PAGE_BASE = "http://103.180.138.203/api/customer-page"
 
 interface DeliveryRequest {
   id: string
@@ -25,7 +27,7 @@ interface DeliveryRequest {
   orderId: string
   userLang: string
   submittedAt: string
-  status: "pending" | "sent" | "failed" | "refunded" | "done"
+  status: "pending" | "sent" | "failed" | "refunded" | "done" | "pending_unlock"
   sentAt: string | null
   sentBy: string | null
   refundedAt: string | null
@@ -34,13 +36,15 @@ interface DeliveryRequest {
   doneAt: string | null
   doneNote: string | null
   accountInfo: { account: string; password: string; twoFA: string | null } | null
+  unlockUrl?: string | null
 }
 
 function StatusBadge({ status }: { status: string }) {
-  if (status === "sent")     return <Badge className="bg-green-100 text-green-800 border-green-300 whitespace-nowrap">✅ Đã giao</Badge>
-  if (status === "failed")   return <Badge className="bg-red-100 text-red-800 border-red-300 whitespace-nowrap">❌ Giao thất bại</Badge>
-  if (status === "refunded") return <Badge className="bg-purple-100 text-purple-800 border-purple-300 whitespace-nowrap">💰 Đã hoàn tiền</Badge>
-  if (status === "done")     return <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 whitespace-nowrap">✅ Đã xong</Badge>
+  if (status === "sent")           return <Badge className="bg-green-100 text-green-800 border-green-300 whitespace-nowrap">✅ Đã giao</Badge>
+  if (status === "pending_unlock") return <Badge className="bg-blue-100 text-blue-800 border-blue-300 whitespace-nowrap">🔒 Chờ khách mở khoá</Badge>
+  if (status === "failed")         return <Badge className="bg-red-100 text-red-800 border-red-300 whitespace-nowrap">❌ Giao thất bại</Badge>
+  if (status === "refunded")       return <Badge className="bg-purple-100 text-purple-800 border-purple-300 whitespace-nowrap">💰 Đã hoàn tiền</Badge>
+  if (status === "done")           return <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 whitespace-nowrap">✅ Đã xong</Badge>
   return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300 whitespace-nowrap">⏳ Chờ xử lý</Badge>
 }
 
@@ -127,7 +131,11 @@ export default function Delivery() {
       })
       const data = await res.json()
       if (!res.ok || !data.ok) throw new Error(data.message ?? "Lỗi không xác định")
-      toast({ title: "✅ Thành công", description: "Tài khoản đã được gửi cho người dùng" })
+      if (data.warned) {
+        toast({ title: "⚠️ Đã lưu tài khoản", description: data.warned, variant: "destructive" })
+      } else {
+        toast({ title: "🔒 Đã lưu & gửi link", description: "Khách sẽ nhận được link mở khoá qua Telegram" })
+      }
       closeSendModal(); fetchRequests()
     } catch (e: any) {
       toast({ title: "Lỗi", description: e.message ?? "Không thể gửi tài khoản", variant: "destructive" })
@@ -176,10 +184,11 @@ export default function Delivery() {
     } finally { setDoneLoading(false) }
   }
 
-  const pending  = requests.filter(r => r.status === "pending").length
-  const sent     = requests.filter(r => r.status === "sent").length
-  const refunded = requests.filter(r => r.status === "refunded").length
-  const failed   = requests.filter(r => r.status === "failed").length
+  const pending       = requests.filter(r => r.status === "pending").length
+  const pendingUnlock = requests.filter(r => r.status === "pending_unlock").length
+  const sent          = requests.filter(r => r.status === "sent").length
+  const refunded      = requests.filter(r => r.status === "refunded").length
+  const failed        = requests.filter(r => r.status === "failed").length
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -198,12 +207,19 @@ export default function Delivery() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-6 text-center">
             <Clock className="h-8 w-8 mx-auto mb-2 text-yellow-500" />
             <div className="text-2xl font-bold">{pending}</div>
             <div className="text-sm text-muted-foreground">Chờ xử lý</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6 text-center">
+            <Lock className="h-8 w-8 mx-auto mb-2 text-blue-500" />
+            <div className="text-2xl font-bold">{pendingUnlock}</div>
+            <div className="text-sm text-muted-foreground">Chờ mở khoá</div>
           </CardContent>
         </Card>
         <Card>
@@ -261,7 +277,7 @@ export default function Delivery() {
                 </TableHeader>
                 <TableBody>
                   {requests.map(req => (
-                    <TableRow key={req.id} className={req.status === "pending" ? "bg-yellow-50/40 dark:bg-yellow-950/20" : ""}>
+                    <TableRow key={req.id} className={req.status === "pending" ? "bg-yellow-50/40 dark:bg-yellow-950/20" : req.status === "pending_unlock" ? "bg-blue-50/40 dark:bg-blue-950/20" : ""}>
                       <TableCell className="font-mono font-medium text-xs">{req.orderId}</TableCell>
                       <TableCell>
                         <div className="font-medium">{req.firstName || "—"}</div>
@@ -274,6 +290,16 @@ export default function Delivery() {
                       <TableCell>
                         <div className="space-y-1">
                           <StatusBadge status={req.status} />
+                          {req.status === "pending_unlock" && (
+                            <a
+                              href={`${UNLOCK_PAGE_BASE}?id=${encodeURIComponent(req.orderId)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                            >
+                              <ExternalLink className="h-3 w-3" /> Link mở khoá
+                            </a>
+                          )}
                           {req.status === "refunded" && req.refundAmount != null && (
                             <div className="text-xs text-muted-foreground">
                               {req.refundAmount.toLocaleString("vi-VN")}đ
@@ -283,8 +309,8 @@ export default function Delivery() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex gap-1 justify-end flex-wrap">
-                          {/* Action buttons — only for pending/failed */}
-                          {req.status === "pending" || req.status === "failed" ? (<>
+                          {/* Hoàn tiền / Đã xong — cho pending, pending_unlock, failed */}
+                          {(req.status === "pending" || req.status === "pending_unlock" || req.status === "failed") ? (<>
                             <Button
                               size="sm"
                               variant="outline"
@@ -302,7 +328,7 @@ export default function Delivery() {
                               <Banknote className="h-3 w-3 mr-1" /> Hoàn tiền
                             </Button>
                           </>) : null}
-                          {/* Send button — show for all (re-deliver for sent/refunded) */}
+                          {/* Giao tài khoản / Giao lại */}
                           <Button
                             size="sm"
                             variant={req.status === "pending" ? "default" : "outline"}
@@ -310,7 +336,9 @@ export default function Delivery() {
                           >
                             {req.status === "pending"
                               ? <><Send className="h-3 w-3 mr-1" />Giao tài khoản</>
-                              : <><RotateCcw className="h-3 w-3 mr-1" />Giao lại</>
+                              : req.status === "pending_unlock"
+                                ? <><RotateCcw className="h-3 w-3 mr-1" />Gửi lại link</>
+                                : <><RotateCcw className="h-3 w-3 mr-1" />Giao lại</>
                             }
                           </Button>
                         </div>
