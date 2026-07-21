@@ -2755,6 +2755,62 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
   res.json({ ok: true });
 });
 
+// ── POST /bot/delivery/:id/refund ─────────────────────────────────────────────
+router.post("/bot/delivery/:id/refund", requireAuth, async (req: any, res: any) => {
+  const { id } = req.params;
+  const { amount, note } = req.body ?? {};
+  if (!amount && amount !== 0) {
+    res.status(400).json({ ok: false, message: "Số tiền hoàn là bắt buộc" });
+    return;
+  }
+
+  const requests: any[] = readJson("delivery_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy yêu cầu" }); return; }
+  const dr = requests[idx];
+
+  const userLang = dr.userLang ?? "vi";
+  const isEN = userLang === "en";
+  const amtNum = Number(amount) || 0;
+  const amtStr = amtNum.toLocaleString("vi-VN") + "đ";
+  const lines: string[] = [];
+  if (isEN) {
+    lines.push(`💰 <b>Your delivery request has been refunded</b>\n`);
+    lines.push(`📦 Order: <code>${dr.orderId}</code>`);
+    lines.push(`💵 Refund amount: <b>${amtStr}</b>`);
+    if (note) lines.push(`📝 Note: ${note}`);
+    lines.push(`\nPlease contact support if you have any questions.`);
+  } else {
+    lines.push(`💰 <b>Yêu cầu giao tài khoản đã được hoàn tiền</b>\n`);
+    lines.push(`📦 Mã đơn: <code>${dr.orderId}</code>`);
+    lines.push(`💵 Số tiền hoàn: <b>${amtStr}</b>`);
+    if (note) lines.push(`📝 Ghi chú: ${note}`);
+    lines.push(`\nVui lòng liên hệ hỗ trợ nếu bạn có thắc mắc.`);
+  }
+  const message = lines.join("\n");
+  const result = await sendTelegramMessage(dr.userId, message);
+
+  requests[idx] = {
+    ...dr,
+    status: "refunded",
+    refundedAt: now(),
+    refundedBy: "web-admin",
+    refundAmount: amtNum,
+    refundNote: note || null,
+    reminderEnabled: false,
+    nextReminderAt: null,
+    reminderProcessing: false,
+  };
+  writeJson("delivery_requests", requests);
+  addLog("DELIVERY_REFUNDED", `${dr.username || dr.userId} | ${amtStr}`, "web-admin");
+
+  if (!result.ok) {
+    res.status(500).json({ ok: false, message: `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
+    return;
+  }
+  res.json({ ok: true });
+});
+
 // BACKUP
 // ═══════════════════════════════════════════════════════════════════════════
 

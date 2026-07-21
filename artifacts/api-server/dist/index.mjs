@@ -52421,6 +52421,63 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
   }
   res.json({ ok: true });
 });
+router2.post("/bot/delivery/:id/refund", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { amount, note } = req.body ?? {};
+  if (!amount && amount !== 0) {
+    res.status(400).json({ ok: false, message: "S\u1ED1 ti\u1EC1n ho\xE0n l\xE0 b\u1EAFt bu\u1ED9c" });
+    return;
+  }
+  const requests = readJson("delivery_requests", []) ?? [];
+  const idx = requests.findIndex((r) => r.id === id);
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y y\xEAu c\u1EA7u" });
+    return;
+  }
+  const dr = requests[idx];
+  const userLang = dr.userLang ?? "vi";
+  const isEN = userLang === "en";
+  const amtNum = Number(amount) || 0;
+  const amtStr = amtNum.toLocaleString("vi-VN") + "\u0111";
+  const lines = [];
+  if (isEN) {
+    lines.push(`\u{1F4B0} <b>Your delivery request has been refunded</b>
+`);
+    lines.push(`\u{1F4E6} Order: <code>${dr.orderId}</code>`);
+    lines.push(`\u{1F4B5} Refund amount: <b>${amtStr}</b>`);
+    if (note) lines.push(`\u{1F4DD} Note: ${note}`);
+    lines.push(`
+Please contact support if you have any questions.`);
+  } else {
+    lines.push(`\u{1F4B0} <b>Y\xEAu c\u1EA7u giao t\xE0i kho\u1EA3n \u0111\xE3 \u0111\u01B0\u1EE3c ho\xE0n ti\u1EC1n</b>
+`);
+    lines.push(`\u{1F4E6} M\xE3 \u0111\u01A1n: <code>${dr.orderId}</code>`);
+    lines.push(`\u{1F4B5} S\u1ED1 ti\u1EC1n ho\xE0n: <b>${amtStr}</b>`);
+    if (note) lines.push(`\u{1F4DD} Ghi ch\xFA: ${note}`);
+    lines.push(`
+Vui l\xF2ng li\xEAn h\u1EC7 h\u1ED7 tr\u1EE3 n\u1EBFu b\u1EA1n c\xF3 th\u1EAFc m\u1EAFc.`);
+  }
+  const message = lines.join("\n");
+  const result = await sendTelegramMessage(dr.userId, message);
+  requests[idx] = {
+    ...dr,
+    status: "refunded",
+    refundedAt: now(),
+    refundedBy: "web-admin",
+    refundAmount: amtNum,
+    refundNote: note || null,
+    reminderEnabled: false,
+    nextReminderAt: null,
+    reminderProcessing: false
+  };
+  writeJson("delivery_requests", requests);
+  addLog("DELIVERY_REFUNDED", `${dr.username || dr.userId} | ${amtStr}`, "web-admin");
+  if (!result.ok) {
+    res.status(500).json({ ok: false, message: `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
+    return;
+  }
+  res.json({ ok: true });
+});
 router2.get("/bot/backup", requireAuth, (_req, res) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
   const backup = { exportedAt: now() };
