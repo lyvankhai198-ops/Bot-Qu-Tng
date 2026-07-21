@@ -27,7 +27,8 @@ DATA_DIR    = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
 CONFIG_FILE  = DATA_DIR / "sync_robot_config.json"
 STATUS_FILE  = DATA_DIR / "sync_robot_status.json"
 LOG_FILE     = DATA_DIR / "sync_robot_logs.json"
-TRIGGER_FILE = DATA_DIR / "sync_robot_trigger.json"
+TRIGGER_FILE     = DATA_DIR / "sync_robot_trigger.json"
+WATCH_STATE_FILE = DATA_DIR / "sync_watch_state.json"
 
 MAX_LOGS = 200
 
@@ -99,6 +100,69 @@ def append_log(entry: dict):
 
 def load_config() -> dict:
     return load_json(CONFIG_FILE, {})
+
+# ── Watch-state helpers ────────────────────────────────────────────────────────
+
+def save_watch_state(state: dict):
+    save_json(WATCH_STATE_FILE, {**state, "saved_at": now_iso()})
+
+def load_watch_state() -> dict:
+    return load_json(WATCH_STATE_FILE, {})
+
+_ORDER_API_KEYWORDS = (
+    "/order", "/don-hang", "/don_hang", "/invoice",
+    "/purchases", "/transactions", "/sale",
+)
+
+def quick_order_count_check() -> int | None:
+    """
+    Gọi trực tiếp orders API endpoint đã được capture (không cần Playwright).
+    Trả về tổng số đơn, hoặc None nếu thất bại / cookies hết hạn.
+    """
+    state = load_watch_state()
+    api_url  = state.get("api_url", "")
+    cookies  = state.get("cookies", [])
+    auth_hdr = state.get("auth_header", "")
+    if not api_url or not cookies:
+        return None
+    try:
+        cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+        req = urllib.request.Request(api_url)
+        req.add_header("Cookie", cookie_str)
+        if auth_hdr:
+            req.add_header("Authorization", auth_hdr)
+        req.add_header("Accept", "application/json, text/plain, */*")
+        req.add_header("User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36")
+        req.add_header("Referer", state.get("site_url", ""))
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status in (401, 403):
+                logger.info("[WATCH] quick_check: cookies hết hạn (HTTP %d)", resp.status)
+                return None
+            raw = resp.read().decode("utf-8")
+            body = json.loads(raw)
+            # Try common shapes
+            total = (
+                body.get("total") or
+                body.get("count") or
+                body.get("total_count") or
+                (body.get("pagination") or {}).get("total") or
+                (body.get("meta") or {}).get("total") or
+                len(body.get("data") or body.get("orders") or
+                    body.get("items") or body.get("results") or [])
+            )
+            return int(total) if total else 0
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            logger.info("[WATCH] quick_check: HTTP %d — session hết hạn", e.code)
+        else:
+            logger.debug("[WATCH] quick_check HTTP error %d", e.code)
+        return None
+    except Exception as ex:
+        logger.debug("[WATCH] quick_check failed: %s", ex)
+        return None
 
 # ── XLSX parsing (ported from xlsxUtils.ts) ────────────────────────────────────
 def normalize_vn(s: str) -> str:
@@ -1713,6 +1777,43 @@ async def do_playwright_sync(config: dict) -> dict:
         _page_id = id(page)
         logger.info(f"[SYNC] Context created — ctx_id={_ctx_id} | page_id={_page_id}")
 
+        # ── Interceptor: capture orders API URL + total ───────────────────────
+        _captured_api: dict = {}
+        async def _on_api_response(resp):
+            if _captured_api.get("api_url"):
+                return  # already captured
+            try:
+                url_low = resp.url.lower()
+                ctype   = resp.headers.get("content-type", "")
+                if (resp.status == 200
+                        and "json" in ctype
+                        and any(k in url_low for k in _ORDER_API_KEYWORDS)):
+                    body = await resp.json()
+                    total = (
+                        body.get("total") or body.get("count") or
+                        body.get("total_count") or
+                        (body.get("pagination") or {}).get("total") or
+                        (body.get("meta") or {}).get("total") or
+                        len(body.get("data") or body.get("orders") or
+                            body.get("items") or body.get("results") or [])
+                    )
+                    if total and int(total) > 0:
+                        _captured_api["api_url"]   = resp.url
+                        _captured_api["api_total"] = int(total)
+                        # Capture auth header from the request if present
+                        try:
+                            ah = resp.request.headers.get("authorization", "")
+                            if ah:
+                                _captured_api["auth_header"] = ah
+                        except Exception:
+                            pass
+                        logger.info(
+                            f"[WATCH] Captured orders API: {resp.url[:120]} | total={total}"
+                        )
+            except Exception:
+                pass
+        page.on("response", _on_api_response)
+
         out_path = None
         try:
             # ════════════════════════════════════════════════════════
@@ -1808,6 +1909,30 @@ async def do_playwright_sync(config: dict) -> dict:
                         "dir": download_dir, "error": str(ex)}
 
         finally:
+            # ── Lưu cookies + orders API info cho watcher ─────────────────
+            try:
+                all_cookies = await ctx.cookies()
+                ws = load_watch_state()
+                ws["site_url"] = site_url
+                ws["cookies"]  = [
+                    {"name": c["name"], "value": c["value"],
+                     "domain": c.get("domain", ""), "path": c.get("path", "/")}
+                    for c in all_cookies
+                ]
+                if _captured_api.get("api_url"):
+                    ws["api_url"]    = _captured_api["api_url"]
+                    ws["api_total"]  = _captured_api.get("api_total", 0)
+                    if _captured_api.get("auth_header"):
+                        ws["auth_header"] = _captured_api["auth_header"]
+                    logger.info(
+                        f"[WATCH] Session saved — cookies={len(ws['cookies'])} "
+                        f"api_url={_captured_api['api_url'][:80]}"
+                    )
+                else:
+                    logger.info(f"[WATCH] Session saved (no API URL captured) — cookies={len(ws['cookies'])}")
+                save_watch_state(ws)
+            except Exception as _we:
+                logger.warning(f"[WATCH] Không thể lưu session: {_we}")
             logger.info(f"[SYNC] Đóng browser — ctx_id={_ctx_id} | page_id={_page_id}")
             await browser.close()
 
@@ -1930,6 +2055,28 @@ def run_sync_cycle(config: dict) -> dict:
             logger.info("[SYNC] auto_switch_new_only: đã chuyển sang new_only mode")
             result["message"] += " → chuyển sang chế độ chỉ đơn mới"
 
+        # ── Cập nhật last_order_count trong watch_state sau sync thành công ──
+        if result.get("success"):
+            try:
+                ws = load_watch_state()
+                # Ưu tiên check mới nhất từ API (chắc chắn hơn số đơn trong XLSX)
+                fresh = quick_order_count_check()
+                if fresh is not None:
+                    ws["last_order_count"] = fresh
+                    ws["last_checked_at"]  = now_iso()
+                    save_watch_state(ws)
+                    logger.info(f"[WATCH] last_order_count cập nhật = {fresh} (từ API)")
+                else:
+                    # Fallback: lấy từ api_total đã capture trong session này
+                    ws_api_total = ws.get("api_total")
+                    if ws_api_total:
+                        ws["last_order_count"] = ws_api_total
+                        ws["last_checked_at"]  = now_iso()
+                        save_watch_state(ws)
+                        logger.info(f"[WATCH] last_order_count cập nhật = {ws_api_total} (từ capture)")
+            except Exception as _we:
+                logger.debug(f"[WATCH] Không cập nhật được last_order_count: {_we}")
+
     except Exception as exc:
         logger.error(f"[robot] Lỗi: {exc}\n{traceback.format_exc()}")
         result["message"] = f"❌ Lỗi: {exc}"
@@ -1942,9 +2089,90 @@ def run_sync_cycle(config: dict) -> dict:
 
     return result
 
+# ── Lightweight order watcher ──────────────────────────────────────────────────
+def order_watcher_worker():
+    """
+    Thread nhẹ: poll orders API mỗi watch_interval_s giây (mặc định 30s).
+    Khi phát hiện total tăng → ghi trigger để robot_loop chạy sync ngay.
+    Khi API trả 401/None (cookies hết hạn) → ghi trigger để refresh session.
+    Không chạy Playwright — chỉ dùng urllib với cookies đã lưu.
+    """
+    logger.info("[WATCH] Order watcher worker khởi động")
+    _last_refresh_trigger = 0.0   # tránh trigger refresh liên tục
+
+    while True:
+        try:
+            config = load_config()
+            watch_interval_s = int(config.get("watch_interval_s", 30))
+            time.sleep(watch_interval_s)
+
+            if not config.get("enabled", False):
+                continue
+            if not config.get("watch_enabled", True):
+                continue
+
+            ws = load_watch_state()
+            if not ws.get("api_url") or not ws.get("cookies"):
+                # Chưa có session — chờ full sync đầu tiên
+                continue
+
+            current = quick_order_count_check()
+            now_ts  = time.time()
+
+            if current is None:
+                # Cookies hết hạn hoặc network lỗi — trigger refresh (không quá mỗi 10 phút)
+                if now_ts - _last_refresh_trigger > 600:
+                    logger.info("[WATCH] Session hết hạn — trigger sync để làm mới cookies")
+                    save_json(TRIGGER_FILE, {
+                        "trigger": True,
+                        "reason": "session_expired",
+                        "triggered_at": now_iso(),
+                    })
+                    _last_refresh_trigger = now_ts
+                continue
+
+            last = ws.get("last_order_count")
+            ws["last_order_count"] = current
+            ws["last_checked_at"]  = now_iso()
+            save_watch_state(ws)
+
+            if last is not None and current > last:
+                diff = current - last
+                logger.info(
+                    f"[WATCH] 🔔 Phát hiện {diff} đơn mới! "
+                    f"{last} → {current} — trigger sync ngay"
+                )
+                # Cập nhật status để admin panel hiển thị
+                status = load_json(STATUS_FILE, {})
+                status["watch_detected_at"]  = now_iso()
+                status["watch_new_count"]     = diff
+                status["watch_total"]         = current
+                save_json(STATUS_FILE, status)
+
+                save_json(TRIGGER_FILE, {
+                    "trigger": True,
+                    "reason": "new_orders_detected",
+                    "old_count": last,
+                    "new_count": current,
+                    "triggered_at": now_iso(),
+                })
+            else:
+                logger.debug(f"[WATCH] Không có đơn mới — total={current}")
+
+        except Exception as exc:
+            logger.error(f"[WATCH] Watcher error: {exc}")
+
+
 # ── Main robot loop ────────────────────────────────────────────────────────────
 def robot_loop():
     logger.info("[robot] ✅ Sync robot khởi động")
+
+    # Khởi động watcher thread ngay lập tức
+    from threading import Thread as _Thread
+    _watcher = _Thread(target=order_watcher_worker, daemon=True, name="order-watcher")
+    _watcher.start()
+    logger.info("[WATCH] Order watcher thread started")
+
     while True:
         config = load_config()
 
@@ -1953,13 +2181,23 @@ def robot_loop():
             time.sleep(15)
             continue
 
-        interval_s = int(config.get("interval_s", 300))
+        # Fallback interval: khi watcher hoạt động dùng interval dài hơn (mặc định 1 giờ)
+        # Khi watcher chưa có session (chưa lần nào sync), dùng interval ngắn hơn
+        ws = load_watch_state()
+        if ws.get("api_url"):
+            # Watcher đang hoạt động — chỉ dùng interval_s như fallback dài
+            interval_s = int(config.get("watch_fallback_interval_s",
+                                        config.get("interval_s", 3600)))
+        else:
+            # Chưa có session → chạy ngay và dùng interval ngắn cho lần đầu
+            interval_s = int(config.get("interval_s", 300))
 
-        # Check trigger
+        # Check trigger (từ watcher hoặc manual)
         trigger = load_json(TRIGGER_FILE, {})
         if trigger.get("trigger", False):
+            reason = trigger.get("reason", "manual")
             save_json(TRIGGER_FILE, {"trigger": False, "cleared_at": now_iso()})
-            logger.info("[robot] Trigger nhận được — chạy ngay")
+            logger.info(f"[robot] Trigger nhận được — reason={reason!r} — chạy ngay")
 
         # Try acquire lock (non-blocking)
         acquired = _run_lock.acquire(blocking=False)
