@@ -52826,13 +52826,13 @@ router2.post("/bot/delivery/:id/send", requireAuth, async (req, res) => {
   }
   const existingItems = orderItems[dr.orderId] ?? [];
   for (const acc of accountList) {
-    const { account: account2, password, twoFA } = acc;
+    const { account, password, twoFA } = acc;
     const existIdx = existingItems.findIndex(
-      (it) => (it.original_account || it.email || "").toLowerCase() === account2.toLowerCase()
+      (it) => (it.original_account || it.email || "").toLowerCase() === account.toLowerCase()
     );
     const itemEntry = {
       itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
-      email: account2,
+      email: account,
       password: password || null,
       twoFA: twoFA || null,
       unlocked: false,
@@ -52840,8 +52840,8 @@ router2.post("/bot/delivery/:id/send", requireAuth, async (req, res) => {
       item_status: "active",
       productName: order.productName || dr.productName || "",
       createdAt: existIdx >= 0 ? existingItems[existIdx].createdAt : deliveredAt,
-      original_account: account2,
-      current_account: account2,
+      original_account: account,
+      current_account: account,
       current_replacement_number: 0,
       original_delivered_at: deliveredAt,
       warranty_days: Number(order.warrantyDays || 0) || null,
@@ -52890,7 +52890,7 @@ Nh\u1EA5n n\xFAt b\xEAn d\u01B0\u1EDBi \u0111\u1EC3 m\u1EDF kho\xE1 v\xE0 nh\u1E
   const btnText = isEN ? "\u{1F513} Unlock Account" : "\u{1F513} M\u1EDF kho\xE1 nh\u1EADn t\xE0i kho\u1EA3n";
   const callbackData = `unlock_del:${dr.orderId}`;
   const result = await sendTelegramWithCallbackButton(dr.userId, notifyMsg, btnText, callbackData);
-  addLog("DELIVERY_PENDING_UNLOCK", `${dr.username || dr.userId} \u2192 ${account}`, "web-admin");
+  addLog("DELIVERY_PENDING_UNLOCK", `${dr.username || dr.userId} \u2192 ${firstAcc.account}`, "web-admin");
   if (!result.ok) {
     res.json({ ok: true, warned: `\u0110\xE3 l\u01B0u t\xE0i kho\u1EA3n nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
     return;
