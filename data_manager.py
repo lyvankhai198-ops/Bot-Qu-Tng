@@ -411,6 +411,19 @@ def find_item_by_any_account(email: str):
     return None, None
 
 
+def _canon_order_id(s: str) -> str:
+    """
+    Chuẩn hóa mã đơn để fuzzy-match các ký tự dễ nhầm lẫn:
+      O (letter) ↔ 0 (digit zero)
+      I (letter) ↔ 1 (digit one) ↔ l (lowercase L)
+      S (letter) ↔ 5 (digit)  — bỏ vì quá aggressive
+    """
+    s = s.upper()
+    s = s.replace('O', '0')          # O → 0
+    s = s.replace('I', '1').replace('L', '1')  # I, l → 1
+    return s
+
+
 def find_order_with_items(query: str) -> dict:
     """
     Unified lookup by order ID (or "mã đơn: XYZ"), original email, current email,
@@ -421,6 +434,9 @@ def find_order_with_items(query: str) -> dict:
     Email-based lookups return only the single matched item (never siblings).
     isMultiAccountOrder is True when the order has >1 item and lookup was by email.
     """
+    # Normalize: Unicode font → ASCII (fullwidth, math bold/italic, zero-width...)
+    query = normalize_search_query(query)
+
     # Normalize: strip common label prefixes
     query = re.sub(
         r'^(?:m[aã]\s*[đd][oơ]n|order\s*(?:code|id)?|email|t[àa]i\s*kho[ảa]n)\s*[:：]\s*',
@@ -430,10 +446,7 @@ def find_order_with_items(query: str) -> dict:
     orders    = load("orders", {})
     all_items = load("order_items", {})
 
-    # 1. Order ID match — return all items for the order
-    query_upper = query.upper()
-    match_key = query_upper if query_upper in orders else (query if query in orders else None)
-    if match_key:
+    def _return_order(match_key):
         items = all_items.get(match_key, [])
         return {
             "order": orders[match_key],
@@ -442,6 +455,20 @@ def find_order_with_items(query: str) -> dict:
             "matchedItem": None,
             "isMultiAccountOrder": len(items) > 1,
         }
+
+    # 1. Order ID match — exact then case-insensitive
+    query_upper = query.upper()
+    match_key = query_upper if query_upper in orders else (query if query in orders else None)
+    if match_key:
+        return _return_order(match_key)
+
+    # 1b. Fuzzy order ID lookup — xử lý nhầm O↔0, I/l↔1
+    # Ví dụ: user gõ ORDERNO8DUV5DLQ → tìm ra ORDERN08DUV5DLQ trong DB
+    if not match_key:
+        query_canon = _canon_order_id(query_upper)
+        for key in orders:
+            if _canon_order_id(key) == query_canon:
+                return _return_order(key)
 
     # 2. Full chain search (original, current, replacement history)
     order_id, matched_item = find_item_by_any_account(query)
