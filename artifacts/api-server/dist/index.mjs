@@ -52502,10 +52502,11 @@ Vui l\xF2ng li\xEAn h\u1EC7 h\u1ED7 tr\u1EE3 n\u1EBFu b\u1EA1n c\xF3 th\u1EAFc m
   }
   const message = lines.join("\n");
   const result = await sendTelegramMessage(dr.userId, message);
+  const refundedAt = now();
   requests[idx] = {
     ...dr,
     status: "refunded",
-    refundedAt: now(),
+    refundedAt,
     refundedBy: "web-admin",
     refundAmount: amtNum,
     refundNote: note || null,
@@ -52514,6 +52515,36 @@ Vui l\xF2ng li\xEAn h\u1EC7 h\u1ED7 tr\u1EE3 n\u1EBFu b\u1EA1n c\xF3 th\u1EAFc m
     reminderProcessing: false
   };
   writeJson("delivery_requests", requests);
+  const orders = readJson("orders", {}) ?? {};
+  if (dr.orderId && orders[dr.orderId]) {
+    orders[dr.orderId].status = "refunded";
+    orders[dr.orderId].refundedAt = refundedAt;
+    orders[dr.orderId].refundAmount = amtNum;
+    writeJson("orders", orders);
+  }
+  const orderItems = readJson("order_items", {}) ?? {};
+  const itemList = orderItems[dr.orderId] ?? [];
+  if (itemList.length > 0) {
+    orderItems[dr.orderId] = itemList.map((it) => ({
+      ...it,
+      item_status: "refunded",
+      refunded_at: refundedAt,
+      refund_amount: amtNum,
+      refund_admin_id: "web-admin",
+      support_enabled: false
+    }));
+    writeJson("order_items", orderItems);
+  }
+  const refundRecords = readJson("refund_records", {}) ?? {};
+  refundRecords[dr.orderId] = {
+    orderId: dr.orderId,
+    amount: amtNum,
+    note: note || null,
+    refundedAt,
+    refundedBy: "web-admin",
+    source: "delivery"
+  };
+  writeJson("refund_records", refundRecords);
   addLog("DELIVERY_REFUNDED", `${dr.username || dr.userId} | ${amtStr}`, "web-admin");
   if (!result.ok) {
     res.status(500).json({ ok: false, message: `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });

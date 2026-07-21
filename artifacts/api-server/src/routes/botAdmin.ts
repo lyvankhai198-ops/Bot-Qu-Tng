@@ -2837,10 +2837,11 @@ router.post("/bot/delivery/:id/refund", requireAuth, async (req: any, res: any) 
   const message = lines.join("\n");
   const result = await sendTelegramMessage(dr.userId, message);
 
+  const refundedAt = now();
   requests[idx] = {
     ...dr,
     status: "refunded",
-    refundedAt: now(),
+    refundedAt,
     refundedBy: "web-admin",
     refundAmount: amtNum,
     refundNote: note || null,
@@ -2849,6 +2850,41 @@ router.post("/bot/delivery/:id/refund", requireAuth, async (req: any, res: any) 
     reminderProcessing: false,
   };
   writeJson("delivery_requests", requests);
+
+  // Also update orders.json so the bot's báo lỗi gate sees this as refunded
+  const orders: any = readJson("orders", {}) ?? {};
+  if (dr.orderId && orders[dr.orderId]) {
+    orders[dr.orderId].status = "refunded";
+    orders[dr.orderId].refundedAt = refundedAt;
+    orders[dr.orderId].refundAmount = amtNum;
+    writeJson("orders", orders);
+  }
+  // Update all order_items for this order to refunded as well
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  const itemList: any[] = orderItems[dr.orderId] ?? [];
+  if (itemList.length > 0) {
+    orderItems[dr.orderId] = itemList.map((it: any) => ({
+      ...it,
+      item_status: "refunded",
+      refunded_at: refundedAt,
+      refund_amount: amtNum,
+      refund_admin_id: "web-admin",
+      support_enabled: false,
+    }));
+    writeJson("order_items", orderItems);
+  }
+  // Add refund record so order lookup shows the refund detail block
+  const refundRecords: any = readJson("refund_records", {}) ?? {};
+  refundRecords[dr.orderId] = {
+    orderId: dr.orderId,
+    amount: amtNum,
+    note: note || null,
+    refundedAt,
+    refundedBy: "web-admin",
+    source: "delivery",
+  };
+  writeJson("refund_records", refundRecords);
+
   addLog("DELIVERY_REFUNDED", `${dr.username || dr.userId} | ${amtStr}`, "web-admin");
 
   if (!result.ok) {
