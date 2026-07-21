@@ -826,10 +826,12 @@ router.delete("/bot/orders/:orderId", requireAuth, (req: any, res: any) => {
 });
 
 // ── Group warranty status helper ─────────────────────────────────────────────
+const TERMINAL_STATUSES = ["resolved", "rejected", "done"];
+
 function _recomputeGroupStatus(req: any): void {
   const accs: any[] = req.accounts ?? [];
   const statuses = accs.map((a: any) => a.status ?? "pending");
-  if (statuses.length > 0 && statuses.every((s: string) => ["resolved", "rejected"].includes(s))) {
+  if (statuses.length > 0 && statuses.every((s: string) => TERMINAL_STATUSES.includes(s))) {
     req.status = "resolved";
     if (!req.resolvedAt) req.resolvedAt = now();
     // Disable reminders once fully resolved
@@ -1540,6 +1542,61 @@ router.post("/bot/warranty/:id/reject", requireAuth, async (req: any, res: any) 
   await sendTelegramMessage(req_.userId, msg);
   addLog("WARRANTY_REJECT", `${id}: ${reason}`, "web-admin");
   res.json({ ok: true, message: "Đã từ chối" });
+});
+
+// ── POST /bot/warranty/:id/done ──────────────────────────────────────────────
+router.post("/bot/warranty/:id/done", requireAuth, async (req: any, res: any) => {
+  const { id } = req.params;
+  const { note } = req.body ?? {};
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  const userLang = req_.userLang ?? readJson("user_states", {} as any)?.[req_.userId]?.lang ?? "vi";
+  const isEN = userLang === "en";
+  requests[idx] = {
+    ...req_,
+    status: "done",
+    resolution: `done:${note || ""}`,
+    resolvedAt: now(),
+    resolvedBy: "web-admin",
+    reminderEnabled: false,
+    nextReminderAt: null,
+    reminderProcessing: false,
+  };
+  writeJson("warranty_requests", requests);
+  let msg = isEN
+    ? `✅ <b>Your warranty request has been processed.</b>\n\nIf the issue persists, you can submit a new warranty request.`
+    : `✅ <b>Yêu cầu bảo hành của bạn đã được xử lý xong.</b>\n\nNếu vấn đề vẫn còn tồn tại, bạn có thể gửi yêu cầu bảo hành mới.`;
+  if (note) msg += isEN ? `\n\n📝 Note: ${note}` : `\n\n📝 Ghi chú: ${note}`;
+  const result = await sendTelegramMessage(req_.userId, msg);
+  addLog("WARRANTY_DONE", id, "web-admin");
+  res.json({ ok: result.ok, message: result.ok ? "Đã đánh dấu hoàn thành" : `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
+});
+
+// ── POST /bot/warranty/:id/accounts/:accId/done ───────────────────────────────
+router.post("/bot/warranty/:id/accounts/:accId/done", requireAuth, async (req: any, res: any) => {
+  const { id, accId } = req.params;
+  const { note } = req.body ?? {};
+  const requests: any[] = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id && r.type === "group");
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  const req_ = requests[idx];
+  const accIdx = (req_.accounts ?? []).findIndex((a: any) => a.id === accId);
+  if (accIdx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy tài khoản con" }); return; }
+  const acc = req_.accounts[accIdx];
+  requests[idx].accounts[accIdx] = { ...acc, status: "done", resolution: `done:${note || ""}`, resolvedAt: now(), resolvedBy: "web-admin" };
+  _recomputeGroupStatus(requests[idx]);
+  writeJson("warranty_requests", requests);
+  const userLang = req_.userLang ?? readJson("user_states", {} as any)?.[req_.userId]?.lang ?? "vi";
+  const isEN = userLang === "en";
+  let msg = isEN
+    ? `✅ <b>Account <code>${acc.email}</code> warranty request has been processed.</b>\n\nIf the issue persists, you can submit a new warranty request.`
+    : `✅ <b>Yêu cầu bảo hành tài khoản <code>${acc.email}</code> đã được xử lý xong.</b>\n\nNếu vấn đề vẫn còn tồn tại, bạn có thể gửi yêu cầu bảo hành mới.`;
+  if (note) msg += isEN ? `\n\n📝 Note: ${note}` : `\n\n📝 Ghi chú: ${note}`;
+  const result = await sendTelegramMessage(req_.userId, msg);
+  addLog("GROUP_DONE", `${id}/${accId}`, "web-admin");
+  res.json({ ok: result.ok, message: result.ok ? "Đã đánh dấu hoàn thành" : `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
 });
 
 // ── POST /bot/warranty/:id/respond ───────────────────────────────────────────
