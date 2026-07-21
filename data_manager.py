@@ -1580,8 +1580,29 @@ def get_delivery_requests() -> list:
     return load("delivery_requests", [])
 
 
+def get_delivery_reminder_settings() -> dict:
+    defaults = {"enabled": True, "reminderMinutes": [10, 30, 60]}
+    stored = load("delivery_reminder_settings", {}) or {}
+    merged = {**defaults, **stored}
+    # Ensure reminderMinutes is a valid sorted list of ints
+    try:
+        minutes = sorted(int(x) for x in merged["reminderMinutes"] if int(x) > 0)
+        merged["reminderMinutes"] = minutes or defaults["reminderMinutes"]
+    except Exception:
+        merged["reminderMinutes"] = defaults["reminderMinutes"]
+    return merged
+
+
+def save_delivery_reminder_settings(data: dict) -> dict:
+    current = load("delivery_reminder_settings", {}) or {}
+    updated = {**current, **data}
+    save("delivery_reminder_settings", updated)
+    return updated
+
+
 def add_delivery_request(user_id: int, username: str, first_name: str,
-                          order_id: str, user_lang: str = "vi") -> str:
+                          order_id: str, user_lang: str = "vi",
+                          first_reminder_at: str | None = None) -> str:
     requests = load("delivery_requests", [])
     req = {
         "id": str(uuid.uuid4())[:12],
@@ -1591,10 +1612,16 @@ def add_delivery_request(user_id: int, username: str, first_name: str,
         "orderId": order_id,
         "userLang": user_lang,
         "submittedAt": datetime.now().isoformat(),
-        "status": "pending",   # pending | sent | failed
+        "status": "pending",           # pending | sent | failed
         "sentAt": None,
         "sentBy": None,
-        "accountInfo": None,   # dict: {account, password, twoFA} when sent
+        "accountInfo": None,           # dict: {account, password, twoFA} when sent
+        # ── Reminder tracking ──
+        "reminderEnabled": True,
+        "reminderCount": 0,
+        "nextReminderAt": first_reminder_at,   # ISO str or None
+        "reminderProcessing": False,
+        "lastReminderAt": None,
     }
     requests.append(req)
     save("delivery_requests", requests)

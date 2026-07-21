@@ -52256,6 +52256,24 @@ router2.get("/bot/secret-codes/:id/winners", requireAuth, (req, res) => {
   if (!code) return res.status(404).json({ error: "Not found" });
   res.json(code.winners ?? []);
 });
+var DELIVERY_REMINDER_DEFAULTS = { enabled: true, reminderMinutes: [10, 30, 60] };
+router2.get("/bot/delivery-reminder-settings", requireAuth, (_req, res) => {
+  const stored = readJson("delivery_reminder_settings", {}) ?? {};
+  res.json({ ...DELIVERY_REMINDER_DEFAULTS, ...stored });
+});
+router2.put("/bot/delivery-reminder-settings", requireAuth, (req, res) => {
+  const stored = readJson("delivery_reminder_settings", {}) ?? {};
+  const body = req.body ?? {};
+  const updated = { ...DELIVERY_REMINDER_DEFAULTS, ...stored };
+  if (typeof body.enabled === "boolean") updated.enabled = body.enabled;
+  if (Array.isArray(body.reminderMinutes)) {
+    const mins = body.reminderMinutes.map((v) => parseInt(v, 10)).filter((v) => !isNaN(v) && v > 0).sort((a, b) => a - b);
+    if (mins.length > 0) updated.reminderMinutes = mins;
+  }
+  writeJson("delivery_reminder_settings", updated);
+  addLog("DELIVERY_REMINDER_SETTINGS_UPDATE", JSON.stringify(updated).slice(0, 120), "web-admin");
+  res.json(updated);
+});
 router2.get("/bot/delivery", requireAuth, (_req, res) => {
   const requests = readJson("delivery_requests", []) ?? [];
   res.json(requests.sort((a, b) => b.submittedAt?.localeCompare(a.submittedAt ?? "") ?? 0));
@@ -52307,7 +52325,11 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
     status: result.ok ? "sent" : "failed",
     sentAt: now(),
     sentBy: "web-admin",
-    accountInfo: { account, password, twoFA: twoFA || null }
+    accountInfo: { account, password, twoFA: twoFA || null },
+    // Cancel all pending reminders immediately
+    reminderEnabled: false,
+    nextReminderAt: null,
+    reminderProcessing: false
   };
   writeJson("delivery_requests", requests);
   addLog("DELIVERY_SENT", `${dr.username || dr.userId}`, "web-admin");

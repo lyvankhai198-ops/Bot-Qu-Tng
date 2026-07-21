@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link, Wifi, WifiOff, Loader2, ShoppingBag, ChevronUp, ChevronDown, Pencil, Check, X } from "lucide-react"
+import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link, Wifi, WifiOff, Loader2, ShoppingBag, ChevronUp, ChevronDown, Pencil, Check, X, Truck } from "lucide-react"
 import type { BotSettings, NotificationSettings } from "@workspace/api-client-react"
 
 interface RequiredChannel {
@@ -189,6 +189,11 @@ export default function Settings() {
   const [editingShopId, setEditingShopId] = useState<string | null>(null)
   const [editShopCh, setEditShopCh] = useState<Partial<ShopChannel>>({})
 
+  // ── Delivery reminder settings state ────────────────────────────────────
+  const [deliveryReminderSettings, setDeliveryReminderSettings] = useState<{ enabled: boolean; reminderMinutes: number[] }>({ enabled: true, reminderMinutes: [10, 30, 60] })
+  const [deliveryReminderSaving, setDeliveryReminderSaving] = useState(false)
+  const [newReminderMinute, setNewReminderMinute] = useState("")
+
   // ── Gift shop channels state ─────────────────────────────────────────────
   const [giftShopChannels, setGiftShopChannels] = useState<ShopChannel[]>([])
   const [giftShopSaving, setGiftShopSaving] = useState(false)
@@ -281,6 +286,54 @@ export default function Settings() {
       notifInitialized.current = true
     }
   }, [notifData])
+
+  // ── Delivery reminder settings load/save ────────────────────────────────
+  useEffect(() => {
+    fetch("/api/bot/delivery-reminder-settings", { headers: authHeader() })
+      .then(r => r.json())
+      .then(data => setDeliveryReminderSettings(data))
+      .catch(() => {})
+  }, [])
+
+  const handleSaveDeliveryReminder = async () => {
+    setDeliveryReminderSaving(true)
+    try {
+      const res = await fetch("/api/bot/delivery-reminder-settings", {
+        method: "PUT",
+        headers: { ...authHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify(deliveryReminderSettings),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const updated = await res.json()
+      setDeliveryReminderSettings(updated)
+      toast({ title: "Đã lưu", description: "Cài đặt nhắc giao tài khoản đã được cập nhật" })
+    } catch {
+      toast({ title: "Lỗi", description: "Không thể lưu cài đặt", variant: "destructive" })
+    } finally {
+      setDeliveryReminderSaving(false)
+    }
+  }
+
+  const addReminderMinute = () => {
+    const val = parseInt(newReminderMinute, 10)
+    if (isNaN(val) || val <= 0) {
+      toast({ title: "Lỗi", description: "Vui lòng nhập số phút hợp lệ (> 0)", variant: "destructive" }); return
+    }
+    if (deliveryReminderSettings.reminderMinutes.includes(val)) {
+      toast({ title: "Đã tồn tại", description: `Mốc ${val} phút đã có trong danh sách`, variant: "destructive" }); return
+    }
+    setDeliveryReminderSettings({
+      ...deliveryReminderSettings,
+      reminderMinutes: [...deliveryReminderSettings.reminderMinutes, val].sort((a, b) => a - b),
+    })
+    setNewReminderMinute("")
+  }
+
+  const removeReminderMinute = (min: number) =>
+    setDeliveryReminderSettings({
+      ...deliveryReminderSettings,
+      reminderMinutes: deliveryReminderSettings.reminderMinutes.filter(m => m !== min),
+    })
 
   const handleSave = () => updateSettings.mutate({ data: form })
   const handleSaveNotif = () => updateNotif.mutate({ data: notifForm })
@@ -1272,6 +1325,81 @@ export default function Settings() {
           disabled={updateNotif.isPending}
         >
           {updateNotif.isPending ? "Đang lưu..." : <><Bell className="w-4 h-4 mr-2" /> Lưu cài đặt thông báo</>}
+        </Button>
+      </div>
+
+      {/* ── Delivery reminder settings ─────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Truck className="h-4 w-4" /> Nhắc giao tài khoản
+              </CardTitle>
+              <CardDescription className="mt-1">
+                Bot tự động nhắc Admin nếu yêu cầu giao hàng chưa được xử lý
+              </CardDescription>
+            </div>
+            <Switch
+              checked={deliveryReminderSettings.enabled}
+              onCheckedChange={v => setDeliveryReminderSettings({ ...deliveryReminderSettings, enabled: v })}
+            />
+          </div>
+        </CardHeader>
+        {deliveryReminderSettings.enabled && (
+          <CardContent className="space-y-4">
+            <div>
+              <Label className="mb-2 block">Các mốc thời gian nhắc (phút)</Label>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {deliveryReminderSettings.reminderMinutes.map((m, i) => (
+                  <div key={m} className="flex items-center gap-1 bg-muted rounded-md px-3 py-1.5 text-sm font-medium">
+                    {i === 0 ? "⏰" : i === 1 ? "⚠️" : "🚨"} {m} phút
+                    <button
+                      onClick={() => removeReminderMinute(m)}
+                      className="ml-1 text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+                {deliveryReminderSettings.reminderMinutes.length === 0 && (
+                  <span className="text-sm text-muted-foreground">Chưa có mốc nào — sẽ không nhắc</span>
+                )}
+              </div>
+              <div className="flex gap-2 max-w-xs">
+                <Input
+                  type="number"
+                  min={1}
+                  placeholder="VD: 10"
+                  className="min-h-[44px]"
+                  value={newReminderMinute}
+                  onChange={e => setNewReminderMinute(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && addReminderMinute()}
+                />
+                <Button variant="outline" onClick={addReminderMinute} className="min-h-[44px] px-3">
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Nhắc lần lượt sau khi người dùng gửi yêu cầu. Ví dụ: 10, 30, 60 → nhắc sau 10 phút, 30 phút, 60 phút.
+              </p>
+            </div>
+          </CardContent>
+        )}
+      </Card>
+
+      <div className="pb-4">
+        <Button
+          size="lg"
+          className="w-full sm:w-auto min-h-[48px] px-8 bg-orange-600 hover:bg-orange-700"
+          onClick={handleSaveDeliveryReminder}
+          disabled={deliveryReminderSaving}
+        >
+          {deliveryReminderSaving
+            ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            : <Truck className="w-4 h-4 mr-2" />
+          }
+          Lưu cài đặt nhắc giao hàng
         </Button>
       </div>
 
