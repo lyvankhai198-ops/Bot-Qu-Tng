@@ -50582,10 +50582,11 @@ router2.delete("/bot/orders/:orderId", requireAuth, (req, res) => {
   addLog("DELETE_ORDER", id, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 xo\xE1" });
 });
+var TERMINAL_STATUSES = ["resolved", "rejected", "done"];
 function _recomputeGroupStatus(req) {
   const accs = req.accounts ?? [];
   const statuses = accs.map((a) => a.status ?? "pending");
-  if (statuses.length > 0 && statuses.every((s) => ["resolved", "rejected"].includes(s))) {
+  if (statuses.length > 0 && statuses.every((s) => TERMINAL_STATUSES.includes(s))) {
     req.status = "resolved";
     if (!req.resolvedAt) req.resolvedAt = now();
     req.reminderEnabled = false;
@@ -51298,6 +51299,78 @@ L\xFD do: ${reason}`;
   await sendTelegramMessage(req_.userId, msg);
   addLog("WARRANTY_REJECT", `${id}: ${reason}`, "web-admin");
   res.json({ ok: true, message: "\u0110\xE3 t\u1EEB ch\u1ED1i" });
+});
+router2.post("/bot/warranty/:id/done", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { note } = req.body ?? {};
+  const requests = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r) => r.id === id);
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
+    return;
+  }
+  const req_ = requests[idx];
+  const userLang = req_.userLang ?? readJson("user_states", {})?.[req_.userId]?.lang ?? "vi";
+  const isEN = userLang === "en";
+  requests[idx] = {
+    ...req_,
+    status: "done",
+    resolution: `done:${note || ""}`,
+    resolvedAt: now(),
+    resolvedBy: "web-admin",
+    reminderEnabled: false,
+    nextReminderAt: null,
+    reminderProcessing: false
+  };
+  writeJson("warranty_requests", requests);
+  let msg = isEN ? `\u2705 <b>Your warranty request has been processed.</b>
+
+If the issue persists, you can submit a new warranty request.` : `\u2705 <b>Y\xEAu c\u1EA7u b\u1EA3o h\xE0nh c\u1EE7a b\u1EA1n \u0111\xE3 \u0111\u01B0\u1EE3c x\u1EED l\xFD xong.</b>
+
+N\u1EBFu v\u1EA5n \u0111\u1EC1 v\u1EABn c\xF2n t\u1ED3n t\u1EA1i, b\u1EA1n c\xF3 th\u1EC3 g\u1EEDi y\xEAu c\u1EA7u b\u1EA3o h\xE0nh m\u1EDBi.`;
+  if (note) msg += isEN ? `
+
+\u{1F4DD} Note: ${note}` : `
+
+\u{1F4DD} Ghi ch\xFA: ${note}`;
+  const result = await sendTelegramMessage(req_.userId, msg);
+  addLog("WARRANTY_DONE", id, "web-admin");
+  res.json({ ok: result.ok, message: result.ok ? "\u0110\xE3 \u0111\xE1nh d\u1EA5u ho\xE0n th\xE0nh" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
+});
+router2.post("/bot/warranty/:id/accounts/:accId/done", requireAuth, async (req, res) => {
+  const { id, accId } = req.params;
+  const { note } = req.body ?? {};
+  const requests = readJson("warranty_requests", []) ?? [];
+  const idx = requests.findIndex((r) => r.id === id && r.type === "group");
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
+    return;
+  }
+  const req_ = requests[idx];
+  const accIdx = (req_.accounts ?? []).findIndex((a) => a.id === accId);
+  if (accIdx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n con" });
+    return;
+  }
+  const acc = req_.accounts[accIdx];
+  requests[idx].accounts[accIdx] = { ...acc, status: "done", resolution: `done:${note || ""}`, resolvedAt: now(), resolvedBy: "web-admin" };
+  _recomputeGroupStatus(requests[idx]);
+  writeJson("warranty_requests", requests);
+  const userLang = req_.userLang ?? readJson("user_states", {})?.[req_.userId]?.lang ?? "vi";
+  const isEN = userLang === "en";
+  let msg = isEN ? `\u2705 <b>Account <code>${acc.email}</code> warranty request has been processed.</b>
+
+If the issue persists, you can submit a new warranty request.` : `\u2705 <b>Y\xEAu c\u1EA7u b\u1EA3o h\xE0nh t\xE0i kho\u1EA3n <code>${acc.email}</code> \u0111\xE3 \u0111\u01B0\u1EE3c x\u1EED l\xFD xong.</b>
+
+N\u1EBFu v\u1EA5n \u0111\u1EC1 v\u1EABn c\xF2n t\u1ED3n t\u1EA1i, b\u1EA1n c\xF3 th\u1EC3 g\u1EEDi y\xEAu c\u1EA7u b\u1EA3o h\xE0nh m\u1EDBi.`;
+  if (note) msg += isEN ? `
+
+\u{1F4DD} Note: ${note}` : `
+
+\u{1F4DD} Ghi ch\xFA: ${note}`;
+  const result = await sendTelegramMessage(req_.userId, msg);
+  addLog("GROUP_DONE", `${id}/${accId}`, "web-admin");
+  res.json({ ok: result.ok, message: result.ok ? "\u0110\xE3 \u0111\xE1nh d\u1EA5u ho\xE0n th\xE0nh" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
 });
 router2.post("/bot/warranty/:id/respond", requireAuth, async (req, res) => {
   const { id } = req.params;

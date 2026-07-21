@@ -35,7 +35,11 @@ function getUrlTargetId(): string | null {
   return new URLSearchParams(hash.slice(qIdx)).get("id")
 }
 
-type ModalType = "replace" | "refund" | "reject" | "respond" | null
+type ModalType = "replace" | "refund" | "reject" | "respond" | "done" | null
+
+function authHeader() {
+  return { Authorization: `Bearer ${localStorage.getItem("admin_token") ?? ""}` }
+}
 
 export default function Warranty() {
   const queryClient = useQueryClient()
@@ -75,6 +79,8 @@ export default function Warranty() {
   const [refNote,    setRefNote]    = useState("")
   const [rejReason,  setRejReason]  = useState("")
   const [respondMsg, setRespondMsg] = useState("")
+  const [doneNote,   setDoneNote]   = useState("")
+  const [doneLoading, setDoneLoading] = useState(false)
 
   // Deep-link highlight
   const [targetId, setTargetId] = useState<string | null>(null)
@@ -102,8 +108,8 @@ export default function Warranty() {
   const isGroupMode = activeAcc !== null
 
   const isBusy = isGroupMode
-    ? (accReplaceM.isPending || accRefundM.isPending || accRejectM.isPending || accRespondM.isPending)
-    : (replaceM.isPending || refundM.isPending || rejectM.isPending || respondM.isPending)
+    ? (accReplaceM.isPending || accRefundM.isPending || accRejectM.isPending || accRespondM.isPending || doneLoading)
+    : (replaceM.isPending || refundM.isPending || rejectM.isPending || respondM.isPending || doneLoading)
 
   const handleResolve = async () => {
     if (!activeReq || !modalType) return
@@ -144,6 +150,28 @@ export default function Warranty() {
           await rejectM.mutateAsync({ id, data: { reason: rejReason } })
         }
         toast({ title: "Thành công", description: "Đã từ chối" })
+      } else if (modalType === "done") {
+        setDoneLoading(true)
+        try {
+          const path = isGroupMode && activeAcc
+            ? `/api/bot/warranty/${id}/accounts/${activeAcc.id}/done`
+            : `/api/bot/warranty/${id}/done`
+          const res = await fetch(path, {
+            method: "POST",
+            headers: { ...authHeader(), "Content-Type": "application/json" },
+            body: JSON.stringify({ note: doneNote.trim() || undefined }),
+          })
+          const data = await res.json()
+          if (!data.ok) toast({ title: "Đã lưu nhưng gửi Telegram thất bại", description: data.message, variant: "destructive" })
+          else toast({ title: "✅ Đã đánh dấu hoàn thành", description: "Khách hàng đã được thông báo" })
+          invalidate()
+          setModalType(null); setActiveReq(null); setActiveAcc(null)
+        } catch {
+          toast({ title: "Lỗi", description: "Không thể xử lý", variant: "destructive" })
+        } finally {
+          setDoneLoading(false)
+        }
+        return
       } else if (modalType === "respond") {
         if (!respondMsg.trim()) { toast({ title: "Lỗi", description: "Điền nội dung phản hồi", variant: "destructive" }); return }
         if (isGroupMode && activeAcc) {
@@ -217,6 +245,7 @@ export default function Warranty() {
 
   const sentStatusBadge = (req: WarrantyRequest) => {
     if (req.status === "rejected")            return <Badge variant="destructive">Từ chối</Badge>
+    if (req.status === "done")                return <Badge className="bg-emerald-600 text-white">✅ Đã xong</Badge>
     if (req.status === "processing")          return <Badge className="bg-blue-600 text-white">Đang xử lý</Badge>
     if ((req as any).sentStatus === "sent")   return <Badge className="bg-green-600 text-white">Đã gửi cho khách</Badge>
     if ((req as any).sentStatus === "failed") return <Badge variant="destructive">Gửi thất bại</Badge>
@@ -225,6 +254,7 @@ export default function Warranty() {
 
   const accStatusBadge = (acc: WarrantyAccount) => {
     if (acc.status === "rejected")          return <Badge variant="destructive" className="text-xs">Từ chối</Badge>
+    if (acc.status === "done")              return <Badge className="bg-emerald-600 text-white text-xs">✅ Đã xong</Badge>
     if (acc.status === "resolved") {
       if (acc.sentStatus === "sent")        return <Badge className="bg-green-600 text-white text-xs">Đã gửi</Badge>
       if (acc.sentStatus === "failed")      return <Badge variant="destructive" className="text-xs">Gửi thất bại</Badge>
@@ -377,6 +407,9 @@ export default function Warranty() {
                       <Button size="sm" variant="ghost" className="h-8 text-xs text-violet-600 hover:bg-violet-500/10" onClick={() => openModal(req, "respond", acc)}>
                         <MessageSquareReply className="w-3 h-3 mr-1" /> Phản hồi
                       </Button>
+                      <Button size="sm" variant="ghost" className="h-8 text-xs text-emerald-600 hover:bg-emerald-500/10" onClick={() => { openModal(req, "done", acc); setDoneNote("") }}>
+                        <CheckCircle2 className="w-3 h-3 mr-1" /> Đã xong
+                      </Button>
                       <Button size="sm" variant="ghost" className="h-8 text-xs text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject", acc)}>
                         <XCircle className="w-3 h-3 mr-1" /> Từ chối
                       </Button>
@@ -448,6 +481,9 @@ export default function Warranty() {
                       </Button>
                       <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-violet-600 hover:bg-violet-500/10" onClick={() => openModal(req, "respond")}>
                         <MessageSquareReply className="w-4 h-4 mr-2" /> Phản hồi
+                      </Button>
+                      <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-emerald-600 hover:bg-emerald-500/10" onClick={() => { openModal(req, "done"); setDoneNote("") }}>
+                        <CheckCircle2 className="w-4 h-4 mr-2" /> Đã xong
                       </Button>
                       <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject")}>
                         <XCircle className="w-4 h-4 mr-2" /> Từ chối
@@ -535,6 +571,9 @@ export default function Warranty() {
                         </Button>
                         <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-violet-600 hover:bg-violet-500/10" onClick={() => openModal(req, "respond")}>
                           <MessageSquareReply className="w-4 h-4 mr-2" /> Phản hồi
+                        </Button>
+                        <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-emerald-600 hover:bg-emerald-500/10" onClick={() => { openModal(req, "done"); setDoneNote("") }}>
+                          <CheckCircle2 className="w-4 h-4 mr-2" /> Đã xong
                         </Button>
                         <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject")}>
                           <XCircle className="w-4 h-4 mr-2" /> Từ chối
@@ -694,6 +733,39 @@ export default function Warranty() {
             <Button variant="outline" className="w-full sm:w-auto" onClick={() => { setModalType(null); setActiveAcc(null) }}>Hủy</Button>
             <Button variant="destructive" className="w-full sm:w-auto min-h-[44px]" onClick={handleResolve} disabled={isBusy}>
               {isBusy ? "Đang xử lý..." : "Xác nhận từ chối"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Done Modal */}
+      <Dialog open={modalType === "done"} onOpenChange={open => !open && (setModalType(null), setActiveAcc(null))}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 className="w-5 h-5" />
+              Đánh dấu đã xong{activeAcc ? ` — ${activeAcc.email}` : ""}
+            </DialogTitle>
+            <DialogDescription>
+              Bot sẽ thông báo cho khách rằng yêu cầu đã được xử lý xong. Khách vẫn có thể gửi yêu cầu bảo hành mới nếu cần.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Ghi chú gửi kèm <span className="text-muted-foreground text-xs">(tuỳ chọn)</span></Label>
+              <Textarea
+                value={doneNote}
+                onChange={e => setDoneNote(e.target.value)}
+                placeholder="VD: Tài khoản đã hoạt động trở lại, vui lòng kiểm tra..."
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => { setModalType(null); setActiveAcc(null) }}>Hủy</Button>
+            <Button className="w-full sm:w-auto min-h-[44px] bg-emerald-600 hover:bg-emerald-700" onClick={handleResolve} disabled={isBusy}>
+              <CheckCircle2 className="w-4 h-4 mr-2" />
+              {isBusy ? "Đang xử lý..." : "Xác nhận đã xong"}
             </Button>
           </DialogFooter>
         </DialogContent>
