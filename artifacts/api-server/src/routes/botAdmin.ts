@@ -1527,6 +1527,57 @@ router.get("/bot/refund-history", requireAuth, (req: any, res: any) => {
   res.json(result);
 });
 
+// ── POST /bot/refund-history/manual ──────────────────────────────────────────
+router.post("/bot/refund-history/manual", requireAuth, (req: any, res: any) => {
+  const { orderId, amount, note, email } = req.body ?? {};
+  if (!orderId || !String(orderId).trim()) {
+    res.status(400).json({ ok: false, message: "orderId là bắt buộc" }); return;
+  }
+  if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+    res.status(400).json({ ok: false, message: "Số tiền hoàn không hợp lệ" }); return;
+  }
+  const history: any[] = readJson("refund_history", []) ?? [];
+  const entry = {
+    id: crypto.randomUUID(),
+    warrantyRequestId: null,
+    orderId: String(orderId).trim().toUpperCase(),
+    orderCode: String(orderId).trim().toUpperCase(),
+    account: email || "",
+    email: email || "",
+    amount: Number(amount),
+    note: note || "",
+    refundedAt: now(),
+    refundedBy: "web-admin",
+    reason: note || "",
+    source: "manual",
+  };
+  history.push(entry);
+  writeJson("refund_history", history);
+  // Also mark order as refunded so bot blocks báo lỗi
+  const orders: any = readJson("orders", {}) ?? {};
+  const oKey = String(orderId).trim().toUpperCase();
+  if (orders[oKey]) {
+    orders[oKey].status = "refunded";
+    orders[oKey].refundedAt = entry.refundedAt;
+    orders[oKey].refundAmount = Number(amount);
+    writeJson("orders", orders);
+  }
+  addLog("MANUAL_REFUND", `${entry.orderId} → ${Number(amount).toLocaleString("vi")}đ`, "web-admin");
+  res.json({ ok: true, record: entry });
+});
+
+// ── DELETE /bot/refund-history/:id ───────────────────────────────────────────
+router.delete("/bot/refund-history/:id", requireAuth, (req: any, res: any) => {
+  const { id } = req.params;
+  const history: any[] = readJson("refund_history", []) ?? [];
+  const idx = history.findIndex((r: any) => r.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy bản ghi" }); return; }
+  history.splice(idx, 1);
+  writeJson("refund_history", history);
+  addLog("DELETE_REFUND_RECORD", id, "web-admin");
+  res.json({ ok: true });
+});
+
 // ── POST /bot/warranty/:id/reject ────────────────────────────────────────────
 router.post("/bot/warranty/:id/reject", requireAuth, async (req: any, res: any) => {
   const { id } = req.params;
@@ -1649,7 +1700,11 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
   }
 
   // ── Warranty computation helper ──────────────────────────────────────────────
-  function calcWarranty(item: any, order: any) {
+  // Pre-load refund_history orderId set for canReport gate
+  const refundHistorySet = new Set<string>(
+    (readJson("refund_history", []) as any[]).map((r: any) => r.orderId).filter(Boolean)
+  );
+  function calcWarranty(item: any, order: any, orderId?: string) {
     // Block if item was individually refunded
     if (item.item_status === "refunded") {
       const warrantyDaysR = Number(item.warranty_days || order?.warrantyDays || 0);
@@ -1694,8 +1749,9 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
       warrantyStatus = remainingDays > 0 ? "active" : "expired";
       canReport = warrantyStatus === "active";
     }
-    // Block if full order was refunded
+    // Block if full order was refunded (by status or by refund_history record)
     if (order?.status === "refunded") { canReport = false; }
+    if (orderId && refundHistorySet.has(orderId)) { canReport = false; }
     const price = Number(order?.price || 0);
     let refundAmount: number | string = 0;
     if (remainingDays && remainingDays > 0 && price && warrantyDays) {
@@ -1713,7 +1769,7 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
 
   // ── Build spec §13 "order" object ────────────────────────────────────────────
   function buildOrderObj(orderId: string, order: any, allItemList: any[]) {
-    const w = calcWarranty({ warranty_days: order.warrantyDays, warranty_end_date: order.warrantyExpiry || order.warrantyDate }, order);
+    const w = calcWarranty({ warranty_days: order.warrantyDays, warranty_end_date: order.warrantyExpiry || order.warrantyDate }, order, orderId);
     return {
       orderCode:    orderId,
       product:      order.productName || "",
@@ -1728,9 +1784,9 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
   }
 
   // ── Build spec §13 "item" object ──────────────────────────────────────────────
-  function buildItemObj(item: any, order: any) {
+  function buildItemObj(item: any, order: any, orderId?: string) {
     const reps: any[] = (allReps[item.itemId] ?? []).sort((a: any, b: any) => a.replacementNumber - b.replacementNumber);
-    const wdata = calcWarranty(item, order);
+    const wdata = calcWarranty(item, order, orderId);
     const repCount = item.current_replacement_number ?? reps.length;
     return {
       orderItemId:      item.itemId,
@@ -1768,13 +1824,13 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
         lookupType: "order_code",
         isMultiAccountOrder: true,
         order: orderObj,
-        items: itemList.map(it => buildItemObj(it, orders[orderKey])),
+        items: itemList.map(it => buildItemObj(it, orders[orderKey], orderKey)),
       });
     }
     // Single-item or no items
     const singleItem = itemList[0] ?? null;
-    const itemObj = singleItem ? buildItemObj(singleItem, orders[orderKey]) : null;
-    const wdata = singleItem ? calcWarranty(singleItem, orders[orderKey]) : null;
+    const itemObj = singleItem ? buildItemObj(singleItem, orders[orderKey], orderKey) : null;
+    const wdata = singleItem ? calcWarranty(singleItem, orders[orderKey], orderKey) : null;
     return res.json({
       found: true,
       lookupType: "order_code",
@@ -1804,7 +1860,7 @@ router.get("/orders/lookup", requireAuth, (req: any, res: any) => {
       const order = orders[orderId] ?? {};
       const allItemsForOrder: any[] = orderItems[orderId] ?? [];
       const isMulti = allItemsForOrder.length > 1;
-      const itemObj = buildItemObj(item, order);
+      const itemObj = buildItemObj(item, order, orderId);
       const orderObj = buildOrderObj(orderId, order, allItemsForOrder);
       return res.json({
         found: true,
@@ -2884,6 +2940,24 @@ router.post("/bot/delivery/:id/refund", requireAuth, async (req: any, res: any) 
     source: "delivery",
   };
   writeJson("refund_records", refundRecords);
+
+  // Also save to refund_history so it shows in refund history page and blocks báo bảo hành
+  const deliveryRefundHistory: any[] = readJson("refund_history", []) ?? [];
+  deliveryRefundHistory.push({
+    id: crypto.randomUUID(),
+    warrantyRequestId: null,
+    orderId: dr.orderId || null,
+    orderCode: dr.orderId || null,
+    account: dr.username || dr.userId || "",
+    email: "",
+    amount: amtNum,
+    note: note || "",
+    refundedAt,
+    refundedBy: "web-admin",
+    reason: note || "",
+    source: "delivery",
+  });
+  writeJson("refund_history", deliveryRefundHistory);
 
   addLog("DELIVERY_REFUNDED", `${dr.username || dr.userId} | ${amtStr}`, "web-admin");
 

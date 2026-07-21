@@ -51277,6 +51277,57 @@ router2.get("/bot/refund-history", requireAuth, (req, res) => {
   if (to) result = result.filter((r) => r.refundedAt <= String(to) + "T23:59:59");
   res.json(result);
 });
+router2.post("/bot/refund-history/manual", requireAuth, (req, res) => {
+  const { orderId, amount, note, email } = req.body ?? {};
+  if (!orderId || !String(orderId).trim()) {
+    res.status(400).json({ ok: false, message: "orderId l\xE0 b\u1EAFt bu\u1ED9c" });
+    return;
+  }
+  if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+    res.status(400).json({ ok: false, message: "S\u1ED1 ti\u1EC1n ho\xE0n kh\xF4ng h\u1EE3p l\u1EC7" });
+    return;
+  }
+  const history = readJson("refund_history", []) ?? [];
+  const entry = {
+    id: crypto.randomUUID(),
+    warrantyRequestId: null,
+    orderId: String(orderId).trim().toUpperCase(),
+    orderCode: String(orderId).trim().toUpperCase(),
+    account: email || "",
+    email: email || "",
+    amount: Number(amount),
+    note: note || "",
+    refundedAt: now(),
+    refundedBy: "web-admin",
+    reason: note || "",
+    source: "manual"
+  };
+  history.push(entry);
+  writeJson("refund_history", history);
+  const orders = readJson("orders", {}) ?? {};
+  const oKey = String(orderId).trim().toUpperCase();
+  if (orders[oKey]) {
+    orders[oKey].status = "refunded";
+    orders[oKey].refundedAt = entry.refundedAt;
+    orders[oKey].refundAmount = Number(amount);
+    writeJson("orders", orders);
+  }
+  addLog("MANUAL_REFUND", `${entry.orderId} \u2192 ${Number(amount).toLocaleString("vi")}\u0111`, "web-admin");
+  res.json({ ok: true, record: entry });
+});
+router2.delete("/bot/refund-history/:id", requireAuth, (req, res) => {
+  const { id } = req.params;
+  const history = readJson("refund_history", []) ?? [];
+  const idx = history.findIndex((r) => r.id === id);
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y b\u1EA3n ghi" });
+    return;
+  }
+  history.splice(idx, 1);
+  writeJson("refund_history", history);
+  addLog("DELETE_REFUND_RECORD", id, "web-admin");
+  res.json({ ok: true });
+});
 router2.post("/bot/warranty/:id/reject", requireAuth, async (req, res) => {
   const { id } = req.params;
   const { reason } = req.body ?? {};
@@ -51419,7 +51470,10 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
     if (m = norm.match(/(\d+)\s*NGAY\b/)) return parseInt(m[1]);
     return 0;
   }
-  function calcWarranty(item, order) {
+  const refundHistorySet = new Set(
+    readJson("refund_history", []).map((r) => r.orderId).filter(Boolean)
+  );
+  function calcWarranty(item, order, orderId) {
     if (item.item_status === "refunded") {
       const warrantyDaysR = Number(item.warranty_days || order?.warrantyDays || 0);
       return {
@@ -51485,6 +51539,9 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
     if (order?.status === "refunded") {
       canReport = false;
     }
+    if (orderId && refundHistorySet.has(orderId)) {
+      canReport = false;
+    }
     const price = Number(order?.price || 0);
     let refundAmount = 0;
     if (remainingDays && remainingDays > 0 && price && warrantyDays) {
@@ -51501,7 +51558,7 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
     };
   }
   function buildOrderObj(orderId, order, allItemList) {
-    const w = calcWarranty({ warranty_days: order.warrantyDays, warranty_end_date: order.warrantyExpiry || order.warrantyDate }, order);
+    const w = calcWarranty({ warranty_days: order.warrantyDays, warranty_end_date: order.warrantyExpiry || order.warrantyDate }, order, orderId);
     return {
       orderCode: orderId,
       product: order.productName || "",
@@ -51514,9 +51571,9 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
       status: order.status || "active"
     };
   }
-  function buildItemObj(item, order) {
+  function buildItemObj(item, order, orderId) {
     const reps = (allReps[item.itemId] ?? []).sort((a, b) => a.replacementNumber - b.replacementNumber);
-    const wdata = calcWarranty(item, order);
+    const wdata = calcWarranty(item, order, orderId);
     const repCount = item.current_replacement_number ?? reps.length;
     return {
       orderItemId: item.itemId,
@@ -51552,12 +51609,12 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
         lookupType: "order_code",
         isMultiAccountOrder: true,
         order: orderObj,
-        items: itemList.map((it) => buildItemObj(it, orders[orderKey]))
+        items: itemList.map((it) => buildItemObj(it, orders[orderKey], orderKey))
       });
     }
     const singleItem = itemList[0] ?? null;
-    const itemObj = singleItem ? buildItemObj(singleItem, orders[orderKey]) : null;
-    const wdata = singleItem ? calcWarranty(singleItem, orders[orderKey]) : null;
+    const itemObj = singleItem ? buildItemObj(singleItem, orders[orderKey], orderKey) : null;
+    const wdata = singleItem ? calcWarranty(singleItem, orders[orderKey], orderKey) : null;
     return res.json({
       found: true,
       lookupType: "order_code",
@@ -51583,7 +51640,7 @@ router2.get("/orders/lookup", requireAuth, (req, res) => {
       const order = orders[orderId] ?? {};
       const allItemsForOrder = orderItems[orderId] ?? [];
       const isMulti = allItemsForOrder.length > 1;
-      const itemObj = buildItemObj(item, order);
+      const itemObj = buildItemObj(item, order, orderId);
       const orderObj = buildOrderObj(orderId, order, allItemsForOrder);
       return res.json({
         found: true,
@@ -52545,6 +52602,22 @@ Vui l\xF2ng li\xEAn h\u1EC7 h\u1ED7 tr\u1EE3 n\u1EBFu b\u1EA1n c\xF3 th\u1EAFc m
     source: "delivery"
   };
   writeJson("refund_records", refundRecords);
+  const deliveryRefundHistory = readJson("refund_history", []) ?? [];
+  deliveryRefundHistory.push({
+    id: crypto.randomUUID(),
+    warrantyRequestId: null,
+    orderId: dr.orderId || null,
+    orderCode: dr.orderId || null,
+    account: dr.username || dr.userId || "",
+    email: "",
+    amount: amtNum,
+    note: note || "",
+    refundedAt,
+    refundedBy: "web-admin",
+    reason: note || "",
+    source: "delivery"
+  });
+  writeJson("refund_history", deliveryRefundHistory);
   addLog("DELIVERY_REFUNDED", `${dr.username || dr.userId} | ${amtStr}`, "web-admin");
   if (!result.ok) {
     res.status(500).json({ ok: false, message: `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
