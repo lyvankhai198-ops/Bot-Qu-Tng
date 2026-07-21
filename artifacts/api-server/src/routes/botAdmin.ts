@@ -2590,6 +2590,33 @@ router.get("/bot/secret-codes/:id/winners", requireAuth, (req: any, res: any) =>
 // DELIVERY REQUESTS
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── GET /bot/delivery-reminder-settings ──────────────────────────────────────
+const DELIVERY_REMINDER_DEFAULTS = { enabled: true, reminderMinutes: [10, 30, 60] };
+router.get("/bot/delivery-reminder-settings", requireAuth, (_req: any, res: any) => {
+  const stored = readJson("delivery_reminder_settings", {}) ?? {};
+  res.json({ ...DELIVERY_REMINDER_DEFAULTS, ...stored });
+});
+
+// ── PUT /bot/delivery-reminder-settings ──────────────────────────────────────
+router.put("/bot/delivery-reminder-settings", requireAuth, (req: any, res: any) => {
+  const stored = readJson("delivery_reminder_settings", {}) ?? {};
+  const body = req.body ?? {};
+  const updated: any = { ...DELIVERY_REMINDER_DEFAULTS, ...stored };
+
+  if (typeof body.enabled === "boolean") updated.enabled = body.enabled;
+  if (Array.isArray(body.reminderMinutes)) {
+    const mins = body.reminderMinutes
+      .map((v: any) => parseInt(v, 10))
+      .filter((v: number) => !isNaN(v) && v > 0)
+      .sort((a: number, b: number) => a - b);
+    if (mins.length > 0) updated.reminderMinutes = mins;
+  }
+
+  writeJson("delivery_reminder_settings", updated);
+  addLog("DELIVERY_REMINDER_SETTINGS_UPDATE", JSON.stringify(updated).slice(0, 120), "web-admin");
+  res.json(updated);
+});
+
 // ── GET /bot/delivery ─────────────────────────────────────────────────────────
 router.get("/bot/delivery", requireAuth, (_req: any, res: any) => {
   const requests: any[] = readJson("delivery_requests", []) ?? [];
@@ -2641,6 +2668,10 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
     sentAt: now(),
     sentBy: "web-admin",
     accountInfo: { account, password, twoFA: twoFA || null },
+    // Cancel all pending reminders immediately
+    reminderEnabled: false,
+    nextReminderAt: null,
+    reminderProcessing: false,
   };
   writeJson("delivery_requests", requests);
   addLog("DELIVERY_SENT", `${dr.username || dr.userId}`, "web-admin");

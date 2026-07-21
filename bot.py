@@ -1141,12 +1141,20 @@ async def handle_delivery_input(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
+    # Calculate first reminder time from settings
+    reminder_cfg = db.get_delivery_reminder_settings()
+    first_reminder_at: str | None = None
+    if reminder_cfg.get("enabled") and reminder_cfg.get("reminderMinutes"):
+        first_min = reminder_cfg["reminderMinutes"][0]
+        first_reminder_at = (datetime.now() + timedelta(minutes=first_min)).isoformat()
+
     req_id = db.add_delivery_request(
         user_id=user.id,
         username=user.username or "",
         first_name=user.first_name or "",
         order_id=order_id,
         user_lang=L,
+        first_reminder_at=first_reminder_at,
     )
     db.set_user_state(user.id, "conv_state", None)
 
@@ -2219,6 +2227,99 @@ def warranty_reminder_worker() -> None:
         except Exception as e:
             logger.error(f"warranty_reminder_worker error: {e}")
 
+def delivery_reminder_worker() -> None:
+    """Background thread: nhắc admin các yêu cầu giao hàng chưa xử lý theo mốc thời gian cấu hình."""
+    while True:
+        time.sleep(60)
+        try:
+            cfg = db.get_delivery_reminder_settings()
+            if not cfg.get("enabled"):
+                continue
+
+            minutes_marks: list[int] = cfg.get("reminderMinutes", [10, 30, 60])
+            if not minutes_marks:
+                continue
+
+            admin_ids = _get_all_admin_ids()
+            if not admin_ids:
+                continue
+
+            now_dt = datetime.now()
+
+            for req in db.get_delivery_requests():
+                # Only care about pending requests with reminders still active
+                if req.get("status") != "pending":
+                    continue
+                if not req.get("reminderEnabled", True):
+                    continue
+                if req.get("reminderProcessing"):
+                    continue
+
+                next_at_str = req.get("nextReminderAt")
+                if not next_at_str:
+                    continue
+                try:
+                    next_at = datetime.fromisoformat(next_at_str)
+                except Exception:
+                    continue
+                if now_dt < next_at:
+                    continue
+
+                req_id        = req["id"]
+                reminder_count = int(req.get("reminderCount", 0))
+
+                if reminder_count >= len(minutes_marks):
+                    # All reminder marks exhausted — stop
+                    db.update_delivery_request(req_id, {"reminderEnabled": False, "nextReminderAt": None})
+                    continue
+
+                # Acquire processing lock
+                if not db.update_delivery_request(req_id, {"reminderProcessing": True}):
+                    continue
+
+                try:
+                    elapsed_min = int((now_dt - datetime.fromisoformat(req["submittedAt"])).total_seconds() / 60)
+                    uname = f"@{req['username']}" if req.get("username") else req.get("firstName") or req["userId"]
+
+                    msg = (
+                        f"🔔 <b>Nhắc giao tài khoản</b>\n\n"
+                        f"Bạn còn một yêu cầu giao tài khoản chưa xử lý.\n\n"
+                        f"📦 Mã đơn: <code>{req['orderId']}</code>\n"
+                        f"👤 Người dùng: {uname}\n"
+                        f"⏱ Thời gian chờ: {elapsed_min} phút\n\n"
+                        f"➡️ Vào <b>Admin Panel → 📦 Giao tài khoản</b> để xử lý."
+                    )
+                    for aid in admin_ids:
+                        _tg_send(TOKEN, aid, msg)
+
+                    new_count = reminder_count + 1
+                    update_fields: dict = {
+                        "reminderCount": new_count,
+                        "lastReminderAt": now_dt.isoformat(),
+                        "reminderProcessing": False,
+                    }
+                    if new_count < len(minutes_marks):
+                        # Delta until next mark from submittedAt
+                        next_mark_min = minutes_marks[new_count]
+                        submitted_dt  = datetime.fromisoformat(req["submittedAt"])
+                        next_reminder_dt = submitted_dt + timedelta(minutes=next_mark_min)
+                        update_fields["nextReminderAt"] = next_reminder_dt.isoformat()
+                    else:
+                        # All marks sent — disable
+                        update_fields["reminderEnabled"] = False
+                        update_fields["nextReminderAt"]  = None
+
+                    db.update_delivery_request(req_id, update_fields)
+                    logger.info(f"Delivery reminder #{new_count} sent for {req_id} (waited {elapsed_min} min)")
+
+                except Exception as send_err:
+                    logger.error(f"delivery_reminder_worker send error for {req_id}: {send_err}")
+                    db.update_delivery_request(req_id, {"reminderProcessing": False})
+
+        except Exception as e:
+            logger.error(f"delivery_reminder_worker error: {e}")
+
+
 async def callback_warranty_ack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin taps '✅ Tiếp nhận xử lý' button in notification message."""
     query = update.callback_query
@@ -2906,6 +3007,9 @@ def main():
 
     Thread(target=warranty_reminder_worker, daemon=True).start()
     logger.info("Warranty reminder worker started.")
+
+    Thread(target=delivery_reminder_worker, daemon=True).start()
+    logger.info("Delivery reminder worker started.")
 
     # ── Set bot command menu via post_init (runs inside the async event loop) ──
     async def _set_commands(application) -> None:
