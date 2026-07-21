@@ -2789,11 +2789,13 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
 
   const result = await sendTelegramMessage(dr.userId, message);
 
+  const deliveredAt = now();
+
   // Update request status
   requests[idx] = {
     ...dr,
     status: result.ok ? "sent" : "failed",
-    sentAt: now(),
+    sentAt: deliveredAt,
     sentBy: "web-admin",
     accountInfo: { account, password, twoFA: twoFA || null },
     // Cancel all pending reminders immediately
@@ -2802,7 +2804,67 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
     reminderProcessing: false,
   };
   writeJson("delivery_requests", requests);
-  addLog("DELIVERY_SENT", `${dr.username || dr.userId}`, "web-admin");
+
+  // ── Ghi vào order_items.json để khách tra mã đơn / check bảo hành ────────
+  if (result.ok && dr.orderId) {
+    const orders: any  = readJson("orders", {}) ?? {};
+    const orderItems: any = readJson("order_items", {}) ?? {};
+    const order: any   = orders[dr.orderId] ?? {};
+
+    // Tính warranty_end_date từ order metadata
+    let warrantyEndDate: string | null = order.warrantyExpiry || order.warrantyDate || null;
+    if (!warrantyEndDate) {
+      const wDays = Number(order.warrantyDays || 0);
+      const startStr = order.purchaseDate || order.paymentAt || deliveredAt;
+      if (wDays > 0 && startStr) {
+        try {
+          const d = new Date(startStr.slice(0, 10));
+          d.setDate(d.getDate() + wDays);
+          warrantyEndDate = d.toISOString().slice(0, 10);
+        } catch {}
+      }
+    }
+
+    const existingItems: any[] = orderItems[dr.orderId] ?? [];
+    // Tìm item đã có cùng tài khoản (tránh duplicate khi giao lại)
+    const existIdx = existingItems.findIndex(
+      (it: any) => (it.original_account || it.email || "").toLowerCase() === account.toLowerCase()
+    );
+    const itemEntry: any = {
+      itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
+      email:    account,
+      password: password || null,
+      twoFA:    twoFA    || null,
+      status:   "delivered",
+      item_status: "active",
+      productName: order.productName || dr.productName || "",
+      createdAt: existIdx >= 0 ? existingItems[existIdx].createdAt : deliveredAt,
+      original_account:   account,
+      current_account:    account,
+      current_replacement_number: 0,
+      original_delivered_at: deliveredAt,
+      warranty_days: Number(order.warrantyDays || 0) || null,
+      warranty_end_date: warrantyEndDate,
+      source: "manual_delivery",
+    };
+
+    if (existIdx >= 0) {
+      existingItems[existIdx] = { ...existingItems[existIdx], ...itemEntry };
+    } else {
+      existingItems.push(itemEntry);
+    }
+    orderItems[dr.orderId] = existingItems;
+    writeJson("order_items", orderItems);
+
+    // Cập nhật orders.json status → active nếu đang pending
+    if (order.status === "pending" || !order.status) {
+      orders[dr.orderId] = { ...order, status: "active", updatedAt: deliveredAt };
+      writeJson("orders", orders);
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  addLog("DELIVERY_SENT", `${dr.username || dr.userId} → ${account}`, "web-admin");
 
   if (!result.ok) {
     res.status(500).json({ ok: false, message: `Telegram lỗi: ${result.error}` });
