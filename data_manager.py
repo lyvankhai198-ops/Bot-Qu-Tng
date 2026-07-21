@@ -411,16 +411,33 @@ def find_item_by_any_account(email: str):
     return None, None
 
 
+_ZERO_WIDTH = {
+    '\u200b', '\u200c', '\u200d', '\u200e', '\u200f',
+    '\ufeff', '\u00ad', '\u2060', '\u2061', '\u2062', '\u2063',
+    '\u180e', '\u00a0',
+}
+
+def normalize_search_query(q: str) -> str:
+    """
+    Chuẩn hóa query từ bàn phím font đặc biệt → ASCII tương đương:
+    - Xóa zero-width / invisible characters
+    - NFKC: fullwidth Ａ→A, math bold 𝐀→A, superscript, v.v.
+    """
+    q = ''.join(c for c in q if c not in _ZERO_WIDTH)
+    import unicodedata as _ud
+    q = _ud.normalize('NFKC', q)
+    return q.strip()
+
+
 def _canon_order_id(s: str) -> str:
     """
     Chuẩn hóa mã đơn để fuzzy-match các ký tự dễ nhầm lẫn:
       O (letter) ↔ 0 (digit zero)
       I (letter) ↔ 1 (digit one) ↔ l (lowercase L)
-      S (letter) ↔ 5 (digit)  — bỏ vì quá aggressive
     """
     s = s.upper()
-    s = s.replace('O', '0')          # O → 0
-    s = s.replace('I', '1').replace('L', '1')  # I, l → 1
+    s = s.replace('O', '0')
+    s = s.replace('I', '1').replace('L', '1')
     return s
 
 
