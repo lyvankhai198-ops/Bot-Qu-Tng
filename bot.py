@@ -1568,6 +1568,11 @@ async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE
     if single_item:
         wdata = db.calc_item_warranty(single_item, order, settings)
         can_report = wdata["canReport"]
+    else:
+        # Legacy path (no item record): still must block KBH and refunded orders
+        data_chk = db.calc_order_display(order, settings)
+        if data_chk.get("_is_kbh", False) or order.get("status") == "refunded":
+            can_report = False
 
     msg = _fmt_order(L, order, settings, item=single_item, is_in_multi_order=is_multi)
 
@@ -1696,6 +1701,17 @@ async def callback_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 show_alert=True,
             )
             return
+        # Backend KBH gate — always block even if button slipped through
+        import re as _re
+        _pname_gate = (order.get("productName") or "").upper()
+        if _re.search(r'\bKBH\b', _pname_gate):
+            await query.answer(
+                "🚫 Sản phẩm này không có bảo hành (KBH). Không thể báo lỗi." if vi
+                else "🚫 This product has no warranty (KBH). Cannot report errors.",
+                show_alert=True,
+            )
+            return
+
         # Also check per-item refund using stored item_id
         stored_item_id = db.get_user_state(user.id).get("_report_item_id", "")
         if stored_item_id and order_id:
