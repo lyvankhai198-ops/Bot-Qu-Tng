@@ -3269,7 +3269,7 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
 
   const result = await sendTelegramWithCallbackButton(dr.userId, notifyMsg, btnText, callbackData);
 
-  addLog("DELIVERY_PENDING_UNLOCK", `${dr.username || dr.userId} → ${account}`, "web-admin");
+  addLog("DELIVERY_PENDING_UNLOCK", `${dr.username || dr.userId} → ${firstAcc.account}`, "web-admin");
 
   if (!result.ok) {
     res.json({ ok: true, warned: `Đã lưu tài khoản nhưng gửi Telegram thất bại: ${result.error}` });
