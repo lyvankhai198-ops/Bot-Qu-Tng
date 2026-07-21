@@ -25,11 +25,17 @@ export default function Users() {
 
   const filteredUsers = useMemo(() => {
     if (!users) return []
-    return users.filter(u => 
-      (u.username || "").toLowerCase().includes(search.toLowerCase()) || 
-      (u.firstName || "").toLowerCase().includes(search.toLowerCase()) ||
-      u.userId.toString().includes(search)
-    )
+    return users
+      .filter(u =>
+        (u.username || "").toLowerCase().includes(search.toLowerCase()) ||
+        (u.firstName || "").toLowerCase().includes(search.toLowerCase()) ||
+        u.userId.toString().includes(search)
+      )
+      .sort((a, b) => {
+        const ta = a.lastSeen ? new Date(a.lastSeen).getTime() : 0
+        const tb = b.lastSeen ? new Date(b.lastSeen).getTime() : 0
+        return tb - ta
+      })
   }, [users, search])
 
   const handleAction = async (action: 'ban' | 'unban' | 'reset', userId: string) => {
