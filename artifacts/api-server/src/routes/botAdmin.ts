@@ -3161,9 +3161,17 @@ router.get("/bot/delivery", requireAuth, (_req: any, res: any) => {
 // Khách tự bấm "Mở khoá" trên web → tài khoản hiển thị + đơn tự đánh dấu đã giao.
 router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) => {
   const { id } = req.params;
-  const { account, password, twoFA } = req.body ?? {};
-  if (!account || !password) {
-    res.status(400).json({ ok: false, message: "Tài khoản và mật khẩu là bắt buộc" });
+  const body = req.body ?? {};
+
+  // Hỗ trợ cả single {account,password,twoFA} lẫn mảng {accounts:[...]}
+  let accountList: Array<{ account: string; password: string; twoFA?: string }> = [];
+  if (Array.isArray(body.accounts) && body.accounts.length > 0) {
+    accountList = body.accounts;
+  } else if (body.account) {
+    accountList = [{ account: body.account, password: body.password, twoFA: body.twoFA }];
+  }
+  if (accountList.length === 0 || !accountList[0].account || !accountList[0].password) {
+    res.status(400).json({ ok: false, message: "Cần ít nhất một tài khoản và mật khẩu" });
     return;
   }
 
@@ -3191,33 +3199,36 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
     }
   }
 
-  // ── Ghi order_items với unlocked=false ────────────────────────────────────
+  // ── Ghi order_items với unlocked=false (tất cả accounts) ─────────────────
   const existingItems: any[] = orderItems[dr.orderId] ?? [];
-  const existIdx = existingItems.findIndex(
-    (it: any) => (it.original_account || it.email || "").toLowerCase() === account.toLowerCase()
-  );
-  const itemEntry: any = {
-    itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
-    email:    account,
-    password: password || null,
-    twoFA:    twoFA    || null,
-    unlocked: false,
-    status:   "delivered",
-    item_status: "active",
-    productName: order.productName || dr.productName || "",
-    createdAt: existIdx >= 0 ? existingItems[existIdx].createdAt : deliveredAt,
-    original_account:   account,
-    current_account:    account,
-    current_replacement_number: 0,
-    original_delivered_at: deliveredAt,
-    warranty_days: Number(order.warrantyDays || 0) || null,
-    warranty_end_date: warrantyEndDate,
-    source: "manual_delivery",
-  };
-  if (existIdx >= 0) {
-    existingItems[existIdx] = { ...existingItems[existIdx], ...itemEntry };
-  } else {
-    existingItems.push(itemEntry);
+  for (const acc of accountList) {
+    const { account, password, twoFA } = acc;
+    const existIdx = existingItems.findIndex(
+      (it: any) => (it.original_account || it.email || "").toLowerCase() === account.toLowerCase()
+    );
+    const itemEntry: any = {
+      itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
+      email:    account,
+      password: password || null,
+      twoFA:    twoFA    || null,
+      unlocked: false,
+      status:   "delivered",
+      item_status: "active",
+      productName: order.productName || dr.productName || "",
+      createdAt: existIdx >= 0 ? existingItems[existIdx].createdAt : deliveredAt,
+      original_account:   account,
+      current_account:    account,
+      current_replacement_number: 0,
+      original_delivered_at: deliveredAt,
+      warranty_days: Number(order.warrantyDays || 0) || null,
+      warranty_end_date: warrantyEndDate,
+      source: "manual_delivery",
+    };
+    if (existIdx >= 0) {
+      existingItems[existIdx] = { ...existingItems[existIdx], ...itemEntry };
+    } else {
+      existingItems.push(itemEntry);
+    }
   }
   orderItems[dr.orderId] = existingItems;
   writeJson("order_items", orderItems);

@@ -57,6 +57,14 @@ function parseAccountLine(line: string): { account: string; password: string; tw
   }
 }
 
+function parseAccountLines(raw: string): Array<{ account: string; password: string; twoFA: string }> {
+  return raw.split("\n")
+    .map(l => l.trim())
+    .filter(l => l.length > 0)
+    .map(parseAccountLine)
+    .filter(p => p.account && p.password)
+}
+
 export default function Delivery() {
   const { toast } = useToast()
   const [requests, setRequests] = useState<DeliveryRequest[]>([])
@@ -116,18 +124,27 @@ export default function Delivery() {
 
   async function handleSend() {
     if (!selected) return
-    let acc = account.trim(), pwd = password.trim(), tfa = twoFA.trim()
-    if (useRaw) { const p = parseAccountLine(rawLine); acc = p.account; pwd = p.password; tfa = p.twoFA }
-    if (!acc || !pwd) {
-      toast({ title: "Thiếu thông tin", description: "Vui lòng nhập tài khoản và mật khẩu", variant: "destructive" })
-      return
+    let accounts: Array<{ account: string; password: string; twoFA?: string }> = []
+    if (useRaw) {
+      accounts = parseAccountLines(rawLine).map(p => ({ account: p.account, password: p.password, twoFA: p.twoFA || undefined }))
+      if (accounts.length === 0) {
+        toast({ title: "Thiếu thông tin", description: "Vui lòng nhập ít nhất một dòng account|password", variant: "destructive" })
+        return
+      }
+    } else {
+      const acc = account.trim(), pwd = password.trim(), tfa = twoFA.trim()
+      if (!acc || !pwd) {
+        toast({ title: "Thiếu thông tin", description: "Vui lòng nhập tài khoản và mật khẩu", variant: "destructive" })
+        return
+      }
+      accounts = [{ account: acc, password: pwd, twoFA: tfa || undefined }]
     }
     setSending(true)
     try {
       const res = await fetch(`/api/bot/delivery/${selected.id}/send`, {
         method: "POST",
         headers: { ...authHeader(), "Content-Type": "application/json" },
-        body: JSON.stringify({ account: acc, password: pwd, twoFA: tfa || undefined }),
+        body: JSON.stringify({ accounts }),
       })
       const data = await res.json()
       if (!res.ok || !data.ok) throw new Error(data.message ?? "Lỗi không xác định")
@@ -378,20 +395,30 @@ export default function Delivery() {
 
             {useRaw ? (
               <div className="space-y-2">
-                <Label>Định dạng: email|password|2FA</Label>
-                <Input
-                  placeholder="abc@email.com|password123|123456"
+                <div className="flex items-center justify-between">
+                  <Label>Mỗi dòng một tài khoản: email|password|2FA</Label>
+                  {rawLine && (
+                    <span className="text-xs text-muted-foreground">
+                      {parseAccountLines(rawLine).length} tài khoản
+                    </span>
+                  )}
+                </div>
+                <Textarea
+                  placeholder={"abc@email.com|password123|123456\nxyz@gmail.com|pass456|654321"}
                   value={rawLine}
                   onChange={e => setRawLine(e.target.value)}
-                  className="font-mono text-sm"
+                  className="font-mono text-sm min-h-[120px] resize-y"
                 />
-                {rawLine && (
-                  <div className="text-xs text-muted-foreground bg-muted rounded p-2 font-mono space-y-1">
-                    {(() => { const p = parseAccountLine(rawLine); return <>
-                      <div>📧 {p.account || "—"}</div>
-                      <div>🔒 {p.password || "—"}</div>
-                      {p.twoFA && <div>🛡 {p.twoFA}</div>}
-                    </> })()}
+                {rawLine && parseAccountLines(rawLine).length > 0 && (
+                  <div className="text-xs text-muted-foreground bg-muted rounded p-2 font-mono space-y-2 max-h-40 overflow-y-auto">
+                    {parseAccountLines(rawLine).map((p, i) => (
+                      <div key={i} className="space-y-0.5">
+                        {parseAccountLines(rawLine).length > 1 && <div className="font-semibold text-foreground/70">#{i + 1}</div>}
+                        <div>📧 {p.account}</div>
+                        <div>🔒 {p.password}</div>
+                        {p.twoFA && <div>🛡 {p.twoFA}</div>}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

@@ -3009,18 +3009,16 @@ async def callback_unlock_delivery(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # Nếu đã unlock trước đó → hiện lại thông tin luôn (không cần unlock lần nữa)
-    items = db.get_order_items(order_id)
-    latest = next(
-        (it for it in reversed(items) if it.get("source") == "manual_delivery" or it.get("email")),
-        None,
-    )
+    # Lấy tất cả manual_delivery items
+    all_items = db.get_order_items(order_id)
+    manual_items = [it for it in all_items if it.get("source") == "manual_delivery" or it.get("email")]
 
-    if latest and latest.get("unlocked"):
-        item = latest
+    # Nếu đã unlock hết rồi → hiện lại thông tin (không cần unlock lại)
+    if manual_items and all(it.get("unlocked") for it in manual_items):
+        unlocked_items = manual_items
     else:
-        item = db.unlock_delivery_order(order_id)
-        if not item:
+        unlocked_items = db.unlock_delivery_order(order_id)
+        if not unlocked_items:
             await query.answer(
                 "❌ Không tìm thấy tài khoản cho đơn hàng này." if vi
                 else "❌ No account found for this order.",
@@ -3030,11 +3028,8 @@ async def callback_unlock_delivery(update: Update, context: ContextTypes.DEFAULT
 
     await query.answer()
 
-    email    = item.get("email") or item.get("original_account") or ""
-    password = item.get("password") or ""
-    twofa    = item.get("twoFA") or ""
-    product  = item.get("productName") or dr.get("productName") or ""
-    w_end    = item.get("warranty_end_date") or ""
+    product = (unlocked_items[0].get("productName") if unlocked_items else None) or dr.get("productName") or ""
+    w_end   = (unlocked_items[0].get("warranty_end_date") if unlocked_items else None) or ""
 
     if vi:
         lines = [
@@ -3045,27 +3040,35 @@ async def callback_unlock_delivery(update: Update, context: ContextTypes.DEFAULT
             lines.append(f"🛍 Sản phẩm: <b>{product}</b>")
         if w_end:
             lines.append(f"🛡 Bảo hành đến: <b>{w_end}</b>")
-        lines += [
-            f"\n📧 Tài khoản: <code>{email}</code>",
-            f"🔒 Mật khẩu: <code>{password}</code>",
-        ]
-        if twofa:
-            lines.append(f"🛡 2FA: <code>{twofa}</code>")
+        for idx, item in enumerate(unlocked_items, 1):
+            email    = item.get("email") or item.get("original_account") or ""
+            password = item.get("password") or ""
+            twofa    = item.get("twoFA") or ""
+            prefix = f"\n<b>Tài khoản {idx}:</b>" if len(unlocked_items) > 1 else "\n"
+            lines.append(prefix)
+            lines.append(f"📧 Tài khoản: <code>{email}</code>")
+            lines.append(f"🔒 Mật khẩu: <code>{password}</code>")
+            if twofa:
+                lines.append(f"🛡 2FA: <code>{twofa}</code>")
     else:
         lines = [
-            f"✅ <b>Your Account</b>",
+            f"✅ <b>Your Account{'s' if len(unlocked_items) > 1 else ''}</b>",
             f"📦 Order: <code>{order_id}</code>",
         ]
         if product:
             lines.append(f"🛍 Product: <b>{product}</b>")
         if w_end:
             lines.append(f"🛡 Warranty until: <b>{w_end}</b>")
-        lines += [
-            f"\n📧 Account: <code>{email}</code>",
-            f"🔒 Password: <code>{password}</code>",
-        ]
-        if twofa:
-            lines.append(f"🛡 2FA: <code>{twofa}</code>")
+        for idx, item in enumerate(unlocked_items, 1):
+            email    = item.get("email") or item.get("original_account") or ""
+            password = item.get("password") or ""
+            twofa    = item.get("twoFA") or ""
+            prefix = f"\n<b>Account {idx}:</b>" if len(unlocked_items) > 1 else "\n"
+            lines.append(prefix)
+            lines.append(f"📧 Account: <code>{email}</code>")
+            lines.append(f"🔒 Password: <code>{password}</code>")
+            if twofa:
+                lines.append(f"🛡 2FA: <code>{twofa}</code>")
 
     try:
         await query.edit_message_text(
