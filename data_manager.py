@@ -1572,3 +1572,47 @@ def calc_order_display(order: dict, settings: dict) -> dict:
     result["_refund_amount"] = refund_amount
     result["_is_kbh"] = _is_kbh_ord
     return result
+
+
+# ─── Delivery Requests ──────────────────────────────────────────────────────
+
+def get_delivery_requests() -> list:
+    return load("delivery_requests", [])
+
+
+def add_delivery_request(user_id: int, username: str, first_name: str,
+                          order_id: str, user_lang: str = "vi") -> str:
+    requests = load("delivery_requests", [])
+    req = {
+        "id": str(uuid.uuid4())[:12],
+        "userId": str(user_id),
+        "username": username or "",
+        "firstName": first_name or "",
+        "orderId": order_id,
+        "userLang": user_lang,
+        "submittedAt": datetime.now().isoformat(),
+        "status": "pending",   # pending | sent | failed
+        "sentAt": None,
+        "sentBy": None,
+        "accountInfo": None,   # dict: {account, password, twoFA} when sent
+    }
+    requests.append(req)
+    save("delivery_requests", requests)
+    return req["id"]
+
+
+def update_delivery_request(req_id: str, fields: dict) -> bool:
+    requests = load("delivery_requests", [])
+    for req in requests:
+        if req.get("id") == req_id:
+            req.update(fields)
+            save("delivery_requests", requests)
+            return True
+    return False
+
+
+def get_delivery_request(req_id: str):
+    for req in load("delivery_requests", []):
+        if req.get("id") == req_id:
+            return req
+    return None

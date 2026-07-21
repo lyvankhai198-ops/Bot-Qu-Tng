@@ -19,6 +19,7 @@ import {
   RefreshCw,
   CalendarCheck,
   Target,
+  Truck,
 } from "lucide-react"
 import { Button } from "./ui/button"
 
@@ -28,6 +29,7 @@ const navItems = [
   { href: "/users", label: "Người dùng", icon: Users },
   { href: "/orders", label: "Đơn hàng", icon: ShoppingCart },
   { href: "/warranty", label: "Bảo hành", icon: ShieldAlert },
+  { href: "/delivery", label: "Giao tài khoản", icon: Truck },
   { href: "/broadcast", label: "Gửi tin nhắn", icon: Send },
   { href: "/intro", label: "Cấu hình Intro", icon: FileText },
   { href: "/receivers", label: "Đã nhận quà", icon: Gift },

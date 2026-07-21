@@ -2587,6 +2587,71 @@ router.get("/bot/secret-codes/:id/winners", requireAuth, (req: any, res: any) =>
   res.json(code.winners ?? []);
 });
 
+// DELIVERY REQUESTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── GET /bot/delivery ─────────────────────────────────────────────────────────
+router.get("/bot/delivery", requireAuth, (_req: any, res: any) => {
+  const requests: any[] = readJson("delivery_requests", []) ?? [];
+  res.json(requests.sort((a: any, b: any) => b.submittedAt?.localeCompare(a.submittedAt ?? "") ?? 0));
+});
+
+// ── POST /bot/delivery/:id/send ───────────────────────────────────────────────
+router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) => {
+  const { id } = req.params;
+  const { account, password, twoFA } = req.body ?? {};
+  if (!account || !password) {
+    res.status(400).json({ ok: false, message: "Tài khoản và mật khẩu là bắt buộc" });
+    return;
+  }
+
+  const requests: any[] = readJson("delivery_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy yêu cầu" }); return; }
+  const dr = requests[idx];
+
+  const userLang = dr.userLang ?? "vi";
+  const isEN = userLang === "en";
+  const lines: string[] = [];
+  if (isEN) {
+    lines.push(`✅ <b>Your account has been delivered successfully</b>\n`);
+    lines.push(`📦 Order: <code>${dr.orderId}</code>`);
+    lines.push(`\n🔑 <b>Account Information:</b>`);
+    lines.push(`📧 Account: <code>${account}</code>`);
+    lines.push(`🔒 Password: <code>${password}</code>`);
+    if (twoFA) lines.push(`🛡 2FA: <code>${twoFA}</code>`);
+    lines.push(`\nPlease verify your account immediately after receiving.`);
+  } else {
+    lines.push(`✅ <b>Tài khoản của bạn đã được giao thành công</b>\n`);
+    lines.push(`📦 Mã đơn: <code>${dr.orderId}</code>`);
+    lines.push(`\n🔑 <b>Thông tin tài khoản:</b>`);
+    lines.push(`📧 Tài khoản: <code>${account}</code>`);
+    lines.push(`🔒 Mật khẩu: <code>${password}</code>`);
+    if (twoFA) lines.push(`🛡 2FA: <code>${twoFA}</code>`);
+    lines.push(`\nVui lòng kiểm tra tài khoản ngay sau khi nhận.`);
+  }
+  const message = lines.join("\n");
+
+  const result = await sendTelegramMessage(dr.userId, message);
+
+  // Update request status
+  requests[idx] = {
+    ...dr,
+    status: result.ok ? "sent" : "failed",
+    sentAt: now(),
+    sentBy: "web-admin",
+    accountInfo: { account, password, twoFA: twoFA || null },
+  };
+  writeJson("delivery_requests", requests);
+  addLog("DELIVERY_SENT", `${dr.username || dr.userId}`, "web-admin");
+
+  if (!result.ok) {
+    res.status(500).json({ ok: false, message: `Telegram lỗi: ${result.error}` });
+    return;
+  }
+  res.json({ ok: true });
+});
+
 // BACKUP
 // ═══════════════════════════════════════════════════════════════════════════
 
