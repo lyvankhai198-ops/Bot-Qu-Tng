@@ -431,13 +431,28 @@ def normalize_search_query(q: str) -> str:
 
 def _canon_order_id(s: str) -> str:
     """
-    Chuẩn hóa mã đơn để fuzzy-match các ký tự dễ nhầm lẫn:
-      O (letter) ↔ 0 (digit zero)
-      I (letter) ↔ 1 (digit one) ↔ l (lowercase L)
+    Chuẩn hóa mã đơn để fuzzy-match tất cả ký tự dễ nhầm lẫn
+    trong mã alphanumeric (ORDER...):
+      0 ↔ O ↔ D
+      1 ↔ I ↔ L
+      2 ↔ Z
+      5 ↔ S
+      6 ↔ G ↔ B  (6 trông như G/b trong nhiều font)
+      8 ↔ B      (8 trông như B)
+      9 ↔ Q
+    Dùng làm canonical key cho fuzzy fallback — không thay thế exact lookup.
     """
     s = s.upper()
-    s = s.replace('O', '0')
-    s = s.replace('I', '1').replace('L', '1')
+    # Map tất cả về digit canonical
+    for ch, canon in (
+        ('O', '0'), ('D', '0'),           # O, D → 0
+        ('I', '1'), ('L', '1'),           # I, L → 1
+        ('Z', '2'),                        # Z → 2
+        ('S', '5'),                        # S → 5
+        ('G', '6'), ('B', '6'),           # G, B → 6
+        ('Q', '9'),                        # Q → 9
+    ):
+        s = s.replace(ch, canon)
     return s
 
 
