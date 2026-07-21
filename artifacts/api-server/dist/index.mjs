@@ -51851,7 +51851,8 @@ router2.get("/bot/sync-robot/config", requireAuth, (_req, res) => {
     orders_url: cfg.orders_url ?? "",
     email: cfg.email ?? "",
     password: cfg.password ? "***" : "",
-    interval_s: cfg.interval_s ?? 300
+    interval_s: cfg.interval_s ?? 300,
+    sync_mode: cfg.sync_mode ?? "full"
   });
 });
 router2.put("/bot/sync-robot/config", requireAuth, (req, res) => {
