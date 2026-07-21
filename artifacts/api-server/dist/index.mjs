@@ -50175,7 +50175,52 @@ router2.post("/bot/round", requireAuth, (req, res) => {
 });
 router2.get("/bot/orders", requireAuth, (_req, res) => {
   const orders = readJson("orders", {}) ?? {};
-  res.json(Object.values(orders));
+  const today = /* @__PURE__ */ new Date();
+  today.setHours(0, 0, 0, 0);
+  const result = Object.values(orders).map((order) => {
+    let status = order.status || "active";
+    if (status !== "refunded") {
+      const weStr = order.warrantyExpiry || order.warrantyDate || "";
+      if (weStr) {
+        try {
+          const expiry = new Date(weStr.slice(0, 10));
+          status = expiry >= today ? "active" : "expired";
+        } catch {
+        }
+      }
+    }
+    return { ...order, status };
+  });
+  result.sort((a, b) => {
+    const ta = a.createdAt || a.purchaseDate || "";
+    const tb = b.createdAt || b.purchaseDate || "";
+    return tb.localeCompare(ta);
+  });
+  const refundHistory = readJson("refund_history", []) ?? [];
+  const refundedInHistory = new Set(refundHistory.map((r) => r.orderId).filter(Boolean));
+  let historyDirty = false;
+  for (const order of result) {
+    if (order.status === "refunded" && order.orderId && !refundedInHistory.has(order.orderId)) {
+      refundHistory.push({
+        id: crypto.randomUUID(),
+        warrantyRequestId: null,
+        orderId: order.orderId,
+        orderCode: order.orderId,
+        account: order.email || "",
+        email: order.email || "",
+        amount: Number(order.refundAmount || 0),
+        note: "T\u1EF1 \u0111\u1ED9ng \u0111\u1ED3ng b\u1ED9 t\u1EEB \u0111\u01A1n h\xE0ng",
+        refundedAt: order.refundedAt || now(),
+        refundedBy: order.refundedBy || "system",
+        reason: "",
+        source: "order"
+      });
+      refundedInHistory.add(order.orderId);
+      historyDirty = true;
+    }
+  }
+  if (historyDirty) writeJson("refund_history", refundHistory);
+  res.json(result);
 });
 router2.post("/bot/orders", requireAuth, (req, res) => {
   const body = req.body ?? {};
