@@ -1653,26 +1653,23 @@ def get_delivery_request_by_order(order_id: str):
 
 def unlock_delivery_order(order_id: str):
     """
-    Mark the latest manual_delivery item as unlocked.
+    Mark ALL manual_delivery items for this order as unlocked.
     Also updates delivery_requests status → 'sent' and orders status → 'active'.
-    Returns the unlocked item dict, or None if not found.
+    Returns a list of all unlocked item dicts, or [] if none found.
     """
     all_items = load("order_items", {})
     items = all_items.get(order_id, [])
-    target_idx = None
-    for i in range(len(items) - 1, -1, -1):
-        item = items[i]
-        if item.get("source") == "manual_delivery" or item.get("email"):
-            target_idx = i
-            break
-    if target_idx is None:
-        return None
+    unlocked_now = datetime.now().isoformat()
+    result = []
 
-    items[target_idx] = {
-        **items[target_idx],
-        "unlocked": True,
-        "unlockedAt": datetime.now().isoformat(),
-    }
+    for i, item in enumerate(items):
+        if item.get("source") == "manual_delivery" or item.get("email"):
+            items[i] = {**item, "unlocked": True, "unlockedAt": unlocked_now}
+            result.append(items[i])
+
+    if not result:
+        return []
+
     all_items[order_id] = items
     save("order_items", all_items)
 
@@ -1682,7 +1679,7 @@ def unlock_delivery_order(order_id: str):
         if req.get("orderId") == order_id and req.get("status") == "pending_unlock":
             req.update({
                 "status": "sent",
-                "sentAt": datetime.now().isoformat(),
+                "sentAt": unlocked_now,
                 "deliveredViaBot": True,
             })
     save("delivery_requests", requests)
@@ -1691,7 +1688,7 @@ def unlock_delivery_order(order_id: str):
     orders = load("orders", {})
     if order_id in orders and orders[order_id].get("status") in ("pending", None, ""):
         orders[order_id]["status"] = "active"
-        orders[order_id]["updatedAt"] = datetime.now().isoformat()
+        orders[order_id]["updatedAt"] = unlocked_now
         save("orders", orders)
 
-    return items[target_idx]
+    return result
