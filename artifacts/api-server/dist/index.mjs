@@ -49906,8 +49906,8 @@ function settingsToApi(s) {
   };
 }
 router2.post("/bot/auth", (req, res) => {
-  const { password: password2 } = req.body ?? {};
-  if (!ADMIN_SECRET || password2 !== ADMIN_SECRET) {
+  const { password } = req.body ?? {};
+  if (!ADMIN_SECRET || password !== ADMIN_SECRET) {
     res.status(401).json({ error: "M\u1EADt kh\u1EA9u kh\xF4ng \u0111\xFAng" });
     return;
   }
@@ -50683,7 +50683,7 @@ async function sendTelegramWithCallbackButton(userId, message, buttonText, callb
     return { ok: false, error: e?.message ?? "Network error" };
   }
 }
-function buildReplacementMessage(req_, email, password2, twoFA2, note) {
+function buildReplacementMessage(req_, email, password, twoFA, note) {
   const userLang = req_.userLang ?? readJson("user_states", {})?.[req_.userId]?.lang ?? "vi";
   const isEN = userLang === "en";
   const lines = [];
@@ -50695,8 +50695,8 @@ function buildReplacementMessage(req_, email, password2, twoFA2, note) {
     lines.push(`
 \u{1F511} <b>Replacement Account:</b>`);
     lines.push(`\u{1F4E7} Email/Account: <code>${email}</code>`);
-    lines.push(`\u{1F512} Password: <code>${password2}</code>`);
-    if (twoFA2) lines.push(`\u{1F6E1} 2FA / Extra info: <code>${twoFA2}</code>`);
+    lines.push(`\u{1F512} Password: <code>${password}</code>`);
+    if (twoFA) lines.push(`\u{1F6E1} 2FA / Extra info: <code>${twoFA}</code>`);
     if (note) lines.push(`\u{1F4DD} Note: ${note}`);
     lines.push(`
 Please verify your account immediately after receiving.`);
@@ -50708,8 +50708,8 @@ Please verify your account immediately after receiving.`);
     lines.push(`
 \u{1F511} <b>T\xE0i kho\u1EA3n thay th\u1EBF:</b>`);
     lines.push(`\u{1F4E7} Email/T\xE0i kho\u1EA3n: <code>${email}</code>`);
-    lines.push(`\u{1F512} M\u1EADt kh\u1EA9u: <code>${password2}</code>`);
-    if (twoFA2) lines.push(`\u{1F6E1} 2FA/Th\xF4ng tin b\u1ED5 sung: <code>${twoFA2}</code>`);
+    lines.push(`\u{1F512} M\u1EADt kh\u1EA9u: <code>${password}</code>`);
+    if (twoFA) lines.push(`\u{1F6E1} 2FA/Th\xF4ng tin b\u1ED5 sung: <code>${twoFA}</code>`);
     if (note) lines.push(`\u{1F4DD} Ghi ch\xFA: ${note}`);
     lines.push(`
 Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
@@ -50718,8 +50718,8 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
 }
 router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { email, password: password2, twoFA: twoFA2, note } = req.body ?? {};
-  if (!email || !password2) {
+  const { email, password, twoFA, note } = req.body ?? {};
+  if (!email || !password) {
     res.status(400).json({ ok: false, message: "Email v\xE0 m\u1EADt kh\u1EA9u l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
@@ -50732,13 +50732,13 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
   const req_ = requests[idx];
   const replacementData = {
     replacementEmail: email,
-    replacementPassword: password2,
-    replacementTwoFA: twoFA2 || null,
+    replacementPassword: password,
+    replacementTwoFA: twoFA || null,
     replacementNote: note || null,
     resolvedAt: now(),
     resolvedBy: "web-admin"
   };
-  const message = buildReplacementMessage(req_, email, password2, twoFA2, note);
+  const message = buildReplacementMessage(req_, email, password, twoFA, note);
   const result = await sendTelegramMessage(req_.userId, message);
   const orders = readJson("orders", {}) ?? {};
   if (req_.orderId && orders[req_.orderId]) {
@@ -50763,8 +50763,8 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
         orderItemId: item.itemId,
         previousAccount: item.current_account || item.email || "",
         newAccount: email,
-        newPassword: password2,
-        newTwoFA: twoFA2 || null,
+        newPassword: password,
+        newTwoFA: twoFA || null,
         replacementNumber: repNumber,
         deliveredAt: now(),
         reason: note || "",
@@ -50777,8 +50777,8 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
       itemList[itemIdx] = {
         ...item,
         current_account: email,
-        current_password: password2,
-        current_two_fa: twoFA2 || null,
+        current_password: password,
+        current_two_fa: twoFA || null,
         current_replacement_number: repNumber,
         item_status: "active",
         updatedAt: now()
@@ -50794,8 +50794,8 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
         email: req_.email || email,
         original_account: req_.email || "",
         current_account: email,
-        current_password: password2,
-        current_two_fa: twoFA2 || null,
+        current_password: password,
+        current_two_fa: twoFA || null,
         current_replacement_number: 1,
         original_delivered_at: order.purchaseDate || order.paymentAt || now(),
         productName: order.productName || "",
@@ -50816,8 +50816,8 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
         orderItemId: newItemId,
         previousAccount: req_.email || "",
         newAccount: email,
-        newPassword: password2,
-        newTwoFA: twoFA2 || null,
+        newPassword: password,
+        newTwoFA: twoFA || null,
         replacementNumber: 1,
         deliveredAt: now(),
         reason: note || "",
@@ -50875,8 +50875,8 @@ Shop \u0111\xE3 nh\u1EADn \u0111\u01B0\u1EE3c y\xEAu c\u1EA7u b\u1EA3o h\xE0nh c
 });
 router2.post("/bot/warranty/:id/accounts/:accId/replacement", requireAuth, async (req, res) => {
   const { id, accId } = req.params;
-  const { email, password: password2, twoFA: twoFA2, note } = req.body ?? {};
-  if (!email || !password2) {
+  const { email, password, twoFA, note } = req.body ?? {};
+  if (!email || !password) {
     res.status(400).json({ ok: false, message: "Email v\xE0 m\u1EADt kh\u1EA9u l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
   }
@@ -50902,8 +50902,8 @@ router2.post("/bot/warranty/:id/accounts/:accId/replacement", requireAuth, async
     msgLines.push(`\u{1F4E7} Old account: <code>${acc.email}</code>`);
     msgLines.push(`\u{1F511} <b>Replacement account:</b>`);
     msgLines.push(`\u{1F4E7} Email: <code>${email}</code>`);
-    msgLines.push(`\u{1F512} Password: <code>${password2}</code>`);
-    if (twoFA2) msgLines.push(`\u{1F6E1} 2FA: <code>${twoFA2}</code>`);
+    msgLines.push(`\u{1F512} Password: <code>${password}</code>`);
+    if (twoFA) msgLines.push(`\u{1F6E1} 2FA: <code>${twoFA}</code>`);
     if (note) msgLines.push(`\u{1F4DD} Note: ${note}`);
     msgLines.push(`
 Please verify your account immediately after receiving.`);
@@ -50913,8 +50913,8 @@ Please verify your account immediately after receiving.`);
     msgLines.push(`\u{1F4E7} T\xE0i kho\u1EA3n c\u0169: <code>${acc.email}</code>`);
     msgLines.push(`\u{1F511} <b>T\xE0i kho\u1EA3n thay th\u1EBF:</b>`);
     msgLines.push(`\u{1F4E7} Email: <code>${email}</code>`);
-    msgLines.push(`\u{1F512} M\u1EADt kh\u1EA9u: <code>${password2}</code>`);
-    if (twoFA2) msgLines.push(`\u{1F6E1} 2FA: <code>${twoFA2}</code>`);
+    msgLines.push(`\u{1F512} M\u1EADt kh\u1EA9u: <code>${password}</code>`);
+    if (twoFA) msgLines.push(`\u{1F6E1} 2FA: <code>${twoFA}</code>`);
     if (note) msgLines.push(`\u{1F4DD} Ghi ch\xFA: ${note}`);
     msgLines.push(`
 Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
@@ -50939,8 +50939,8 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
         orderItemId: item.itemId,
         previousAccount: item.current_account || item.email || "",
         newAccount: email,
-        newPassword: password2,
-        newTwoFA: twoFA2 || null,
+        newPassword: password,
+        newTwoFA: twoFA || null,
         replacementNumber: repNumber,
         deliveredAt: now(),
         reason: note || "",
@@ -50953,8 +50953,8 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
       itemList[itemIdx] = {
         ...item,
         current_account: email,
-        current_password: password2,
-        current_two_fa: twoFA2 || null,
+        current_password: password,
+        current_two_fa: twoFA || null,
         current_replacement_number: repNumber,
         item_status: "active",
         updatedAt: now()
@@ -50963,7 +50963,7 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
       writeJson("order_items", orderItems);
     }
   }
-  const replacementData = { replacementEmail: email, replacementPassword: password2, replacementTwoFA: twoFA2 || null, replacementNote: note || null, resolvedAt: now(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "sent" : "failed", sentAt: result.ok ? now() : null, sentError: result.ok ? null : result.error };
+  const replacementData = { replacementEmail: email, replacementPassword: password, replacementTwoFA: twoFA || null, replacementNote: note || null, resolvedAt: now(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "sent" : "failed", sentAt: result.ok ? now() : null, sentError: result.ok ? null : result.error };
   requests[idx].accounts[accIdx] = { ...acc, ...replacementData };
   _recomputeGroupStatus(requests[idx]);
   writeJson("warranty_requests", requests);
@@ -51749,7 +51749,7 @@ router2.post("/bot/orders/:orderId/items", requireAuth, (req, res) => {
     res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng" });
     return;
   }
-  const { email, password: password2, twoFA: twoFA2 } = req.body ?? {};
+  const { email, password, twoFA } = req.body ?? {};
   if (!email) {
     res.status(400).json({ ok: false, message: "email l\xE0 b\u1EAFt bu\u1ED9c" });
     return;
@@ -51781,8 +51781,8 @@ router2.post("/bot/orders/:orderId/items", requireAuth, (req, res) => {
     warranty_days: iWd || null,
     warranty_end_date: iWarrantyEnd,
     item_status: "active",
-    password: password2 ?? null,
-    twoFA: twoFA2 ?? null,
+    password: password ?? null,
+    twoFA: twoFA ?? null,
     status: "active",
     createdAt: now()
   };
@@ -52826,15 +52826,15 @@ router2.post("/bot/delivery/:id/send", requireAuth, async (req, res) => {
   }
   const existingItems = orderItems[dr.orderId] ?? [];
   for (const acc of accountList) {
-    const { account: account2, password: password2, twoFA: twoFA2 } = acc;
+    const { account: account2, password, twoFA } = acc;
     const existIdx = existingItems.findIndex(
       (it) => (it.original_account || it.email || "").toLowerCase() === account2.toLowerCase()
     );
     const itemEntry = {
       itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
       email: account2,
-      password: password2 || null,
-      twoFA: twoFA2 || null,
+      password: password || null,
+      twoFA: twoFA || null,
       unlocked: false,
       status: "delivered",
       item_status: "active",
@@ -52856,12 +52856,13 @@ router2.post("/bot/delivery/:id/send", requireAuth, async (req, res) => {
   }
   orderItems[dr.orderId] = existingItems;
   writeJson("order_items", orderItems);
+  const firstAcc = accountList[0];
   requests[idx] = {
     ...dr,
     status: "pending_unlock",
     sentAt: deliveredAt,
     sentBy: "web-admin",
-    accountInfo: { account, password, twoFA: twoFA || null },
+    accountInfo: { account: firstAcc.account, password: firstAcc.password, twoFA: firstAcc.twoFA || null },
     reminderEnabled: false,
     nextReminderAt: null,
     reminderProcessing: false
