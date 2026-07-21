@@ -919,11 +919,11 @@ async function sendTelegramMessage(userId: string, message: string): Promise<{ o
   }
 }
 
-async function sendTelegramWithButton(
+async function sendTelegramWithCallbackButton(
   userId: string,
   message: string,
   buttonText: string,
-  buttonUrl: string
+  callbackData: string
 ): Promise<{ ok: boolean; error?: string }> {
   if (!TG_TOKEN) return { ok: false, error: "TELEGRAM_BOT_TOKEN not set" };
   try {
@@ -935,7 +935,7 @@ async function sendTelegramWithButton(
         chat_id: userId,
         text: message,
         parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [[{ text: buttonText, url: buttonUrl }]] },
+        reply_markup: { inline_keyboard: [[{ text: buttonText, callback_data: callbackData }]] },
       }),
     });
     const data: any = await resp.json();
@@ -2822,12 +2822,6 @@ router.put("/bot/delivery-reminder-settings", requireAuth, (req: any, res: any) 
   res.json(updated);
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PUBLIC (no auth) — Customer unlock page
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const CUSTOMER_PAGE_URL = process.env["CUSTOMER_PAGE_URL"] ?? "http://103.180.138.203/api/customer-page";
-
 // ── GET /customer-page ────────────────────────────────────────────────────────
 router.get("/customer-page", (_req: any, res: any) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -3242,35 +3236,34 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
   };
   writeJson("delivery_requests", requests);
 
-  // ── Gửi Telegram link mở khoá ─────────────────────────────────────────────
-  const unlockUrl = `${CUSTOMER_PAGE_URL}?id=${encodeURIComponent(dr.orderId)}`;
+  // ── Gửi Telegram nút mở khoá (callback_data) ─────────────────────────────
   const userLang = dr.userLang ?? "vi";
   const isEN = userLang === "en";
   const notifyLines: string[] = [];
   if (isEN) {
     notifyLines.push(`📦 <b>Your account is ready!</b>`);
     notifyLines.push(`Order: <code>${dr.orderId}</code>`);
-    notifyLines.push(`\nClick the button below to unlock and receive your account credentials.`);
-    notifyLines.push(`\n<i>Your account is protected — only you can unlock it.</i>`);
+    notifyLines.push(`\nTap the button below to unlock your account.`);
+    notifyLines.push(`\n<i>Only you can unlock this account.</i>`);
   } else {
     notifyLines.push(`📦 <b>Tài khoản của bạn đã sẵn sàng!</b>`);
     notifyLines.push(`Mã đơn: <code>${dr.orderId}</code>`);
     notifyLines.push(`\nNhấn nút bên dưới để mở khoá và nhận thông tin tài khoản.`);
-    notifyLines.push(`\n<i>Tài khoản được bảo vệ — chỉ bạn mới có thể mở khoá.</i>`);
+    notifyLines.push(`\n<i>Chỉ bạn mới có thể mở khoá tài khoản này.</i>`);
   }
   const notifyMsg = notifyLines.join("\n");
   const btnText = isEN ? "🔓 Unlock Account" : "🔓 Mở khoá nhận tài khoản";
+  const callbackData = `unlock_del:${dr.orderId}`;
 
-  const result = await sendTelegramWithButton(dr.userId, notifyMsg, btnText, unlockUrl);
+  const result = await sendTelegramWithCallbackButton(dr.userId, notifyMsg, btnText, callbackData);
 
   addLog("DELIVERY_PENDING_UNLOCK", `${dr.username || dr.userId} → ${account}`, "web-admin");
 
   if (!result.ok) {
-    // Telegram failed — still saved to order_items, khách vẫn có thể tra trực tiếp
-    res.json({ ok: true, warned: `Đã lưu tài khoản nhưng gửi Telegram thất bại: ${result.error}. Khách có thể tra tại: ${unlockUrl}` });
+    res.json({ ok: true, warned: `Đã lưu tài khoản nhưng gửi Telegram thất bại: ${result.error}` });
     return;
   }
-  res.json({ ok: true, unlockUrl });
+  res.json({ ok: true });
 });
 
 // ── POST /bot/delivery/:id/done ───────────────────────────────────────────────

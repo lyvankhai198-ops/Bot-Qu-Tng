@@ -2988,6 +2988,99 @@ def home():
 def health():
     return jsonify({"status": "ok", "stock": db.stock_count()})
 
+# ─── 🔓 Unlock Delivery — khách bấm nút mở khoá tài khoản ────────────────────
+
+async def callback_unlock_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Khách bấm nút '🔓 Mở khoá' để nhận thông tin tài khoản."""
+    query = update.callback_query
+    user  = query.from_user
+    L     = lang(user.id)
+    vi    = L == "vi"
+
+    order_id = query.data[len("unlock_del:"):]
+
+    # Bảo mật: chỉ đúng khách hàng mới mở được
+    dr = db.get_delivery_request_by_order(order_id)
+    if not dr or str(dr.get("userId")) != str(user.id):
+        await query.answer(
+            "⚠️ Không tìm thấy đơn hàng hoặc bạn không có quyền mở khoá." if vi
+            else "⚠️ Order not found or you don't have permission to unlock.",
+            show_alert=True,
+        )
+        return
+
+    # Nếu đã unlock trước đó → hiện lại thông tin luôn (không cần unlock lần nữa)
+    items = db.get_order_items(order_id)
+    latest = next(
+        (it for it in reversed(items) if it.get("source") == "manual_delivery" or it.get("email")),
+        None,
+    )
+
+    if latest and latest.get("unlocked"):
+        item = latest
+    else:
+        item = db.unlock_delivery_order(order_id)
+        if not item:
+            await query.answer(
+                "❌ Không tìm thấy tài khoản cho đơn hàng này." if vi
+                else "❌ No account found for this order.",
+                show_alert=True,
+            )
+            return
+
+    await query.answer()
+
+    email    = item.get("email") or item.get("original_account") or ""
+    password = item.get("password") or ""
+    twofa    = item.get("twoFA") or ""
+    product  = item.get("productName") or dr.get("productName") or ""
+    w_end    = item.get("warranty_end_date") or ""
+
+    if vi:
+        lines = [
+            f"✅ <b>Tài khoản của bạn</b>",
+            f"📦 Mã đơn: <code>{order_id}</code>",
+        ]
+        if product:
+            lines.append(f"🛍 Sản phẩm: <b>{product}</b>")
+        if w_end:
+            lines.append(f"🛡 Bảo hành đến: <b>{w_end}</b>")
+        lines += [
+            f"\n📧 Tài khoản: <code>{email}</code>",
+            f"🔒 Mật khẩu: <code>{password}</code>",
+        ]
+        if twofa:
+            lines.append(f"🛡 2FA: <code>{twofa}</code>")
+        lines.append(f"\n⚠️ Vui lòng lưu lại và đổi mật khẩu ngay sau khi đăng nhập.")
+    else:
+        lines = [
+            f"✅ <b>Your Account</b>",
+            f"📦 Order: <code>{order_id}</code>",
+        ]
+        if product:
+            lines.append(f"🛍 Product: <b>{product}</b>")
+        if w_end:
+            lines.append(f"🛡 Warranty until: <b>{w_end}</b>")
+        lines += [
+            f"\n📧 Account: <code>{email}</code>",
+            f"🔒 Password: <code>{password}</code>",
+        ]
+        if twofa:
+            lines.append(f"🛡 2FA: <code>{twofa}</code>")
+        lines.append(f"\n⚠️ Please save this info and change your password after logging in.")
+
+    try:
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        # Nếu edit thất bại (message quá cũ) thì gửi message mới
+        await query.message.reply_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.HTML,
+        )
+
 def run_flask():
     flask_app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
 
@@ -3065,7 +3158,8 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_check_join,    pattern=r"^check_join$"))
     app.add_handler(CallbackQueryHandler(callback_back_main,     pattern=r"^back_main$"))
     app.add_handler(CallbackQueryHandler(callback_gift_box,      pattern=r"^gbox[_:]"))
-    app.add_handler(CallbackQueryHandler(callback_checkin,       pattern=r"^checkin$"))
+    app.add_handler(CallbackQueryHandler(callback_checkin,          pattern=r"^checkin$"))
+    app.add_handler(CallbackQueryHandler(callback_unlock_delivery,  pattern=r"^unlock_del:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
