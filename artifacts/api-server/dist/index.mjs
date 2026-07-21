@@ -50662,7 +50662,7 @@ async function sendTelegramMessage(userId, message) {
     return { ok: false, error: e?.message ?? "Network error" };
   }
 }
-async function sendTelegramWithButton(userId, message, buttonText, buttonUrl) {
+async function sendTelegramWithCallbackButton(userId, message, buttonText, callbackData) {
   if (!TG_TOKEN) return { ok: false, error: "TELEGRAM_BOT_TOKEN not set" };
   try {
     const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
@@ -50673,7 +50673,7 @@ async function sendTelegramWithButton(userId, message, buttonText, buttonUrl) {
         chat_id: userId,
         text: message,
         parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [[{ text: buttonText, url: buttonUrl }]] }
+        reply_markup: { inline_keyboard: [[{ text: buttonText, callback_data: callbackData }]] }
       })
     });
     const data = await resp.json();
@@ -52479,7 +52479,6 @@ router2.put("/bot/delivery-reminder-settings", requireAuth, (req, res) => {
   addLog("DELIVERY_REMINDER_SETTINGS_UPDATE", JSON.stringify(updated).slice(0, 120), "web-admin");
   res.json(updated);
 });
-var CUSTOMER_PAGE_URL = process.env["CUSTOMER_PAGE_URL"] ?? "http://103.180.138.203/api/customer-page";
 router2.get("/customer-page", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(`<!DOCTYPE html>
@@ -52859,7 +52858,6 @@ router2.post("/bot/delivery/:id/send", requireAuth, async (req, res) => {
     reminderProcessing: false
   };
   writeJson("delivery_requests", requests);
-  const unlockUrl = `${CUSTOMER_PAGE_URL}?id=${encodeURIComponent(dr.orderId)}`;
   const userLang = dr.userLang ?? "vi";
   const isEN = userLang === "en";
   const notifyLines = [];
@@ -52867,26 +52865,27 @@ router2.post("/bot/delivery/:id/send", requireAuth, async (req, res) => {
     notifyLines.push(`\u{1F4E6} <b>Your account is ready!</b>`);
     notifyLines.push(`Order: <code>${dr.orderId}</code>`);
     notifyLines.push(`
-Click the button below to unlock and receive your account credentials.`);
+Tap the button below to unlock your account.`);
     notifyLines.push(`
-<i>Your account is protected \u2014 only you can unlock it.</i>`);
+<i>Only you can unlock this account.</i>`);
   } else {
     notifyLines.push(`\u{1F4E6} <b>T\xE0i kho\u1EA3n c\u1EE7a b\u1EA1n \u0111\xE3 s\u1EB5n s\xE0ng!</b>`);
     notifyLines.push(`M\xE3 \u0111\u01A1n: <code>${dr.orderId}</code>`);
     notifyLines.push(`
 Nh\u1EA5n n\xFAt b\xEAn d\u01B0\u1EDBi \u0111\u1EC3 m\u1EDF kho\xE1 v\xE0 nh\u1EADn th\xF4ng tin t\xE0i kho\u1EA3n.`);
     notifyLines.push(`
-<i>T\xE0i kho\u1EA3n \u0111\u01B0\u1EE3c b\u1EA3o v\u1EC7 \u2014 ch\u1EC9 b\u1EA1n m\u1EDBi c\xF3 th\u1EC3 m\u1EDF kho\xE1.</i>`);
+<i>Ch\u1EC9 b\u1EA1n m\u1EDBi c\xF3 th\u1EC3 m\u1EDF kho\xE1 t\xE0i kho\u1EA3n n\xE0y.</i>`);
   }
   const notifyMsg = notifyLines.join("\n");
   const btnText = isEN ? "\u{1F513} Unlock Account" : "\u{1F513} M\u1EDF kho\xE1 nh\u1EADn t\xE0i kho\u1EA3n";
-  const result = await sendTelegramWithButton(dr.userId, notifyMsg, btnText, unlockUrl);
+  const callbackData = `unlock_del:${dr.orderId}`;
+  const result = await sendTelegramWithCallbackButton(dr.userId, notifyMsg, btnText, callbackData);
   addLog("DELIVERY_PENDING_UNLOCK", `${dr.username || dr.userId} \u2192 ${account}`, "web-admin");
   if (!result.ok) {
-    res.json({ ok: true, warned: `\u0110\xE3 l\u01B0u t\xE0i kho\u1EA3n nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}. Kh\xE1ch c\xF3 th\u1EC3 tra t\u1EA1i: ${unlockUrl}` });
+    res.json({ ok: true, warned: `\u0110\xE3 l\u01B0u t\xE0i kho\u1EA3n nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
     return;
   }
-  res.json({ ok: true, unlockUrl });
+  res.json({ ok: true });
 });
 router2.post("/bot/delivery/:id/done", requireAuth, async (req, res) => {
   const { id } = req.params;
