@@ -3051,7 +3051,6 @@ async def callback_unlock_delivery(update: Update, context: ContextTypes.DEFAULT
         ]
         if twofa:
             lines.append(f"🛡 2FA: <code>{twofa}</code>")
-        lines.append(f"\n⚠️ Vui lòng lưu lại và đổi mật khẩu ngay sau khi đăng nhập.")
     else:
         lines = [
             f"✅ <b>Your Account</b>",
@@ -3067,7 +3066,6 @@ async def callback_unlock_delivery(update: Update, context: ContextTypes.DEFAULT
         ]
         if twofa:
             lines.append(f"🛡 2FA: <code>{twofa}</code>")
-        lines.append(f"\n⚠️ Please save this info and change your password after logging in.")
 
     try:
         await query.edit_message_text(
