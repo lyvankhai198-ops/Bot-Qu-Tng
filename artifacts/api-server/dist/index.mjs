@@ -50662,6 +50662,27 @@ async function sendTelegramMessage(userId, message) {
     return { ok: false, error: e?.message ?? "Network error" };
   }
 }
+async function sendTelegramWithButton(userId, message, buttonText, buttonUrl) {
+  if (!TG_TOKEN) return { ok: false, error: "TELEGRAM_BOT_TOKEN not set" };
+  try {
+    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: userId,
+        text: message,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: buttonText, url: buttonUrl }]] }
+      })
+    });
+    const data = await resp.json();
+    if (data.ok) return { ok: true };
+    return { ok: false, error: data.description ?? "Telegram error" };
+  } catch (e) {
+    return { ok: false, error: e?.message ?? "Network error" };
+  }
+}
 function buildReplacementMessage(req_, email, password, twoFA, note) {
   const userLang = req_.userLang ?? readJson("user_states", {})?.[req_.userId]?.lang ?? "vi";
   const isEN = userLang === "en";
@@ -52458,6 +52479,311 @@ router2.put("/bot/delivery-reminder-settings", requireAuth, (req, res) => {
   addLog("DELIVERY_REMINDER_SETTINGS_UPDATE", JSON.stringify(updated).slice(0, 120), "web-admin");
   res.json(updated);
 });
+var CUSTOMER_PAGE_URL = process.env["CUSTOMER_PAGE_URL"] ?? "http://103.180.138.203/api/customer-page";
+router2.get("/customer-page", (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nh\u1EADn t\xE0i kho\u1EA3n</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f0f4f8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.1);padding:28px 24px;width:100%;max-width:440px}
+  h1{font-size:1.25rem;font-weight:700;margin-bottom:4px;color:#1a202c}
+  .subtitle{font-size:.875rem;color:#718096;margin-bottom:24px}
+  label{font-size:.8125rem;font-weight:600;color:#4a5568;display:block;margin-bottom:6px}
+  input{width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:.9375rem;outline:none;transition:border .15s}
+  input:focus{border-color:#4f46e5}
+  .btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;transition:opacity .15s}
+  .btn-primary{background:#4f46e5;color:#fff}
+  .btn-primary:hover{opacity:.9}
+  .btn-unlock{background:linear-gradient(135deg,#059669,#047857);color:#fff;margin-top:18px}
+  .btn-unlock:hover{opacity:.9}
+  .btn-unlock:disabled{opacity:.5;cursor:not-allowed}
+  .section{margin-top:20px}
+  .info-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0f4f8;font-size:.875rem}
+  .info-row:last-child{border-bottom:none}
+  .info-label{color:#718096}
+  .info-val{font-weight:600;color:#1a202c;text-align:right;max-width:200px;word-break:break-all}
+  .badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.75rem;font-weight:600}
+  .badge-wait{background:#fef3c7;color:#92400e}
+  .badge-ok{background:#d1fae5;color:#065f46}
+  .badge-refunded{background:#ede9fe;color:#5b21b6}
+  .lock-box{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:20px;margin-top:18px;text-align:center}
+  .lock-icon{font-size:2.5rem;margin-bottom:8px}
+  .lock-text{font-size:.875rem;color:#718096;margin-bottom:4px}
+  .lock-hint{font-size:.8125rem;color:#a0aec0}
+  .cred-box{background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:12px;padding:20px;margin-top:18px}
+  .cred-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .cred-row:last-child{margin-bottom:0}
+  .cred-label{font-size:.8125rem;color:#065f46;font-weight:600}
+  .cred-val{font-family:monospace;font-size:.9375rem;font-weight:700;color:#1a202c;word-break:break-all;text-align:right}
+  .copy-btn{background:#e0fce7;border:none;border-radius:6px;padding:4px 8px;font-size:.75rem;cursor:pointer;color:#047857;font-weight:600;flex-shrink:0;margin-left:8px}
+  .copy-btn:active{background:#bbf7d0}
+  .alert{border-radius:8px;padding:12px 14px;font-size:.875rem;margin-top:16px}
+  .alert-err{background:#fff5f5;color:#c53030;border:1px solid #fed7d7}
+  .alert-warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+  .mt-16{margin-top:16px}
+  .spinner{border:3px solid #e2e8f0;border-top:3px solid #4f46e5;border-radius:50%;width:22px;height:22px;animation:spin .7s linear infinite;margin:0 auto 12px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #lookup-section,#result-section{display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>\u{1F4E6} Nh\u1EADn t\xE0i kho\u1EA3n c\u1EE7a b\u1EA1n</h1>
+  <p class="subtitle">Nh\u1EADp m\xE3 \u0111\u01A1n h\xE0ng \u0111\u1EC3 xem v\xE0 m\u1EDF kho\xE1 t\xE0i kho\u1EA3n</p>
+
+  <div id="lookup-section">
+    <label for="order-input">M\xE3 \u0111\u01A1n h\xE0ng</label>
+    <input id="order-input" placeholder="VD: ORD-XXXXXXXX" autocomplete="off" />
+    <button class="btn btn-primary mt-16" onclick="lookupOrder()">\u{1F50D} Tra c\u1EE9u</button>
+    <div id="lookup-err" class="alert alert-err" style="display:none"></div>
+  </div>
+
+  <div id="loading" style="display:none;text-align:center;padding:24px 0">
+    <div class="spinner"></div>
+    <p style="color:#718096;font-size:.875rem">\u0110ang t\u1EA3i...</p>
+  </div>
+
+  <div id="result-section">
+    <div class="section">
+      <div class="info-row"><span class="info-label">M\xE3 \u0111\u01A1n</span><span class="info-val" id="r-orderId"></span></div>
+      <div class="info-row"><span class="info-label">S\u1EA3n ph\u1EA9m</span><span class="info-val" id="r-product"></span></div>
+      <div class="info-row"><span class="info-label">B\u1EA3o h\xE0nh \u0111\u1EBFn</span><span class="info-val" id="r-warranty"></span></div>
+      <div class="info-row"><span class="info-label">Tr\u1EA1ng th\xE1i</span><span class="info-val" id="r-status"></span></div>
+    </div>
+
+    <div id="lock-box" class="lock-box">
+      <div class="lock-icon">\u{1F512}</div>
+      <div class="lock-text">T\xE0i kho\u1EA3n \u0111ang \u0111\u01B0\u1EE3c b\u1EA3o v\u1EC7</div>
+      <div class="lock-hint">Nh\u1EA5n n\xFAt b\xEAn d\u01B0\u1EDBi \u0111\u1EC3 m\u1EDF kho\xE1 v\xE0 xem th\xF4ng tin \u0111\u0103ng nh\u1EADp</div>
+      <button class="btn btn-unlock" id="unlock-btn" onclick="unlockAccount()">\u{1F513} M\u1EDF kho\xE1 nh\u1EADn t\xE0i kho\u1EA3n</button>
+    </div>
+
+    <div id="cred-box" class="cred-box" style="display:none">
+      <div style="font-weight:700;color:#065f46;margin-bottom:14px">\u2705 Th\xF4ng tin t\xE0i kho\u1EA3n</div>
+      <div class="cred-row">
+        <span class="cred-label">\u{1F4E7} T\xE0i kho\u1EA3n</span>
+        <div style="display:flex;align-items:center">
+          <span class="cred-val" id="c-email"></span>
+          <button class="copy-btn" onclick="copy('c-email',this)">Sao ch\xE9p</button>
+        </div>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">\u{1F512} M\u1EADt kh\u1EA9u</span>
+        <div style="display:flex;align-items:center">
+          <span class="cred-val" id="c-pass"></span>
+          <button class="copy-btn" onclick="copy('c-pass',this)">Sao ch\xE9p</button>
+        </div>
+      </div>
+      <div class="cred-row" id="row-2fa" style="display:none">
+        <span class="cred-label">\u{1F6E1} 2FA</span>
+        <div style="display:flex;align-items:center">
+          <span class="cred-val" id="c-2fa"></span>
+          <button class="copy-btn" onclick="copy('c-2fa',this)">Sao ch\xE9p</button>
+        </div>
+      </div>
+      <div class="alert alert-warn" style="margin-top:14px;font-size:.8125rem">\u26A0\uFE0F Vui l\xF2ng l\u01B0u l\u1EA1i th\xF4ng tin n\xE0y. H\xE3y \u0111\u1ED5i m\u1EADt kh\u1EA9u ngay sau khi \u0111\u0103ng nh\u1EADp.</div>
+    </div>
+    <div id="result-err" class="alert alert-err" style="display:none;margin-top:12px"></div>
+  </div>
+</div>
+
+<script>
+const BASE = '';
+let currentOrderId = '';
+
+function getParam(key) {
+  return new URLSearchParams(location.search).get(key) || '';
+}
+
+function showLoading(v) {
+  document.getElementById('loading').style.display = v ? 'block' : 'none';
+}
+
+function copy(id, btn) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '\u2713';
+    setTimeout(() => btn.textContent = orig, 1500);
+  });
+}
+
+function statusBadge(status) {
+  if (status === 'pending_unlock') return '<span class="badge badge-wait">\u23F3 Ch\u1EDD m\u1EDF kho\xE1</span>';
+  if (status === 'unlocked' || status === 'sent') return '<span class="badge badge-ok">\u2705 \u0110\xE3 giao</span>';
+  if (status === 'refunded') return '<span class="badge badge-refunded">\u{1F4B0} Ho\xE0n ti\u1EC1n</span>';
+  return '<span class="badge badge-wait">' + status + '</span>';
+}
+
+async function lookupOrder() {
+  const input = document.getElementById('order-input').value.trim();
+  if (!input) return;
+  currentOrderId = input;
+  doLookup(input);
+}
+
+async function doLookup(orderId) {
+  showLoading(true);
+  document.getElementById('lookup-section').style.display = 'none';
+  document.getElementById('result-section').style.display = 'none';
+  document.getElementById('lookup-err').style.display = 'none';
+
+  try {
+    const resp = await fetch(BASE + '/api/public/order/' + encodeURIComponent(orderId));
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      showLoading(false);
+      document.getElementById('lookup-section').style.display = 'block';
+      const errEl = document.getElementById('lookup-err');
+      errEl.textContent = data.message || 'Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i m\xE3 \u0111\u01A1n.';
+      errEl.style.display = 'block';
+      return;
+    }
+    showLoading(false);
+    document.getElementById('result-section').style.display = 'block';
+    document.getElementById('r-orderId').textContent = data.orderId;
+    document.getElementById('r-product').textContent = data.productName || '\u2014';
+    document.getElementById('r-warranty').textContent = data.warrantyEnd || '\u2014';
+    document.getElementById('r-status').innerHTML = statusBadge(data.status);
+
+    if (data.unlocked) {
+      showCredentials(data.account, data.password, data.twoFA);
+    } else {
+      document.getElementById('lock-box').style.display = 'block';
+      document.getElementById('cred-box').style.display = 'none';
+    }
+  } catch(e) {
+    showLoading(false);
+    document.getElementById('lookup-section').style.display = 'block';
+    const errEl = document.getElementById('lookup-err');
+    errEl.textContent = 'L\u1ED7i k\u1EBFt n\u1ED1i. Vui l\xF2ng th\u1EED l\u1EA1i.';
+    errEl.style.display = 'block';
+  }
+}
+
+function showCredentials(email, password, twoFA) {
+  document.getElementById('lock-box').style.display = 'none';
+  document.getElementById('cred-box').style.display = 'block';
+  document.getElementById('c-email').textContent = email || '';
+  document.getElementById('c-pass').textContent = password || '';
+  if (twoFA) {
+    document.getElementById('c-2fa').textContent = twoFA;
+    document.getElementById('row-2fa').style.display = 'flex';
+  }
+}
+
+async function unlockAccount() {
+  const btn = document.getElementById('unlock-btn');
+  btn.disabled = true;
+  btn.textContent = '\u23F3 \u0110ang x\u1EED l\xFD...';
+  document.getElementById('result-err').style.display = 'none';
+  try {
+    const resp = await fetch(BASE + '/api/public/order/' + encodeURIComponent(currentOrderId) + '/unlock', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      const errEl = document.getElementById('result-err');
+      errEl.textContent = data.message || 'Kh\xF4ng th\u1EC3 m\u1EDF kho\xE1. Vui l\xF2ng th\u1EED l\u1EA1i.';
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = '\u{1F513} M\u1EDF kho\xE1 nh\u1EADn t\xE0i kho\u1EA3n';
+      return;
+    }
+    showCredentials(data.account, data.password, data.twoFA);
+  } catch(e) {
+    const errEl = document.getElementById('result-err');
+    errEl.textContent = 'L\u1ED7i k\u1EBFt n\u1ED1i. Vui l\xF2ng th\u1EED l\u1EA1i.';
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = '\u{1F513} M\u1EDF kho\xE1 nh\u1EADn t\xE0i kho\u1EA3n';
+  }
+}
+
+// Init
+window.onload = function() {
+  const id = getParam('id');
+  if (id) {
+    currentOrderId = id;
+    doLookup(id);
+  } else {
+    document.getElementById('lookup-section').style.display = 'block';
+  }
+};
+</script>
+</body>
+</html>`);
+});
+router2.get("/public/order/:orderId", (req, res) => {
+  const { orderId } = req.params;
+  const orderItems = readJson("order_items", {}) ?? {};
+  const orders = readJson("orders", {}) ?? {};
+  const items = (orderItems[orderId] ?? []).filter(
+    (it) => it.source === "manual_delivery" || it.email
+  );
+  if (!items.length) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng. Vui l\xF2ng ki\u1EC3m tra l\u1EA1i m\xE3 \u0111\u01A1n." });
+    return;
+  }
+  const item = items[items.length - 1];
+  const order = orders[orderId] ?? {};
+  const unlocked = item.unlocked === true;
+  const result = {
+    ok: true,
+    orderId,
+    productName: item.productName || order.productName || "",
+    warrantyEnd: item.warranty_end_date || order.warrantyExpiry || null,
+    status: unlocked ? "unlocked" : "pending_unlock",
+    unlocked
+  };
+  if (unlocked) {
+    result.account = item.email || item.original_account || "";
+    result.password = item.password || "";
+    result.twoFA = item.twoFA || null;
+  }
+  res.json(result);
+});
+router2.post("/public/order/:orderId/unlock", async (req, res) => {
+  const { orderId } = req.params;
+  const orderItems = readJson("order_items", {}) ?? {};
+  const items = orderItems[orderId] ?? [];
+  const idx = items.findLastIndex ? items.findLastIndex((it) => it.source === "manual_delivery" || it.email) : [...items].reverse().findIndex((it) => it.source === "manual_delivery" || it.email);
+  const realIdx = idx >= 0 && !items.findLastIndex ? items.length - 1 - idx : idx;
+  if (realIdx < 0) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n cho \u0111\u01A1n h\xE0ng n\xE0y" });
+    return;
+  }
+  const item = items[realIdx];
+  items[realIdx] = { ...item, unlocked: true, unlockedAt: now() };
+  orderItems[orderId] = items;
+  writeJson("order_items", orderItems);
+  const deliveryRequests = readJson("delivery_requests", []) ?? [];
+  const drIdx = deliveryRequests.findIndex(
+    (r) => r.orderId === orderId && r.status === "pending_unlock"
+  );
+  if (drIdx >= 0) {
+    const dr = deliveryRequests[drIdx];
+    deliveryRequests[drIdx] = { ...dr, status: "sent", sentAt: now(), deliveredViaWeb: true };
+    writeJson("delivery_requests", deliveryRequests);
+    const orders = readJson("orders", {}) ?? {};
+    const order = orders[orderId] ?? {};
+    if (order.status === "pending" || !order.status) {
+      orders[orderId] = { ...order, status: "active", updatedAt: now() };
+      writeJson("orders", orders);
+    }
+  }
+  addLog("DELIVERY_UNLOCKED", orderId, "customer-web");
+  res.json({
+    ok: true,
+    account: item.email || item.original_account || "",
+    password: item.password || "",
+    twoFA: item.twoFA || null
+  });
+});
 router2.get("/bot/delivery", requireAuth, (_req, res) => {
   const requests = readJson("delivery_requests", []) ?? [];
   res.json(requests.sort((a, b) => b.submittedAt?.localeCompare(a.submittedAt ?? "") ?? 0));
@@ -52476,103 +52802,91 @@ router2.post("/bot/delivery/:id/send", requireAuth, async (req, res) => {
     return;
   }
   const dr = requests[idx];
-  const userLang = dr.userLang ?? "vi";
-  const isEN = userLang === "en";
-  const lines = [];
-  if (isEN) {
-    lines.push(`\u2705 <b>Your account has been delivered successfully</b>
-`);
-    lines.push(`\u{1F4E6} Order: <code>${dr.orderId}</code>`);
-    lines.push(`
-\u{1F511} <b>Account Information:</b>`);
-    lines.push(`\u{1F4E7} Account: <code>${account}</code>`);
-    lines.push(`\u{1F512} Password: <code>${password}</code>`);
-    if (twoFA) lines.push(`\u{1F6E1} 2FA: <code>${twoFA}</code>`);
-    lines.push(`
-Please verify your account immediately after receiving.`);
-  } else {
-    lines.push(`\u2705 <b>T\xE0i kho\u1EA3n c\u1EE7a b\u1EA1n \u0111\xE3 \u0111\u01B0\u1EE3c giao th\xE0nh c\xF4ng</b>
-`);
-    lines.push(`\u{1F4E6} M\xE3 \u0111\u01A1n: <code>${dr.orderId}</code>`);
-    lines.push(`
-\u{1F511} <b>Th\xF4ng tin t\xE0i kho\u1EA3n:</b>`);
-    lines.push(`\u{1F4E7} T\xE0i kho\u1EA3n: <code>${account}</code>`);
-    lines.push(`\u{1F512} M\u1EADt kh\u1EA9u: <code>${password}</code>`);
-    if (twoFA) lines.push(`\u{1F6E1} 2FA: <code>${twoFA}</code>`);
-    lines.push(`
-Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
-  }
-  const message = lines.join("\n");
-  const result = await sendTelegramMessage(dr.userId, message);
   const deliveredAt = now();
+  const orders = readJson("orders", {}) ?? {};
+  const orderItems = readJson("order_items", {}) ?? {};
+  const order = orders[dr.orderId] ?? {};
+  let warrantyEndDate = order.warrantyExpiry || order.warrantyDate || null;
+  if (!warrantyEndDate) {
+    const wDays = Number(order.warrantyDays || 0);
+    const startStr = order.purchaseDate || order.paymentAt || deliveredAt;
+    if (wDays > 0 && startStr) {
+      try {
+        const d = new Date(startStr.slice(0, 10));
+        d.setDate(d.getDate() + wDays);
+        warrantyEndDate = d.toISOString().slice(0, 10);
+      } catch {
+      }
+    }
+  }
+  const existingItems = orderItems[dr.orderId] ?? [];
+  const existIdx = existingItems.findIndex(
+    (it) => (it.original_account || it.email || "").toLowerCase() === account.toLowerCase()
+  );
+  const itemEntry = {
+    itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
+    email: account,
+    password: password || null,
+    twoFA: twoFA || null,
+    unlocked: false,
+    status: "delivered",
+    item_status: "active",
+    productName: order.productName || dr.productName || "",
+    createdAt: existIdx >= 0 ? existingItems[existIdx].createdAt : deliveredAt,
+    original_account: account,
+    current_account: account,
+    current_replacement_number: 0,
+    original_delivered_at: deliveredAt,
+    warranty_days: Number(order.warrantyDays || 0) || null,
+    warranty_end_date: warrantyEndDate,
+    source: "manual_delivery"
+  };
+  if (existIdx >= 0) {
+    existingItems[existIdx] = { ...existingItems[existIdx], ...itemEntry };
+  } else {
+    existingItems.push(itemEntry);
+  }
+  orderItems[dr.orderId] = existingItems;
+  writeJson("order_items", orderItems);
   requests[idx] = {
     ...dr,
-    status: result.ok ? "sent" : "failed",
+    status: "pending_unlock",
     sentAt: deliveredAt,
     sentBy: "web-admin",
     accountInfo: { account, password, twoFA: twoFA || null },
-    // Cancel all pending reminders immediately
     reminderEnabled: false,
     nextReminderAt: null,
     reminderProcessing: false
   };
   writeJson("delivery_requests", requests);
-  if (result.ok && dr.orderId) {
-    const orders = readJson("orders", {}) ?? {};
-    const orderItems = readJson("order_items", {}) ?? {};
-    const order = orders[dr.orderId] ?? {};
-    let warrantyEndDate = order.warrantyExpiry || order.warrantyDate || null;
-    if (!warrantyEndDate) {
-      const wDays = Number(order.warrantyDays || 0);
-      const startStr = order.purchaseDate || order.paymentAt || deliveredAt;
-      if (wDays > 0 && startStr) {
-        try {
-          const d = new Date(startStr.slice(0, 10));
-          d.setDate(d.getDate() + wDays);
-          warrantyEndDate = d.toISOString().slice(0, 10);
-        } catch {
-        }
-      }
-    }
-    const existingItems = orderItems[dr.orderId] ?? [];
-    const existIdx = existingItems.findIndex(
-      (it) => (it.original_account || it.email || "").toLowerCase() === account.toLowerCase()
-    );
-    const itemEntry = {
-      itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
-      email: account,
-      password: password || null,
-      twoFA: twoFA || null,
-      status: "delivered",
-      item_status: "active",
-      productName: order.productName || dr.productName || "",
-      createdAt: existIdx >= 0 ? existingItems[existIdx].createdAt : deliveredAt,
-      original_account: account,
-      current_account: account,
-      current_replacement_number: 0,
-      original_delivered_at: deliveredAt,
-      warranty_days: Number(order.warrantyDays || 0) || null,
-      warranty_end_date: warrantyEndDate,
-      source: "manual_delivery"
-    };
-    if (existIdx >= 0) {
-      existingItems[existIdx] = { ...existingItems[existIdx], ...itemEntry };
-    } else {
-      existingItems.push(itemEntry);
-    }
-    orderItems[dr.orderId] = existingItems;
-    writeJson("order_items", orderItems);
-    if (order.status === "pending" || !order.status) {
-      orders[dr.orderId] = { ...order, status: "active", updatedAt: deliveredAt };
-      writeJson("orders", orders);
-    }
+  const unlockUrl = `${CUSTOMER_PAGE_URL}?id=${encodeURIComponent(dr.orderId)}`;
+  const userLang = dr.userLang ?? "vi";
+  const isEN = userLang === "en";
+  const notifyLines = [];
+  if (isEN) {
+    notifyLines.push(`\u{1F4E6} <b>Your account is ready!</b>`);
+    notifyLines.push(`Order: <code>${dr.orderId}</code>`);
+    notifyLines.push(`
+Click the button below to unlock and receive your account credentials.`);
+    notifyLines.push(`
+<i>Your account is protected \u2014 only you can unlock it.</i>`);
+  } else {
+    notifyLines.push(`\u{1F4E6} <b>T\xE0i kho\u1EA3n c\u1EE7a b\u1EA1n \u0111\xE3 s\u1EB5n s\xE0ng!</b>`);
+    notifyLines.push(`M\xE3 \u0111\u01A1n: <code>${dr.orderId}</code>`);
+    notifyLines.push(`
+Nh\u1EA5n n\xFAt b\xEAn d\u01B0\u1EDBi \u0111\u1EC3 m\u1EDF kho\xE1 v\xE0 nh\u1EADn th\xF4ng tin t\xE0i kho\u1EA3n.`);
+    notifyLines.push(`
+<i>T\xE0i kho\u1EA3n \u0111\u01B0\u1EE3c b\u1EA3o v\u1EC7 \u2014 ch\u1EC9 b\u1EA1n m\u1EDBi c\xF3 th\u1EC3 m\u1EDF kho\xE1.</i>`);
   }
-  addLog("DELIVERY_SENT", `${dr.username || dr.userId} \u2192 ${account}`, "web-admin");
+  const notifyMsg = notifyLines.join("\n");
+  const btnText = isEN ? "\u{1F513} Unlock Account" : "\u{1F513} M\u1EDF kho\xE1 nh\u1EADn t\xE0i kho\u1EA3n";
+  const result = await sendTelegramWithButton(dr.userId, notifyMsg, btnText, unlockUrl);
+  addLog("DELIVERY_PENDING_UNLOCK", `${dr.username || dr.userId} \u2192 ${account}`, "web-admin");
   if (!result.ok) {
-    res.status(500).json({ ok: false, message: `Telegram l\u1ED7i: ${result.error}` });
+    res.json({ ok: true, warned: `\u0110\xE3 l\u01B0u t\xE0i kho\u1EA3n nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}. Kh\xE1ch c\xF3 th\u1EC3 tra t\u1EA1i: ${unlockUrl}` });
     return;
   }
-  res.json({ ok: true });
+  res.json({ ok: true, unlockUrl });
 });
 router2.post("/bot/delivery/:id/done", requireAuth, async (req, res) => {
   const { id } = req.params;

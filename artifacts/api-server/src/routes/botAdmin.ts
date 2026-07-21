@@ -919,6 +919,33 @@ async function sendTelegramMessage(userId: string, message: string): Promise<{ o
   }
 }
 
+async function sendTelegramWithButton(
+  userId: string,
+  message: string,
+  buttonText: string,
+  buttonUrl: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (!TG_TOKEN) return { ok: false, error: "TELEGRAM_BOT_TOKEN not set" };
+  try {
+    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: userId,
+        text: message,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: buttonText, url: buttonUrl }]] },
+      }),
+    });
+    const data: any = await resp.json();
+    if (data.ok) return { ok: true };
+    return { ok: false, error: data.description ?? "Telegram error" };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? "Network error" };
+  }
+}
+
 function buildReplacementMessage(req_: any, email: string, password: string, twoFA?: string, note?: string): string {
   // Use lang stored at warranty submission time (most reliable source)
   const userLang = req_.userLang ?? readJson("user_states", {} as any)?.[req_.userId]?.lang ?? "vi";
@@ -2795,6 +2822,340 @@ router.put("/bot/delivery-reminder-settings", requireAuth, (req: any, res: any) 
   res.json(updated);
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// PUBLIC (no auth) — Customer unlock page
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CUSTOMER_PAGE_URL = process.env["CUSTOMER_PAGE_URL"] ?? "http://103.180.138.203/api/customer-page";
+
+// ── GET /customer-page ────────────────────────────────────────────────────────
+router.get("/customer-page", (_req: any, res: any) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nhận tài khoản</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f0f4f8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.1);padding:28px 24px;width:100%;max-width:440px}
+  h1{font-size:1.25rem;font-weight:700;margin-bottom:4px;color:#1a202c}
+  .subtitle{font-size:.875rem;color:#718096;margin-bottom:24px}
+  label{font-size:.8125rem;font-weight:600;color:#4a5568;display:block;margin-bottom:6px}
+  input{width:100%;border:1.5px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:.9375rem;outline:none;transition:border .15s}
+  input:focus{border-color:#4f46e5}
+  .btn{display:block;width:100%;padding:12px;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;transition:opacity .15s}
+  .btn-primary{background:#4f46e5;color:#fff}
+  .btn-primary:hover{opacity:.9}
+  .btn-unlock{background:linear-gradient(135deg,#059669,#047857);color:#fff;margin-top:18px}
+  .btn-unlock:hover{opacity:.9}
+  .btn-unlock:disabled{opacity:.5;cursor:not-allowed}
+  .section{margin-top:20px}
+  .info-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0f4f8;font-size:.875rem}
+  .info-row:last-child{border-bottom:none}
+  .info-label{color:#718096}
+  .info-val{font-weight:600;color:#1a202c;text-align:right;max-width:200px;word-break:break-all}
+  .badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.75rem;font-weight:600}
+  .badge-wait{background:#fef3c7;color:#92400e}
+  .badge-ok{background:#d1fae5;color:#065f46}
+  .badge-refunded{background:#ede9fe;color:#5b21b6}
+  .lock-box{background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:20px;margin-top:18px;text-align:center}
+  .lock-icon{font-size:2.5rem;margin-bottom:8px}
+  .lock-text{font-size:.875rem;color:#718096;margin-bottom:4px}
+  .lock-hint{font-size:.8125rem;color:#a0aec0}
+  .cred-box{background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:12px;padding:20px;margin-top:18px}
+  .cred-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .cred-row:last-child{margin-bottom:0}
+  .cred-label{font-size:.8125rem;color:#065f46;font-weight:600}
+  .cred-val{font-family:monospace;font-size:.9375rem;font-weight:700;color:#1a202c;word-break:break-all;text-align:right}
+  .copy-btn{background:#e0fce7;border:none;border-radius:6px;padding:4px 8px;font-size:.75rem;cursor:pointer;color:#047857;font-weight:600;flex-shrink:0;margin-left:8px}
+  .copy-btn:active{background:#bbf7d0}
+  .alert{border-radius:8px;padding:12px 14px;font-size:.875rem;margin-top:16px}
+  .alert-err{background:#fff5f5;color:#c53030;border:1px solid #fed7d7}
+  .alert-warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+  .mt-16{margin-top:16px}
+  .spinner{border:3px solid #e2e8f0;border-top:3px solid #4f46e5;border-radius:50%;width:22px;height:22px;animation:spin .7s linear infinite;margin:0 auto 12px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #lookup-section,#result-section{display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📦 Nhận tài khoản của bạn</h1>
+  <p class="subtitle">Nhập mã đơn hàng để xem và mở khoá tài khoản</p>
+
+  <div id="lookup-section">
+    <label for="order-input">Mã đơn hàng</label>
+    <input id="order-input" placeholder="VD: ORD-XXXXXXXX" autocomplete="off" />
+    <button class="btn btn-primary mt-16" onclick="lookupOrder()">🔍 Tra cứu</button>
+    <div id="lookup-err" class="alert alert-err" style="display:none"></div>
+  </div>
+
+  <div id="loading" style="display:none;text-align:center;padding:24px 0">
+    <div class="spinner"></div>
+    <p style="color:#718096;font-size:.875rem">Đang tải...</p>
+  </div>
+
+  <div id="result-section">
+    <div class="section">
+      <div class="info-row"><span class="info-label">Mã đơn</span><span class="info-val" id="r-orderId"></span></div>
+      <div class="info-row"><span class="info-label">Sản phẩm</span><span class="info-val" id="r-product"></span></div>
+      <div class="info-row"><span class="info-label">Bảo hành đến</span><span class="info-val" id="r-warranty"></span></div>
+      <div class="info-row"><span class="info-label">Trạng thái</span><span class="info-val" id="r-status"></span></div>
+    </div>
+
+    <div id="lock-box" class="lock-box">
+      <div class="lock-icon">🔒</div>
+      <div class="lock-text">Tài khoản đang được bảo vệ</div>
+      <div class="lock-hint">Nhấn nút bên dưới để mở khoá và xem thông tin đăng nhập</div>
+      <button class="btn btn-unlock" id="unlock-btn" onclick="unlockAccount()">🔓 Mở khoá nhận tài khoản</button>
+    </div>
+
+    <div id="cred-box" class="cred-box" style="display:none">
+      <div style="font-weight:700;color:#065f46;margin-bottom:14px">✅ Thông tin tài khoản</div>
+      <div class="cred-row">
+        <span class="cred-label">📧 Tài khoản</span>
+        <div style="display:flex;align-items:center">
+          <span class="cred-val" id="c-email"></span>
+          <button class="copy-btn" onclick="copy('c-email',this)">Sao chép</button>
+        </div>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">🔒 Mật khẩu</span>
+        <div style="display:flex;align-items:center">
+          <span class="cred-val" id="c-pass"></span>
+          <button class="copy-btn" onclick="copy('c-pass',this)">Sao chép</button>
+        </div>
+      </div>
+      <div class="cred-row" id="row-2fa" style="display:none">
+        <span class="cred-label">🛡 2FA</span>
+        <div style="display:flex;align-items:center">
+          <span class="cred-val" id="c-2fa"></span>
+          <button class="copy-btn" onclick="copy('c-2fa',this)">Sao chép</button>
+        </div>
+      </div>
+      <div class="alert alert-warn" style="margin-top:14px;font-size:.8125rem">⚠️ Vui lòng lưu lại thông tin này. Hãy đổi mật khẩu ngay sau khi đăng nhập.</div>
+    </div>
+    <div id="result-err" class="alert alert-err" style="display:none;margin-top:12px"></div>
+  </div>
+</div>
+
+<script>
+const BASE = '';
+let currentOrderId = '';
+
+function getParam(key) {
+  return new URLSearchParams(location.search).get(key) || '';
+}
+
+function showLoading(v) {
+  document.getElementById('loading').style.display = v ? 'block' : 'none';
+}
+
+function copy(id, btn) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(() => btn.textContent = orig, 1500);
+  });
+}
+
+function statusBadge(status) {
+  if (status === 'pending_unlock') return '<span class="badge badge-wait">⏳ Chờ mở khoá</span>';
+  if (status === 'unlocked' || status === 'sent') return '<span class="badge badge-ok">✅ Đã giao</span>';
+  if (status === 'refunded') return '<span class="badge badge-refunded">💰 Hoàn tiền</span>';
+  return '<span class="badge badge-wait">' + status + '</span>';
+}
+
+async function lookupOrder() {
+  const input = document.getElementById('order-input').value.trim();
+  if (!input) return;
+  currentOrderId = input;
+  doLookup(input);
+}
+
+async function doLookup(orderId) {
+  showLoading(true);
+  document.getElementById('lookup-section').style.display = 'none';
+  document.getElementById('result-section').style.display = 'none';
+  document.getElementById('lookup-err').style.display = 'none';
+
+  try {
+    const resp = await fetch(BASE + '/api/public/order/' + encodeURIComponent(orderId));
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      showLoading(false);
+      document.getElementById('lookup-section').style.display = 'block';
+      const errEl = document.getElementById('lookup-err');
+      errEl.textContent = data.message || 'Không tìm thấy đơn hàng. Vui lòng kiểm tra lại mã đơn.';
+      errEl.style.display = 'block';
+      return;
+    }
+    showLoading(false);
+    document.getElementById('result-section').style.display = 'block';
+    document.getElementById('r-orderId').textContent = data.orderId;
+    document.getElementById('r-product').textContent = data.productName || '—';
+    document.getElementById('r-warranty').textContent = data.warrantyEnd || '—';
+    document.getElementById('r-status').innerHTML = statusBadge(data.status);
+
+    if (data.unlocked) {
+      showCredentials(data.account, data.password, data.twoFA);
+    } else {
+      document.getElementById('lock-box').style.display = 'block';
+      document.getElementById('cred-box').style.display = 'none';
+    }
+  } catch(e) {
+    showLoading(false);
+    document.getElementById('lookup-section').style.display = 'block';
+    const errEl = document.getElementById('lookup-err');
+    errEl.textContent = 'Lỗi kết nối. Vui lòng thử lại.';
+    errEl.style.display = 'block';
+  }
+}
+
+function showCredentials(email, password, twoFA) {
+  document.getElementById('lock-box').style.display = 'none';
+  document.getElementById('cred-box').style.display = 'block';
+  document.getElementById('c-email').textContent = email || '';
+  document.getElementById('c-pass').textContent = password || '';
+  if (twoFA) {
+    document.getElementById('c-2fa').textContent = twoFA;
+    document.getElementById('row-2fa').style.display = 'flex';
+  }
+}
+
+async function unlockAccount() {
+  const btn = document.getElementById('unlock-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Đang xử lý...';
+  document.getElementById('result-err').style.display = 'none';
+  try {
+    const resp = await fetch(BASE + '/api/public/order/' + encodeURIComponent(currentOrderId) + '/unlock', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      const errEl = document.getElementById('result-err');
+      errEl.textContent = data.message || 'Không thể mở khoá. Vui lòng thử lại.';
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = '🔓 Mở khoá nhận tài khoản';
+      return;
+    }
+    showCredentials(data.account, data.password, data.twoFA);
+  } catch(e) {
+    const errEl = document.getElementById('result-err');
+    errEl.textContent = 'Lỗi kết nối. Vui lòng thử lại.';
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = '🔓 Mở khoá nhận tài khoản';
+  }
+}
+
+// Init
+window.onload = function() {
+  const id = getParam('id');
+  if (id) {
+    currentOrderId = id;
+    doLookup(id);
+  } else {
+    document.getElementById('lookup-section').style.display = 'block';
+  }
+};
+</script>
+</body>
+</html>`);
+});
+
+// ── GET /public/order/:orderId ────────────────────────────────────────────────
+router.get("/public/order/:orderId", (req: any, res: any) => {
+  const { orderId } = req.params;
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  const orders: any = readJson("orders", {}) ?? {};
+
+  const items: any[] = (orderItems[orderId] ?? []).filter(
+    (it: any) => it.source === "manual_delivery" || it.email
+  );
+  if (!items.length) {
+    res.status(404).json({ ok: false, message: "Không tìm thấy đơn hàng. Vui lòng kiểm tra lại mã đơn." });
+    return;
+  }
+
+  // Get most recent item (could be re-delivered)
+  const item = items[items.length - 1];
+  const order: any = orders[orderId] ?? {};
+
+  const unlocked = item.unlocked === true;
+  const result: any = {
+    ok: true,
+    orderId,
+    productName: item.productName || order.productName || "",
+    warrantyEnd: item.warranty_end_date || order.warrantyExpiry || null,
+    status: unlocked ? "unlocked" : "pending_unlock",
+    unlocked,
+  };
+
+  if (unlocked) {
+    result.account = item.email || item.original_account || "";
+    result.password = item.password || "";
+    result.twoFA = item.twoFA || null;
+  }
+
+  res.json(result);
+});
+
+// ── POST /public/order/:orderId/unlock ────────────────────────────────────────
+router.post("/public/order/:orderId/unlock", async (req: any, res: any) => {
+  const { orderId } = req.params;
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  const items: any[] = orderItems[orderId] ?? [];
+
+  const idx = items.findLastIndex
+    ? items.findLastIndex((it: any) => it.source === "manual_delivery" || it.email)
+    : [...items].reverse().findIndex((it: any) => it.source === "manual_delivery" || it.email);
+  const realIdx = idx >= 0 && !items.findLastIndex ? items.length - 1 - idx : idx;
+
+  if (realIdx < 0) {
+    res.status(404).json({ ok: false, message: "Không tìm thấy tài khoản cho đơn hàng này" });
+    return;
+  }
+  const item = items[realIdx];
+
+  // Mark unlocked
+  items[realIdx] = { ...item, unlocked: true, unlockedAt: now() };
+  orderItems[orderId] = items;
+  writeJson("order_items", orderItems);
+
+  // Mark delivery request → sent
+  const deliveryRequests: any[] = readJson("delivery_requests", []) ?? [];
+  const drIdx = deliveryRequests.findIndex(
+    (r: any) => r.orderId === orderId && r.status === "pending_unlock"
+  );
+  if (drIdx >= 0) {
+    const dr = deliveryRequests[drIdx];
+    deliveryRequests[drIdx] = { ...dr, status: "sent", sentAt: now(), deliveredViaWeb: true };
+    writeJson("delivery_requests", deliveryRequests);
+
+    // Update order status → active if not already
+    const orders: any = readJson("orders", {}) ?? {};
+    const order: any = orders[orderId] ?? {};
+    if (order.status === "pending" || !order.status) {
+      orders[orderId] = { ...order, status: "active", updatedAt: now() };
+      writeJson("orders", orders);
+    }
+  }
+
+  addLog("DELIVERY_UNLOCKED", orderId, "customer-web");
+
+  res.json({
+    ok: true,
+    account: item.email || item.original_account || "",
+    password: item.password || "",
+    twoFA: item.twoFA || null,
+  });
+});
+
 // ── GET /bot/delivery ─────────────────────────────────────────────────────────
 router.get("/bot/delivery", requireAuth, (_req: any, res: any) => {
   const requests: any[] = readJson("delivery_requests", []) ?? [];
@@ -2802,6 +3163,8 @@ router.get("/bot/delivery", requireAuth, (_req: any, res: any) => {
 });
 
 // ── POST /bot/delivery/:id/send ───────────────────────────────────────────────
+// Lưu tài khoản vào order_items (unlocked=false), gửi Telegram link mở khoá.
+// Khách tự bấm "Mở khoá" trên web → tài khoản hiển thị + đơn tự đánh dấu đã giao.
 router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) => {
   const { id } = req.params;
   const { account, password, twoFA } = req.body ?? {};
@@ -2815,112 +3178,99 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
   if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy yêu cầu" }); return; }
   const dr = requests[idx];
 
-  const userLang = dr.userLang ?? "vi";
-  const isEN = userLang === "en";
-  const lines: string[] = [];
-  if (isEN) {
-    lines.push(`✅ <b>Your account has been delivered successfully</b>\n`);
-    lines.push(`📦 Order: <code>${dr.orderId}</code>`);
-    lines.push(`\n🔑 <b>Account Information:</b>`);
-    lines.push(`📧 Account: <code>${account}</code>`);
-    lines.push(`🔒 Password: <code>${password}</code>`);
-    if (twoFA) lines.push(`🛡 2FA: <code>${twoFA}</code>`);
-    lines.push(`\nPlease verify your account immediately after receiving.`);
-  } else {
-    lines.push(`✅ <b>Tài khoản của bạn đã được giao thành công</b>\n`);
-    lines.push(`📦 Mã đơn: <code>${dr.orderId}</code>`);
-    lines.push(`\n🔑 <b>Thông tin tài khoản:</b>`);
-    lines.push(`📧 Tài khoản: <code>${account}</code>`);
-    lines.push(`🔒 Mật khẩu: <code>${password}</code>`);
-    if (twoFA) lines.push(`🛡 2FA: <code>${twoFA}</code>`);
-    lines.push(`\nVui lòng kiểm tra tài khoản ngay sau khi nhận.`);
-  }
-  const message = lines.join("\n");
-
-  const result = await sendTelegramMessage(dr.userId, message);
-
   const deliveredAt = now();
+  const orders: any  = readJson("orders", {}) ?? {};
+  const orderItems: any = readJson("order_items", {}) ?? {};
+  const order: any   = orders[dr.orderId] ?? {};
 
-  // Update request status
+  // ── Tính warranty_end_date ────────────────────────────────────────────────
+  let warrantyEndDate: string | null = order.warrantyExpiry || order.warrantyDate || null;
+  if (!warrantyEndDate) {
+    const wDays = Number(order.warrantyDays || 0);
+    const startStr = order.purchaseDate || order.paymentAt || deliveredAt;
+    if (wDays > 0 && startStr) {
+      try {
+        const d = new Date(startStr.slice(0, 10));
+        d.setDate(d.getDate() + wDays);
+        warrantyEndDate = d.toISOString().slice(0, 10);
+      } catch {}
+    }
+  }
+
+  // ── Ghi order_items với unlocked=false ────────────────────────────────────
+  const existingItems: any[] = orderItems[dr.orderId] ?? [];
+  const existIdx = existingItems.findIndex(
+    (it: any) => (it.original_account || it.email || "").toLowerCase() === account.toLowerCase()
+  );
+  const itemEntry: any = {
+    itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
+    email:    account,
+    password: password || null,
+    twoFA:    twoFA    || null,
+    unlocked: false,
+    status:   "delivered",
+    item_status: "active",
+    productName: order.productName || dr.productName || "",
+    createdAt: existIdx >= 0 ? existingItems[existIdx].createdAt : deliveredAt,
+    original_account:   account,
+    current_account:    account,
+    current_replacement_number: 0,
+    original_delivered_at: deliveredAt,
+    warranty_days: Number(order.warrantyDays || 0) || null,
+    warranty_end_date: warrantyEndDate,
+    source: "manual_delivery",
+  };
+  if (existIdx >= 0) {
+    existingItems[existIdx] = { ...existingItems[existIdx], ...itemEntry };
+  } else {
+    existingItems.push(itemEntry);
+  }
+  orderItems[dr.orderId] = existingItems;
+  writeJson("order_items", orderItems);
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ── Đặt delivery request → pending_unlock ────────────────────────────────
   requests[idx] = {
     ...dr,
-    status: result.ok ? "sent" : "failed",
+    status: "pending_unlock",
     sentAt: deliveredAt,
     sentBy: "web-admin",
     accountInfo: { account, password, twoFA: twoFA || null },
-    // Cancel all pending reminders immediately
     reminderEnabled: false,
     nextReminderAt: null,
     reminderProcessing: false,
   };
   writeJson("delivery_requests", requests);
 
-  // ── Ghi vào order_items.json để khách tra mã đơn / check bảo hành ────────
-  if (result.ok && dr.orderId) {
-    const orders: any  = readJson("orders", {}) ?? {};
-    const orderItems: any = readJson("order_items", {}) ?? {};
-    const order: any   = orders[dr.orderId] ?? {};
-
-    // Tính warranty_end_date từ order metadata
-    let warrantyEndDate: string | null = order.warrantyExpiry || order.warrantyDate || null;
-    if (!warrantyEndDate) {
-      const wDays = Number(order.warrantyDays || 0);
-      const startStr = order.purchaseDate || order.paymentAt || deliveredAt;
-      if (wDays > 0 && startStr) {
-        try {
-          const d = new Date(startStr.slice(0, 10));
-          d.setDate(d.getDate() + wDays);
-          warrantyEndDate = d.toISOString().slice(0, 10);
-        } catch {}
-      }
-    }
-
-    const existingItems: any[] = orderItems[dr.orderId] ?? [];
-    // Tìm item đã có cùng tài khoản (tránh duplicate khi giao lại)
-    const existIdx = existingItems.findIndex(
-      (it: any) => (it.original_account || it.email || "").toLowerCase() === account.toLowerCase()
-    );
-    const itemEntry: any = {
-      itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
-      email:    account,
-      password: password || null,
-      twoFA:    twoFA    || null,
-      status:   "delivered",
-      item_status: "active",
-      productName: order.productName || dr.productName || "",
-      createdAt: existIdx >= 0 ? existingItems[existIdx].createdAt : deliveredAt,
-      original_account:   account,
-      current_account:    account,
-      current_replacement_number: 0,
-      original_delivered_at: deliveredAt,
-      warranty_days: Number(order.warrantyDays || 0) || null,
-      warranty_end_date: warrantyEndDate,
-      source: "manual_delivery",
-    };
-
-    if (existIdx >= 0) {
-      existingItems[existIdx] = { ...existingItems[existIdx], ...itemEntry };
-    } else {
-      existingItems.push(itemEntry);
-    }
-    orderItems[dr.orderId] = existingItems;
-    writeJson("order_items", orderItems);
-
-    // Cập nhật orders.json status → active nếu đang pending
-    if (order.status === "pending" || !order.status) {
-      orders[dr.orderId] = { ...order, status: "active", updatedAt: deliveredAt };
-      writeJson("orders", orders);
-    }
+  // ── Gửi Telegram link mở khoá ─────────────────────────────────────────────
+  const unlockUrl = `${CUSTOMER_PAGE_URL}?id=${encodeURIComponent(dr.orderId)}`;
+  const userLang = dr.userLang ?? "vi";
+  const isEN = userLang === "en";
+  const notifyLines: string[] = [];
+  if (isEN) {
+    notifyLines.push(`📦 <b>Your account is ready!</b>`);
+    notifyLines.push(`Order: <code>${dr.orderId}</code>`);
+    notifyLines.push(`\nClick the button below to unlock and receive your account credentials.`);
+    notifyLines.push(`\n<i>Your account is protected — only you can unlock it.</i>`);
+  } else {
+    notifyLines.push(`📦 <b>Tài khoản của bạn đã sẵn sàng!</b>`);
+    notifyLines.push(`Mã đơn: <code>${dr.orderId}</code>`);
+    notifyLines.push(`\nNhấn nút bên dưới để mở khoá và nhận thông tin tài khoản.`);
+    notifyLines.push(`\n<i>Tài khoản được bảo vệ — chỉ bạn mới có thể mở khoá.</i>`);
   }
-  // ─────────────────────────────────────────────────────────────────────────
+  const notifyMsg = notifyLines.join("\n");
+  const btnText = isEN ? "🔓 Unlock Account" : "🔓 Mở khoá nhận tài khoản";
 
-  addLog("DELIVERY_SENT", `${dr.username || dr.userId} → ${account}`, "web-admin");
+  const result = await sendTelegramWithButton(dr.userId, notifyMsg, btnText, unlockUrl);
+
+  addLog("DELIVERY_PENDING_UNLOCK", `${dr.username || dr.userId} → ${account}`, "web-admin");
 
   if (!result.ok) {
-    res.status(500).json({ ok: false, message: `Telegram lỗi: ${result.error}` });
+    // Telegram failed — still saved to order_items, khách vẫn có thể tra trực tiếp
+    res.json({ ok: true, warned: `Đã lưu tài khoản nhưng gửi Telegram thất bại: ${result.error}. Khách có thể tra tại: ${unlockUrl}` });
     return;
   }
-  res.json({ ok: true });
+  res.json({ ok: true, unlockUrl });
 });
 
 // ── POST /bot/delivery/:id/done ───────────────────────────────────────────────
