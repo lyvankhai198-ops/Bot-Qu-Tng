@@ -23,28 +23,76 @@ import {
 } from "lucide-react"
 import { Button } from "./ui/button"
 
+// ── Pending counts types ──────────────────────────────────────────────────────
+interface PendingCounts {
+  delivery: number
+  warranty: number
+  syncRobot: number
+}
+
+function authHeader() {
+  return { Authorization: `Bearer ${localStorage.getItem("admin_token") ?? ""}` }
+}
+
+function usePendingCounts(): PendingCounts {
+  const [counts, setCounts] = React.useState<PendingCounts>({ delivery: 0, warranty: 0, syncRobot: 0 })
+
+  const fetchCounts = React.useCallback(async () => {
+    const token = localStorage.getItem("admin_token")
+    if (!token) return
+    try {
+      const res = await fetch("/api/bot/pending-counts", { headers: authHeader() })
+      if (res.ok) setCounts(await res.json())
+    } catch {
+      // silently ignore — badge is non-critical
+    }
+  }, [])
+
+  React.useEffect(() => {
+    fetchCounts()
+    const id = setInterval(fetchCounts, 30_000)
+    return () => clearInterval(id)
+  }, [fetchCounts])
+
+  return counts
+}
+
+// ── Nav items (static) ────────────────────────────────────────────────────────
 const navItems = [
-  { href: "/dashboard", label: "Tổng quan", icon: LayoutDashboard },
-  { href: "/accounts", label: "Kho tài khoản", icon: Package },
-  { href: "/users", label: "Người dùng", icon: Users },
-  { href: "/orders", label: "Đơn hàng", icon: ShoppingCart },
-  { href: "/warranty", label: "Bảo hành", icon: ShieldAlert },
-  { href: "/delivery", label: "Giao tài khoản", icon: Truck },
-  { href: "/broadcast", label: "Gửi tin nhắn", icon: Send },
-  { href: "/intro", label: "Cấu hình Intro", icon: FileText },
-  { href: "/receivers", label: "Đã nhận quà", icon: Gift },
-  { href: "/refund-history", label: "Lịch sử hoàn tiền", icon: Wallet },
-  { href: "/checkin", label: "Điểm danh", icon: CalendarCheck },
-  { href: "/gift-boxes", label: "Ô Quà Bí Mật", icon: Gift },
-  { href: "/secret-codes", label: "Săn mã bí mật", icon: Target },
-  { href: "/sync-robot", label: "Robot Đồng Bộ", icon: RefreshCw },
-  { href: "/logs", label: "Lịch sử hệ thống", icon: Activity },
-  { href: "/settings", label: "Cài đặt", icon: SettingsIcon },
-]
+  { href: "/dashboard",      label: "Tổng quan",          icon: LayoutDashboard },
+  { href: "/accounts",       label: "Kho tài khoản",       icon: Package },
+  { href: "/users",          label: "Người dùng",           icon: Users },
+  { href: "/orders",         label: "Đơn hàng",             icon: ShoppingCart },
+  { href: "/warranty",       label: "Bảo hành",             icon: ShieldAlert,  badgeKey: "warranty" },
+  { href: "/delivery",       label: "Giao tài khoản",       icon: Truck,         badgeKey: "delivery" },
+  { href: "/broadcast",      label: "Gửi tin nhắn",         icon: Send },
+  { href: "/intro",          label: "Cấu hình Intro",       icon: FileText },
+  { href: "/receivers",      label: "Đã nhận quà",          icon: Gift },
+  { href: "/refund-history", label: "Lịch sử hoàn tiền",   icon: Wallet },
+  { href: "/checkin",        label: "Điểm danh",            icon: CalendarCheck },
+  { href: "/gift-boxes",     label: "Ô Quà Bí Mật",         icon: Gift },
+  { href: "/secret-codes",   label: "Săn mã bí mật",        icon: Target },
+  { href: "/sync-robot",     label: "Robot Đồng Bộ",        icon: RefreshCw,     badgeKey: "syncRobot" },
+  { href: "/logs",           label: "Lịch sử hệ thống",    icon: Activity },
+  { href: "/settings",       label: "Cài đặt",              icon: SettingsIcon },
+] as const
+
+type BadgeKey = "delivery" | "warranty" | "syncRobot"
+
+// ── Badge bubble ──────────────────────────────────────────────────────────────
+function NavBadge({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <span className="ml-auto flex-shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold leading-5 text-center tabular-nums shadow-sm">
+      {count > 99 ? "99+" : count}
+    </span>
+  )
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation()
   const [drawerOpen, setDrawerOpen] = React.useState(false)
+  const counts = usePendingCounts()
 
   const handleLogout = () => {
     localStorage.removeItem("admin_token")
@@ -70,6 +118,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const currentLabel = navItems.find(i => location.startsWith(i.href))?.label || "Trang quản trị"
 
+  // Total pending for mobile header indicator
+  const totalPending = counts.delivery + counts.warranty + counts.syncRobot
+
   const NavContent = () => (
     <>
       {/* Brand header */}
@@ -82,6 +133,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <nav className="flex-1 py-3 flex flex-col gap-0.5 px-2 overflow-y-auto">
         {navItems.map((item) => {
           const isActive = location.startsWith(item.href)
+          const badgeCount = "badgeKey" in item ? counts[item.badgeKey as BadgeKey] ?? 0 : 0
           return (
             <Link
               key={item.href}
@@ -95,7 +147,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
               }
             >
               <item.icon className={`h-4 w-4 flex-shrink-0 ${isActive ? "text-primary" : "opacity-70"}`} />
-              {item.label}
+              <span className="flex-1 truncate">{item.label}</span>
+              <NavBadge count={badgeCount} />
             </Link>
           )
         })}
@@ -157,14 +210,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Top header */}
         <header className="h-14 md:h-16 border-b border-border bg-card/50 flex items-center gap-3 px-4 md:px-8 backdrop-blur-sm sticky top-0 z-30">
-          {/* Hamburger — mobile only */}
-          <button
-            onClick={() => setDrawerOpen(true)}
-            className="md:hidden p-2 -ml-1 rounded-md text-foreground/70 hover:text-foreground hover:bg-muted transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-            aria-label="Mở menu"
-          >
-            <Menu className="h-5 w-5" />
-          </button>
+          {/* Hamburger — mobile only, with total-pending dot */}
+          <div className="relative md:hidden">
+            <button
+              onClick={() => setDrawerOpen(true)}
+              className="p-2 -ml-1 rounded-md text-foreground/70 hover:text-foreground hover:bg-muted transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+              aria-label="Mở menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            {totalPending > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[18px] text-center pointer-events-none shadow-sm">
+                {totalPending > 99 ? "99+" : totalPending}
+              </span>
+            )}
+          </div>
 
           <h2 className="font-semibold text-base md:text-lg text-foreground truncate">
             {currentLabel}
