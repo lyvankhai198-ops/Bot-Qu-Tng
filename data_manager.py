@@ -1156,6 +1156,117 @@ def queue_broadcast(message: str, target: str = "all"):
 def clear_pending_broadcasts():
     save("pending_broadcasts", [])
 
+# ─── Check-in (Điểm danh hằng ngày) ──────────────────────────────────────────
+
+def get_checkin_settings() -> dict:
+    defaults = {
+        "enabled": True,
+        "hour": 7,
+        "minute": 0,
+        "timezone": "Asia/Ho_Chi_Minh",
+        "points_per_day": 10,
+        "streak_bonuses": [
+            {"days": 7,  "bonus_points": 20},
+            {"days": 30, "bonus_points": 100},
+        ],
+    }
+    return {**defaults, **(load("checkin_settings", {}) or {})}
+
+def get_checkin_record(user_id: int) -> dict:
+    return load("checkin_records", {}).get(str(user_id), {})
+
+def do_checkin(user_id: int) -> dict:
+    """
+    Perform a check-in for the user. Awards points and updates streak.
+    Returns: { ok, already, points, bonus, streak, total_points }
+    """
+    from datetime import timedelta
+    uid = str(user_id)
+    today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+    settings = get_checkin_settings()
+    points_per_day  = int(settings.get("points_per_day", 10))
+    streak_bonuses  = settings.get("streak_bonuses", [])
+
+    records = load("checkin_records", {})
+    rec = records.get(uid, {})
+
+    if rec.get("last_checkin") == today:
+        return {"ok": False, "already": True,
+                "streak": rec.get("streak", 0),
+                "total_points": rec.get("total_points", 0)}
+
+    # Streak: continues only if user checked in yesterday
+    last = rec.get("last_checkin", "")
+    streak = (rec.get("streak", 0) + 1) if last == yesterday else 1
+
+    # Milestone bonus
+    bonus = 0
+    for sb in streak_bonuses:
+        if streak == int(sb.get("days", 0)):
+            bonus = int(sb.get("bonus_points", 0))
+            break
+
+    earned       = points_per_day + bonus
+    total_points = rec.get("total_points", 0) + earned
+    total_ci     = rec.get("total_checkins", 0) + 1
+
+    records[uid] = {
+        "user_id":       user_id,
+        "last_checkin":  today,
+        "streak":        streak,
+        "total_points":  total_points,
+        "total_checkins": total_ci,
+    }
+    save("checkin_records", records)
+
+    # Update daily log — total points distributed
+    logs = load("checkin_logs", {})
+    dl   = logs.get(today, {})
+    logs[today] = {**dl, "total_points_distributed": dl.get("total_points_distributed", 0) + earned}
+    save("checkin_logs", logs)
+
+    return {"ok": True, "already": False,
+            "points": points_per_day, "bonus": bonus,
+            "streak": streak, "total_points": total_points}
+
+def was_checkin_notif_sent_today(tz_name: str = "Asia/Ho_Chi_Minh") -> bool:
+    """True if the check-in notification has already been triggered today (in tz_name)."""
+    try:
+        from zoneinfo import ZoneInfo
+        today = datetime.now(tz=ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+    except Exception:
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+    return bool(load("checkin_logs", {}).get(today, {}).get("triggered_at"))
+
+def mark_checkin_triggered(tz_name: str = "Asia/Ho_Chi_Minh") -> str:
+    """
+    Mark that the scheduled notification was triggered (prevents double-fire).
+    Returns today's date string in tz_name.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        now_tz = datetime.now(tz=ZoneInfo(tz_name))
+    except Exception:
+        now_tz = datetime.utcnow()
+    today = now_tz.strftime("%Y-%m-%d")
+    logs = load("checkin_logs", {})
+    dl   = logs.get(today, {})
+    logs[today] = {**dl, "triggered_at": now_tz.isoformat()}
+    save("checkin_logs", logs)
+    return today
+
+def update_checkin_log_sent(today: str, sent: int, failed: int):
+    logs = load("checkin_logs", {})
+    dl   = logs.get(today, {})
+    logs[today] = {
+        **dl,
+        "sent":   dl.get("sent",   0) + sent,
+        "failed": dl.get("failed", 0) + failed,
+    }
+    save("checkin_logs", logs)
+
 # ─── Order display helper ─────────────────────────────────────────────────
 
 # ─── Gift boxes (Ô Quà Bí Mật) ───────────────────────────────────────────────
