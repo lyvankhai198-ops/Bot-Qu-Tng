@@ -397,7 +397,57 @@ router.post("/bot/round", requireAuth, (req: any, res: any) => {
 // ── GET /bot/orders ─────────────────────────────────────────────────────────
 router.get("/bot/orders", requireAuth, (_req: any, res: any) => {
   const orders: any = readJson("orders", {}) ?? {};
-  res.json(Object.values(orders));
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  // ── 1. Tính status động theo warrantyExpiry ───────────────────────────────
+  const result: any[] = Object.values(orders).map((order: any) => {
+    let status = order.status || "active";
+    if (status !== "refunded") {
+      const weStr = order.warrantyExpiry || order.warrantyDate || "";
+      if (weStr) {
+        try {
+          const expiry = new Date(weStr.slice(0, 10));
+          status = expiry >= today ? "active" : "expired";
+        } catch {}
+      }
+    }
+    return { ...order, status };
+  });
+
+  // ── 2. Sắp xếp mới nhất lên trên ────────────────────────────────────────
+  result.sort((a: any, b: any) => {
+    const ta = a.createdAt || a.purchaseDate || "";
+    const tb = b.createdAt || b.purchaseDate || "";
+    return tb.localeCompare(ta);
+  });
+
+  // ── 3. Auto-sync đơn hoàn tiền → refund_history ──────────────────────────
+  const refundHistory: any[] = readJson("refund_history", []) ?? [];
+  const refundedInHistory = new Set(refundHistory.map((r: any) => r.orderId).filter(Boolean));
+  let historyDirty = false;
+  for (const order of result) {
+    if (order.status === "refunded" && order.orderId && !refundedInHistory.has(order.orderId)) {
+      refundHistory.push({
+        id: crypto.randomUUID(),
+        warrantyRequestId: null,
+        orderId: order.orderId,
+        orderCode: order.orderId,
+        account: order.email || "",
+        email: order.email || "",
+        amount: Number(order.refundAmount || 0),
+        note: "Tự động đồng bộ từ đơn hàng",
+        refundedAt: order.refundedAt || now(),
+        refundedBy: order.refundedBy || "system",
+        reason: "",
+        source: "order",
+      });
+      refundedInHistory.add(order.orderId);
+      historyDirty = true;
+    }
+  }
+  if (historyDirty) writeJson("refund_history", refundHistory);
+
+  res.json(result);
 });
 
 // ── POST /bot/orders ────────────────────────────────────────────────────────
