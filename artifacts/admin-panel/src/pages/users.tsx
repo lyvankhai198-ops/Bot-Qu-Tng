@@ -32,8 +32,8 @@ export default function Users() {
         u.userId.toString().includes(search)
       )
       .sort((a, b) => {
-        const ta = a.lastSeen ? new Date(a.lastSeen).getTime() : 0
-        const tb = b.lastSeen ? new Date(b.lastSeen).getTime() : 0
+        const ta = a.lastActive ? new Date(a.lastActive).getTime() : 0
+        const tb = b.lastActive ? new Date(b.lastActive).getTime() : 0
         return tb - ta
       })
   }, [users, search])
