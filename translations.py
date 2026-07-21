@@ -30,6 +30,10 @@ LANG = {
         "btn_open_shop": "🛍 MỞ KÊNH BÁN HÀNG",
         "btn_report_issue": "⚠️ Báo Lỗi",
         "btn_back_menu": "🔙 Quay lại",
+        # Support sub-menu
+        "btn_bao_loi": "⚠️ Báo Lỗi",
+        "btn_yeu_cau_giao": "📦 Yêu cầu giao hàng",
+        "support_submenu_title": "💬 <b>HỖ TRỢ KHÁCH HÀNG</b>\n\nBạn cần hỗ trợ gì?",
 
         # Check order / Support — order lookup
         "check_order_ask": (
@@ -367,6 +371,10 @@ LANG = {
         "btn_open_shop": "🛍 OPEN SHOP CHANNEL",
         "btn_report_issue": "⚠️ Report Issue",
         "btn_back_menu": "🔙 Back",
+        # Support sub-menu
+        "btn_bao_loi": "⚠️ Report Issue",
+        "btn_yeu_cau_giao": "📦 Request Delivery",
+        "support_submenu_title": "💬 <b>CUSTOMER SUPPORT</b>\n\nWhat do you need help with?",
 
         # Check order / Support
         "check_order_ask": (

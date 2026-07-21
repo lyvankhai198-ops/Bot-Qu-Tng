@@ -56,6 +56,14 @@ def back_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     L = lang(user_id)
     return ReplyKeyboardMarkup([[t(L, "btn_home")]], resize_keyboard=True)
 
+def support_menu_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    L = lang(user_id)
+    return ReplyKeyboardMarkup([
+        [t(L, "btn_yeu_cau_giao")],
+        [t(L, "btn_bao_loi")],
+        [t(L, "btn_home")],
+    ], resize_keyboard=True)
+
 def lang_inline() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("🇻🇳 Tiếng Việt", callback_data="lang:vi"),
@@ -1091,6 +1099,32 @@ def _mw_select_kb(L: str, found: list, selected: set) -> InlineKeyboardMarkup:
     ])
     return InlineKeyboardMarkup(rows)
 
+async def handle_support_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hiển thị sub-menu hỗ trợ: Yêu cầu giao hàng | Báo lỗi | Quay lại."""
+    user = update.effective_user
+    L = lang(user.id)
+    db.set_user_state(user.id, "conv_state", None)
+    await update.message.reply_text(
+        t(L, "support_submenu_title"),
+        parse_mode=ParseMode.HTML,
+        reply_markup=support_menu_keyboard(user.id),
+    )
+
+async def handle_yeu_cau_giao_hang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Placeholder cho tính năng Yêu cầu giao hàng (chưa triển khai)."""
+    user = update.effective_user
+    L = lang(user.id)
+    vi = L == "vi"
+    msg = (
+        "📦 <b>Yêu cầu giao hàng</b>\n\n"
+        "Tính năng đang được phát triển. Vui lòng liên hệ admin để được hỗ trợ giao hàng."
+        if vi else
+        "📦 <b>Delivery Request</b>\n\n"
+        "This feature is under development. Please contact admin for delivery support."
+    )
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML,
+                                    reply_markup=support_menu_keyboard(user.id))
+
 async def handle_support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     L = lang(user.id)
@@ -1801,7 +1835,8 @@ async def handle_intro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # ─── Menu router ─────────────────────────────────────────────────────────────
 
 # All button keys used in menus — used to auto-detect language from button press
-_MENU_KEYS = ["btn_home", "btn_support", "btn_gift", "btn_check_order", "btn_shop", "btn_intro", "btn_gift_box"]
+_MENU_KEYS = ["btn_home", "btn_support", "btn_gift", "btn_check_order", "btn_shop", "btn_intro", "btn_gift_box",
+              "btn_bao_loi", "btn_yeu_cau_giao"]
 
 def detect_lang_from_text(text: str) -> str | None:
     """Return 'vi' or 'en' if text matches a known menu button, else None."""
@@ -1836,7 +1871,11 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Main menu buttons
     if text in (t("vi", "btn_support"), t("en", "btn_support")):
+        await handle_support_menu(update, context)
+    elif text in (t("vi", "btn_bao_loi"), t("en", "btn_bao_loi")):
         await handle_support(update, context)
+    elif text in (t("vi", "btn_yeu_cau_giao"), t("en", "btn_yeu_cau_giao")):
+        await handle_yeu_cau_giao_hang(update, context)
     elif text in (t("vi", "btn_gift"), t("en", "btn_gift")):
         await handle_gift(update, context)
     elif text in (t("vi", "btn_check_order"), t("en", "btn_check_order")):
