@@ -52421,6 +52421,49 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
   }
   res.json({ ok: true });
 });
+router2.post("/bot/delivery/:id/done", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { note, notify } = req.body ?? {};
+  const requests = readJson("delivery_requests", []) ?? [];
+  const idx = requests.findIndex((r) => r.id === id);
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y y\xEAu c\u1EA7u" });
+    return;
+  }
+  const dr = requests[idx];
+  requests[idx] = {
+    ...dr,
+    status: "done",
+    doneAt: now(),
+    doneBy: "web-admin",
+    doneNote: note || null,
+    reminderEnabled: false,
+    nextReminderAt: null,
+    reminderProcessing: false
+  };
+  writeJson("delivery_requests", requests);
+  addLog("DELIVERY_DONE", `${dr.username || dr.userId} | Order: ${dr.orderId}`, "web-admin");
+  if (notify) {
+    const userLang = dr.userLang ?? "vi";
+    const isEN = userLang === "en";
+    const lines = [];
+    if (isEN) {
+      lines.push(`\u2705 <b>Your delivery request has been processed.</b>`);
+      lines.push(`\u{1F4E6} Order: <code>${dr.orderId}</code>`);
+      if (note) lines.push(`\u{1F4DD} Note: ${note}`);
+    } else {
+      lines.push(`\u2705 <b>Y\xEAu c\u1EA7u giao t\xE0i kho\u1EA3n c\u1EE7a b\u1EA1n \u0111\xE3 \u0111\u01B0\u1EE3c x\u1EED l\xFD xong.</b>`);
+      lines.push(`\u{1F4E6} M\xE3 \u0111\u01A1n: <code>${dr.orderId}</code>`);
+      if (note) lines.push(`\u{1F4DD} Ghi ch\xFA: ${note}`);
+    }
+    const result = await sendTelegramMessage(dr.userId, lines.join("\n"));
+    if (!result.ok) {
+      res.json({ ok: true, warned: `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
+      return;
+    }
+  }
+  res.json({ ok: true });
+});
 router2.post("/bot/delivery/:id/refund", requireAuth, async (req, res) => {
   const { id } = req.params;
   const { amount, note } = req.body ?? {};

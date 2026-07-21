@@ -2755,6 +2755,53 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
   res.json({ ok: true });
 });
 
+// ── POST /bot/delivery/:id/done ───────────────────────────────────────────────
+router.post("/bot/delivery/:id/done", requireAuth, async (req: any, res: any) => {
+  const { id } = req.params;
+  const { note, notify } = req.body ?? {};
+
+  const requests: any[] = readJson("delivery_requests", []) ?? [];
+  const idx = requests.findIndex((r: any) => r.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy yêu cầu" }); return; }
+  const dr = requests[idx];
+
+  requests[idx] = {
+    ...dr,
+    status: "done",
+    doneAt: now(),
+    doneBy: "web-admin",
+    doneNote: note || null,
+    reminderEnabled: false,
+    nextReminderAt: null,
+    reminderProcessing: false,
+  };
+  writeJson("delivery_requests", requests);
+  addLog("DELIVERY_DONE", `${dr.username || dr.userId} | Order: ${dr.orderId}`, "web-admin");
+
+  // Optionally notify customer
+  if (notify) {
+    const userLang = dr.userLang ?? "vi";
+    const isEN = userLang === "en";
+    const lines: string[] = [];
+    if (isEN) {
+      lines.push(`✅ <b>Your delivery request has been processed.</b>`);
+      lines.push(`📦 Order: <code>${dr.orderId}</code>`);
+      if (note) lines.push(`📝 Note: ${note}`);
+    } else {
+      lines.push(`✅ <b>Yêu cầu giao tài khoản của bạn đã được xử lý xong.</b>`);
+      lines.push(`📦 Mã đơn: <code>${dr.orderId}</code>`);
+      if (note) lines.push(`📝 Ghi chú: ${note}`);
+    }
+    const result = await sendTelegramMessage(dr.userId, lines.join("\n"));
+    if (!result.ok) {
+      res.json({ ok: true, warned: `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
+      return;
+    }
+  }
+
+  res.json({ ok: true });
+});
+
 // ── POST /bot/delivery/:id/refund ─────────────────────────────────────────────
 router.post("/bot/delivery/:id/refund", requireAuth, async (req: any, res: any) => {
   const { id } = req.params;

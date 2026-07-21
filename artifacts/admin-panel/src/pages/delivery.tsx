@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
-import { Truck, RefreshCw, Loader2, Send, Clock, CheckCircle2, XCircle, Package, Banknote, RotateCcw } from "lucide-react"
+import { Truck, RefreshCw, Loader2, Send, Clock, CheckCircle2, XCircle, Package, Banknote, RotateCcw, BadgeCheck } from "lucide-react"
 import { format } from "date-fns"
 
 function authHeader() {
@@ -25,12 +25,14 @@ interface DeliveryRequest {
   orderId: string
   userLang: string
   submittedAt: string
-  status: "pending" | "sent" | "failed" | "refunded"
+  status: "pending" | "sent" | "failed" | "refunded" | "done"
   sentAt: string | null
   sentBy: string | null
   refundedAt: string | null
   refundAmount: number | null
   refundNote: string | null
+  doneAt: string | null
+  doneNote: string | null
   accountInfo: { account: string; password: string; twoFA: string | null } | null
 }
 
@@ -38,6 +40,7 @@ function StatusBadge({ status }: { status: string }) {
   if (status === "sent")     return <Badge className="bg-green-100 text-green-800 border-green-300 whitespace-nowrap">✅ Đã giao</Badge>
   if (status === "failed")   return <Badge className="bg-red-100 text-red-800 border-red-300 whitespace-nowrap">❌ Giao thất bại</Badge>
   if (status === "refunded") return <Badge className="bg-purple-100 text-purple-800 border-purple-300 whitespace-nowrap">💰 Đã hoàn tiền</Badge>
+  if (status === "done")     return <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 whitespace-nowrap">✅ Đã xong</Badge>
   return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300 whitespace-nowrap">⏳ Chờ xử lý</Badge>
 }
 
@@ -70,6 +73,12 @@ export default function Delivery() {
   const [refundAmount, setRefundAmount] = useState("")
   const [refundNote, setRefundNote] = useState("")
 
+  // --- Done dialog ---
+  const [doneTarget, setDoneTarget] = useState<DeliveryRequest | null>(null)
+  const [doneLoading, setDoneLoading] = useState(false)
+  const [doneNote, setDoneNote] = useState("")
+  const [doneNotify, setDoneNotify] = useState(true)
+
   const fetchRequests = useCallback(async () => {
     setLoading(true)
     try {
@@ -95,6 +104,11 @@ export default function Delivery() {
     setRefundTarget(req); setRefundAmount(""); setRefundNote("")
   }
   function closeRefundModal() { setRefundTarget(null) }
+
+  function openDoneModal(req: DeliveryRequest) {
+    setDoneTarget(req); setDoneNote(""); setDoneNotify(true)
+  }
+  function closeDoneModal() { setDoneTarget(null) }
 
   async function handleSend() {
     if (!selected) return
@@ -141,6 +155,25 @@ export default function Delivery() {
     } catch (e: any) {
       toast({ title: "Lỗi", description: e.message ?? "Không thể hoàn tiền", variant: "destructive" })
     } finally { setRefunding(false) }
+  }
+
+  async function handleDone() {
+    if (!doneTarget) return
+    setDoneLoading(true)
+    try {
+      const res = await fetch(`/api/bot/delivery/${doneTarget.id}/done`, {
+        method: "POST",
+        headers: { ...authHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ note: doneNote.trim() || undefined, notify: doneNotify }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.ok) throw new Error(data.message ?? "Lỗi không xác định")
+      if (data.warned) toast({ title: "⚠️ Đã lưu", description: data.warned, variant: "destructive" })
+      else toast({ title: "✅ Đã đánh dấu xong", description: doneNotify ? "Khách hàng đã được thông báo" : "Đã cập nhật trạng thái" })
+      closeDoneModal(); fetchRequests()
+    } catch (e: any) {
+      toast({ title: "Lỗi", description: e.message ?? "Không thể cập nhật", variant: "destructive" })
+    } finally { setDoneLoading(false) }
   }
 
   const pending  = requests.filter(r => r.status === "pending").length
@@ -250,8 +283,16 @@ export default function Delivery() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex gap-1 justify-end flex-wrap">
-                          {/* Refund button — show for pending/failed, hide when already refunded */}
-                          {req.status !== "refunded" && req.status !== "sent" && (
+                          {/* Action buttons — only for pending/failed */}
+                          {req.status === "pending" || req.status === "failed" ? (<>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                              onClick={() => openDoneModal(req)}
+                            >
+                              <BadgeCheck className="h-3 w-3 mr-1" /> Đã xong
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"
@@ -260,7 +301,7 @@ export default function Delivery() {
                             >
                               <Banknote className="h-3 w-3 mr-1" /> Hoàn tiền
                             </Button>
-                          )}
+                          </>) : null}
                           {/* Send button — show for all (re-deliver for sent/refunded) */}
                           <Button
                             size="sm"
@@ -349,6 +390,62 @@ export default function Delivery() {
             <Button onClick={handleSend} disabled={sending}>
               {sending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
               Gửi tài khoản
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Done Dialog ── */}
+      <Dialog open={!!doneTarget} onOpenChange={open => { if (!open) closeDoneModal() }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+              <BadgeCheck className="h-5 w-5" /> Đánh dấu đã xong
+            </DialogTitle>
+            <DialogDescription>
+              Mã đơn: <span className="font-mono font-medium">{doneTarget?.orderId}</span>
+              {" · "}Người dùng:{" "}
+              {doneTarget?.username ? `@${doneTarget.username}` : doneTarget?.firstName || doneTarget?.userId}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1">
+              <Label htmlFor="done-note">📝 Ghi chú <span className="text-muted-foreground text-xs">(tuỳ chọn)</span></Label>
+              <Textarea
+                id="done-note"
+                placeholder="VD: Đã xử lý qua kênh khác..."
+                value={doneNote}
+                onChange={e => setDoneNote(e.target.value)}
+                rows={3}
+              />
+            </div>
+
+            <label className="flex items-center gap-3 cursor-pointer select-none rounded-lg border p-3 hover:bg-muted/40 transition-colors">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-emerald-600"
+                checked={doneNotify}
+                onChange={e => setDoneNotify(e.target.checked)}
+              />
+              <div>
+                <div className="text-sm font-medium">Gửi thông báo cho khách</div>
+                <div className="text-xs text-muted-foreground">Bot sẽ nhắn Telegram: "✅ Yêu cầu giao tài khoản đã được xử lý xong."</div>
+              </div>
+            </label>
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={closeDoneModal} disabled={doneLoading} className="w-full sm:w-auto">
+              Huỷ
+            </Button>
+            <Button
+              onClick={handleDone}
+              disabled={doneLoading}
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              {doneLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <BadgeCheck className="h-4 w-4 mr-2" />}
+              Xác nhận đã xong
             </Button>
           </DialogFooter>
         </DialogContent>
