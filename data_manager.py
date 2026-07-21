@@ -634,11 +634,17 @@ def _infer_bhf_days(product_name: str) -> int:
     import unicodedata as _ud
     # Strip diacritics để khớp không phân biệt dấu tiếng Việt
     norm = _ud.normalize('NFD', product_name.upper()).encode('ascii', 'ignore').decode('ascii')
-    m = re.search(r'(\d+)\s*NAM\b', norm)    # Năm / Nam
+    m = re.search(r'(\d+)\s*NAM\b', norm)           # Năm / Nam
     if m: return int(m.group(1)) * 365
-    m = re.search(r'(\d+)\s*THANG\b', norm)  # Tháng / Thang
+    m = re.search(r'(\d+)\s*YEAR[S]?\b', norm)      # Year / Years (English)
+    if m: return int(m.group(1)) * 365
+    m = re.search(r'(\d+)\s*THANG\b', norm)         # Tháng / Thang
     if m: return int(m.group(1)) * 30
-    m = re.search(r'(\d+)\s*NGAY\b', norm)   # Ngày / Ngay
+    m = re.search(r'(\d+)\s*MONTH[S]?\b', norm)     # Month / Months (English)
+    if m: return int(m.group(1)) * 30
+    m = re.search(r'(\d+)\s*NGAY\b', norm)          # Ngày / Ngay
+    if m: return int(m.group(1))
+    m = re.search(r'(\d+)\s*DAY[S]?\b', norm)       # Day / Days (English, e.g. 30DAY)
     if m: return int(m.group(1))
     return 0
 
