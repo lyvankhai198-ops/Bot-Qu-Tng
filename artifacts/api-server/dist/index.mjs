@@ -53047,6 +53047,7 @@ Vui l\xF2ng li\xEAn h\u1EC7 h\u1ED7 tr\u1EE3 n\u1EBFu b\u1EA1n c\xF3 th\u1EAFc m
 router2.post("/bot/reset-data", requireAuth, (_req, res) => {
   try {
     const resetList = [
+      // ── Operational data ──
       { name: "orders", empty: [] },
       { name: "order_items", empty: [] },
       { name: "users", empty: {} },
@@ -53065,6 +53066,8 @@ router2.post("/bot/reset-data", requireAuth, (_req, res) => {
       { name: "rate_violations", empty: [] },
       { name: "sync_robot_logs", empty: [] },
       { name: "sync_robot_status", empty: {} },
+      { name: "sync_watch_state", empty: {} },
+      { name: "sync_robot_trigger", empty: {} },
       { name: "health_jobs", empty: [] },
       { name: "order_health", empty: [] },
       { name: "account_health", empty: [] },
@@ -53072,7 +53075,19 @@ router2.post("/bot/reset-data", requireAuth, (_req, res) => {
       { name: "checkin_logs", empty: [] },
       { name: "gift_box_invites", empty: [] },
       { name: "gift_box_link_map", empty: {} },
-      { name: "sync_watch_state", empty: {} }
+      // ── Config / settings ──
+      { name: "accounts", empty: [] },
+      { name: "settings", empty: {} },
+      { name: "intro", empty: {} },
+      { name: "gift_boxes", empty: [] },
+      { name: "secret_codes", empty: [] },
+      { name: "required_channels", empty: [] },
+      { name: "shop_channels", empty: [] },
+      { name: "gift_shop_channels", empty: [] },
+      { name: "checkin_settings", empty: {} },
+      { name: "notification_settings", empty: {} },
+      { name: "sync_robot_config", empty: {} },
+      { name: "stock_notify_settings", empty: {} }
     ];
     const cleared = [];
     for (const { name, empty } of resetList) {
