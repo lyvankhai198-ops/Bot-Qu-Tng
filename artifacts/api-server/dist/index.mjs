@@ -53044,6 +53044,50 @@ Vui l\xF2ng li\xEAn h\u1EC7 h\u1ED7 tr\u1EE3 n\u1EBFu b\u1EA1n c\xF3 th\u1EAFc m
   }
   res.json({ ok: true });
 });
+router2.post("/bot/reset-data", requireAuth, (_req, res) => {
+  try {
+    const resetList = [
+      { name: "orders", empty: [] },
+      { name: "order_items", empty: [] },
+      { name: "users", empty: {} },
+      { name: "logs", empty: [] },
+      { name: "warranty_requests", empty: [] },
+      { name: "delivery_requests", empty: [] },
+      { name: "pending_broadcasts", empty: [] },
+      { name: "account_replacements", empty: [] },
+      { name: "claimed_users", empty: {} },
+      { name: "banned_users", empty: [] },
+      { name: "refund_history", empty: [] },
+      { name: "notification_logs", empty: [] },
+      { name: "user_states", empty: {} },
+      { name: "user_channel_memberships", empty: {} },
+      { name: "rate_limits", empty: {} },
+      { name: "rate_violations", empty: [] },
+      { name: "sync_robot_logs", empty: [] },
+      { name: "sync_robot_status", empty: {} },
+      { name: "health_jobs", empty: [] },
+      { name: "order_health", empty: [] },
+      { name: "account_health", empty: [] },
+      { name: "checkin_records", empty: [] },
+      { name: "checkin_logs", empty: [] },
+      { name: "gift_box_invites", empty: [] },
+      { name: "gift_box_link_map", empty: {} },
+      { name: "sync_watch_state", empty: {} }
+    ];
+    const cleared = [];
+    for (const { name, empty } of resetList) {
+      try {
+        writeJson(name, empty);
+        cleared.push(name);
+      } catch (_e) {
+      }
+    }
+    addLog("system", "reset_data", `\u0110\xE3 xo\xE1 s\u1EA1ch ${cleared.length} file d\u1EEF li\u1EC7u v\u1EADn h\xE0nh`);
+    res.json({ ok: true, cleared });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 router2.get("/bot/backup", requireAuth, (_req, res) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
   const backup = { exportedAt: now() };

@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link, Wifi, WifiOff, Loader2, ShoppingBag, ChevronUp, ChevronDown, Pencil, Check, X, Truck } from "lucide-react"
+import { Save, AlertTriangle, RefreshCcw, Bell, Plus, Trash2, Radio, ExternalLink, Link, Wifi, WifiOff, Loader2, ShoppingBag, ChevronUp, ChevronDown, Pencil, Check, X, Truck, Flame } from "lucide-react"
 import type { BotSettings, NotificationSettings } from "@workspace/api-client-react"
 
 interface RequiredChannel {
@@ -194,6 +194,11 @@ export default function Settings() {
   const [deliveryReminderSaving, setDeliveryReminderSaving] = useState(false)
   const [newReminderMinute, setNewReminderMinute] = useState("")
 
+  // ── Reset all data state ─────────────────────────────────────────────────
+  const [resetDialogOpen, setResetDialogOpen] = useState(false)
+  const [resetConfirmText, setResetConfirmText] = useState("")
+  const [resetLoading, setResetLoading] = useState(false)
+
   // ── Gift shop channels state ─────────────────────────────────────────────
   const [giftShopChannels, setGiftShopChannels] = useState<ShopChannel[]>([])
   const [giftShopSaving, setGiftShopSaving] = useState(false)
@@ -334,6 +339,30 @@ export default function Settings() {
       ...deliveryReminderSettings,
       reminderMinutes: deliveryReminderSettings.reminderMinutes.filter(m => m !== min),
     })
+
+  // ── Reset all data handler ───────────────────────────────────────────────
+  const handleResetData = async () => {
+    if (resetConfirmText.trim().toUpperCase() !== "XAC NHAN") {
+      toast({ title: "Sai xác nhận", description: "Gõ đúng 'XAC NHAN' để tiếp tục", variant: "destructive" })
+      return
+    }
+    setResetLoading(true)
+    try {
+      const res = await fetch("/api/bot/reset-data", {
+        method: "POST",
+        headers: authHeader(),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      setResetDialogOpen(false)
+      setResetConfirmText("")
+      toast({ title: "✅ Đã xoá sạch dữ liệu", description: `Đã reset ${data.cleared?.length ?? 0} file. Dữ liệu cấu hình được giữ nguyên.` })
+    } catch (e: any) {
+      toast({ title: "Lỗi", description: e.message, variant: "destructive" })
+    } finally {
+      setResetLoading(false)
+    }
+  }
 
   const handleSave = () => updateSettings.mutate({ data: form })
   const handleSaveNotif = () => updateNotif.mutate({ data: notifForm })
@@ -1402,6 +1431,83 @@ export default function Settings() {
           Lưu cài đặt nhắc giao hàng
         </Button>
       </div>
+
+      {/* ── DANGER ZONE: Reset all data ──────────────────────────────────── */}
+      <Card className="border-destructive/40 bg-destructive/5">
+        <CardHeader>
+          <CardTitle className="text-destructive flex items-center gap-2">
+            <Flame className="w-5 h-5" /> Vùng nguy hiểm
+          </CardTitle>
+          <CardDescription>Các thao tác không thể hoàn tác. Hãy chắc chắn trước khi thực hiện.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 border border-destructive/30 rounded-lg bg-destructive/10">
+            <div className="space-y-1 min-w-0">
+              <p className="font-semibold text-destructive text-sm">🗑️ Xoá sạch toàn bộ dữ liệu vận hành</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Xoá tất cả: đơn hàng, người dùng, log, bảo hành, giao tài khoản, điểm danh, lịch sử hoàn tiền... trên cả VPS. Giữ lại cấu hình (kho tài khoản, cài đặt, kênh...).
+              </p>
+            </div>
+            <Button
+              variant="destructive"
+              className="shrink-0 min-h-[44px] w-full sm:w-auto"
+              onClick={() => { setResetDialogOpen(true); setResetConfirmText("") }}
+            >
+              <Trash2 className="w-4 h-4 mr-2" /> Xoá tất cả
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Reset data confirmation dialog */}
+      <Dialog open={resetDialogOpen} onOpenChange={open => { setResetDialogOpen(open); if (!open) setResetConfirmText("") }}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" /> Xác nhận xoá tất cả dữ liệu
+            </DialogTitle>
+            <DialogDescription className="text-left space-y-2 pt-1">
+              <span className="block">Thao tác này sẽ <strong>xoá vĩnh viễn</strong> và không thể khôi phục:</span>
+              <span className="block text-xs bg-muted rounded-md p-3 font-mono leading-relaxed">
+                Đơn hàng · Order items · Người dùng · Log hệ thống<br/>
+                Yêu cầu bảo hành · Giao tài khoản · Broadcasts<br/>
+                Lịch sử hoàn tiền · Điểm danh · Hộp quà · Rate limits<br/>
+                Sync robot logs · Health jobs · Thành viên kênh...
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                ✅ Giữ nguyên: kho tài khoản, cài đặt, kênh, gift boxes config, intro...
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Label className="text-sm font-semibold">
+              Gõ <code className="bg-muted px-1.5 py-0.5 rounded text-destructive font-bold">XAC NHAN</code> để xác nhận:
+            </Label>
+            <input
+              type="text"
+              value={resetConfirmText}
+              onChange={e => setResetConfirmText(e.target.value)}
+              placeholder="XAC NHAN"
+              autoComplete="off"
+              className="w-full h-11 rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-destructive/50 font-mono tracking-wider"
+            />
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={() => setResetDialogOpen(false)} disabled={resetLoading}>
+              Huỷ
+            </Button>
+            <Button
+              variant="destructive"
+              className="w-full sm:w-auto min-h-[44px]"
+              onClick={handleResetData}
+              disabled={resetLoading || resetConfirmText.trim().toUpperCase() !== "XAC NHAN"}
+            >
+              {resetLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              {resetLoading ? "Đang xoá..." : "Xoá tất cả dữ liệu"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* New round dialog */}
       <Dialog open={roundModalOpen} onOpenChange={setRoundModalOpen}>

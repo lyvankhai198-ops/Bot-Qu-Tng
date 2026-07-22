@@ -3439,6 +3439,54 @@ router.post("/bot/delivery/:id/refund", requireAuth, async (req: any, res: any) 
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── GET /bot/backup ──────────────────────────────────────────────────────────
+// ── Reset all operational data ─────────────────────────────────────────────
+router.post("/bot/reset-data", requireAuth, (_req: any, res: any) => {
+  try {
+    // Operational data — reset to empty (keeps config files untouched)
+    const resetList: Array<{ name: string; empty: unknown }> = [
+      { name: "orders",                  empty: [] },
+      { name: "order_items",             empty: [] },
+      { name: "users",                   empty: {} },
+      { name: "logs",                    empty: [] },
+      { name: "warranty_requests",       empty: [] },
+      { name: "delivery_requests",       empty: [] },
+      { name: "pending_broadcasts",      empty: [] },
+      { name: "account_replacements",    empty: [] },
+      { name: "claimed_users",           empty: {} },
+      { name: "banned_users",            empty: [] },
+      { name: "refund_history",          empty: [] },
+      { name: "notification_logs",       empty: [] },
+      { name: "user_states",             empty: {} },
+      { name: "user_channel_memberships",empty: {} },
+      { name: "rate_limits",             empty: {} },
+      { name: "rate_violations",         empty: [] },
+      { name: "sync_robot_logs",         empty: [] },
+      { name: "sync_robot_status",       empty: {} },
+      { name: "health_jobs",             empty: [] },
+      { name: "order_health",            empty: [] },
+      { name: "account_health",          empty: [] },
+      { name: "checkin_records",         empty: [] },
+      { name: "checkin_logs",            empty: [] },
+      { name: "gift_box_invites",        empty: [] },
+      { name: "gift_box_link_map",       empty: {} },
+      { name: "sync_watch_state",        empty: {} },
+    ];
+    const cleared: string[] = [];
+    for (const { name, empty } of resetList) {
+      try {
+        writeJson(name, empty);
+        cleared.push(name);
+      } catch (_e) {
+        // skip files that don't exist or can't be written
+      }
+    }
+    addLog("system", "reset_data", `Đã xoá sạch ${cleared.length} file dữ liệu vận hành`);
+    res.json({ ok: true, cleared });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get("/bot/backup", requireAuth, (_req: any, res: any) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
   const backup: any = { exportedAt: now() };
