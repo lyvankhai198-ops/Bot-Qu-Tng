@@ -1445,7 +1445,7 @@ export default function Settings() {
             <div className="space-y-1 min-w-0">
               <p className="font-semibold text-destructive text-sm">🗑️ Xoá sạch toàn bộ dữ liệu vận hành</p>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Xoá tất cả: đơn hàng, người dùng, log, bảo hành, giao tài khoản, điểm danh, lịch sử hoàn tiền... trên cả VPS. Giữ lại cấu hình (kho tài khoản, cài đặt, kênh...).
+                Xoá sạch toàn bộ mọi dữ liệu trên VPS: đơn hàng, người dùng, log, bảo hành, kho tài khoản, cài đặt, kênh, gift boxes, intro... Không giữ lại bất kỳ thứ gì.
               </p>
             </div>
             <Button
@@ -1475,7 +1475,7 @@ export default function Settings() {
                 Sync robot logs · Health jobs · Thành viên kênh...
               </span>
               <span className="block text-xs text-muted-foreground">
-                ✅ Giữ nguyên: kho tài khoản, cài đặt, kênh, gift boxes config, intro...
+                ⚠️ Toàn bộ dữ liệu sẽ bị xoá vĩnh viễn. Bot sẽ trở về trạng thái trắng hoàn toàn.
               </span>
             </DialogDescription>
           </DialogHeader>
