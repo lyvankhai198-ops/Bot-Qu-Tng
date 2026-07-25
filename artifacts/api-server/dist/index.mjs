@@ -51216,14 +51216,12 @@ router2.post("/bot/warranty/:id/refund", requireAuth, async (req, res) => {
     }
     orderItems[req_.orderId] = itemList;
     writeJson("order_items", orderItems);
-    const allRefunded = itemList.every((it) => it.item_status === "refunded");
     const orders = readJson("orders", {}) ?? {};
-    if (allRefunded && orders[req_.orderId]) {
+    if (orders[req_.orderId]) {
       orders[req_.orderId].status = "refunded";
       orders[req_.orderId].refundedAt = refundedAt;
       orders[req_.orderId].refundAmount = Number(amount);
       writeJson("orders", orders);
-    } else if (!allRefunded && req_.orderId && orders[req_.orderId]) {
     }
   } else if (req_.orderId) {
     const orders = readJson("orders", {}) ?? {};

@@ -1458,17 +1458,15 @@ router.post("/bot/warranty/:id/refund", requireAuth, async (req: any, res: any) 
     }
     orderItems[req_.orderId] = itemList;
     writeJson("order_items", orderItems);
-    // If ALL items in the order are now refunded → mark the order fully refunded
-    const allRefunded = (itemList as any[]).every((it: any) => it.item_status === "refunded");
+    // Always mark the order as refunded once admin triggers a refund — regardless of
+    // whether the specific item was matched by email or all items are refunded.
+    // This prevents the order from still showing "can report" after a refund.
     const orders: any = readJson("orders", {}) ?? {};
-    if (allRefunded && orders[req_.orderId]) {
+    if (orders[req_.orderId]) {
       orders[req_.orderId].status = "refunded";
       orders[req_.orderId].refundedAt = refundedAt;
       orders[req_.orderId].refundAmount = Number(amount);
       writeJson("orders", orders);
-    } else if (!allRefunded && req_.orderId && orders[req_.orderId]) {
-      // Partial refund on multi-account order: keep order status, just save orders if needed
-      // (no status change needed)
     }
   } else if (req_.orderId) {
     // Single-account order without order_items entry: mark the whole order as refunded

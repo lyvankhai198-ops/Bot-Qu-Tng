@@ -730,6 +730,15 @@ def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
     # Block warranty reporting for orders that were already refunded
     elif order.get("status") == "refunded":
         can_report = False
+        warranty_status = "refunded"
+
+    # Defence-in-depth: check refund_history in case order.status / item_status
+    # were not properly updated (e.g. email mismatch during refund processing)
+    if can_report:
+        _order_id = order.get("orderId", "")
+        if _order_id and get_refund_record(_order_id):
+            can_report = False
+            warranty_status = "refunded"
 
     # KBH = Không Bảo Hành — no warranty regardless of dates
     if _is_kbh:
