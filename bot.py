@@ -1014,6 +1014,10 @@ def _mw_compute_account(order: dict, settings: dict, item: dict = None) -> dict:
         days_left   = data.get("_remaining_days")
         can_report  = bool(warranty_ok)
         is_kbh      = data.get("_is_kbh", False)
+        # Block if order has any refund record (covers order-id lookups where item=None)
+        if can_report and db.get_refund_record(order.get("orderId", "")):
+            can_report  = False
+            warranty_ok = False
     return {
         "orderId":     order.get("orderId", ""),
         "email":       order.get("email", ""),
@@ -1256,9 +1260,10 @@ async def handle_multi_account_input(update: Update, context: ContextTypes.DEFAU
         if matched_item and not order.get("email"):
             order = {**order, "email": canonical_email}
         # Đơn đã hoàn tiền — không cho báo lỗi, xếp vào expired để hiện card nhưng không có nút
-        _item_ref  = matched_item.get("item_status") == "refunded" if matched_item else False
-        _order_ref = order.get("status") == "refunded"
-        if _item_ref or _order_ref:
+        _item_ref   = matched_item.get("item_status") == "refunded" if matched_item else False
+        _order_ref  = order.get("status") == "refunded"
+        _hist_ref   = db.get_refund_record(order.get("orderId", "")) is not None
+        if _item_ref or _order_ref or _hist_ref:
             acc = _mw_compute_account(order, settings, item=matched_item)
             acc["canReport"] = False
             expired.append(acc)
@@ -1573,6 +1578,9 @@ async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE
         data_chk = db.calc_order_display(order, settings)
         if data_chk.get("_is_kbh", False) or order.get("status") == "refunded":
             can_report = False
+    # Final gate: block if order has any refund record (catches all lookup paths)
+    if can_report and db.get_refund_record(order.get("orderId", "")):
+        can_report = False
 
     msg = _fmt_order(L, order, settings, item=single_item, is_in_multi_order=is_multi)
 
