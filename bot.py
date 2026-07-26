@@ -1145,6 +1145,33 @@ async def handle_delivery_input(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
+    # Chặn yêu cầu trùng lặp — mỗi mã đơn chỉ được giao 1 lần
+    existing = db.get_delivery_request_by_order(order_id)
+    if existing:
+        status = existing.get("status", "pending")
+        if status == "sent":
+            note = (
+                f"✅ Mã đơn <code>{order_id}</code> đã được giao tài khoản rồi.\n"
+                f"Nếu bạn chưa nhận được, vui lòng liên hệ hỗ trợ."
+                if vi else
+                f"✅ Order <code>{order_id}</code> has already been fulfilled.\n"
+                f"If you haven't received it, please contact support."
+            )
+        else:
+            note = (
+                f"⏳ Yêu cầu giao tài khoản cho mã đơn <code>{order_id}</code> "
+                f"đã được gửi trước đó và đang chờ xử lý.\n"
+                f"Vui lòng chờ admin giao tài khoản cho bạn."
+                if vi else
+                f"⏳ A delivery request for order <code>{order_id}</code> "
+                f"has already been submitted and is pending.\n"
+                f"Please wait for admin to process it."
+            )
+        db.set_user_state(user.id, "conv_state", None)
+        await update.message.reply_text(note, parse_mode=ParseMode.HTML,
+                                        reply_markup=support_menu_keyboard(user.id))
+        return
+
     # Calculate first reminder time from settings
     reminder_cfg = db.get_delivery_reminder_settings()
     first_reminder_at: str | None = None
