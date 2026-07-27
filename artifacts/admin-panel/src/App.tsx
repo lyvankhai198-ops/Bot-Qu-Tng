@@ -23,6 +23,7 @@ import Checkin from "@/pages/checkin";
 import GiftBoxes from "@/pages/gift-boxes";
 import SecretCodes from "@/pages/secret-codes";
 import Delivery from "@/pages/delivery";
+import RefundCalc from "@/pages/refund-calc";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -83,6 +84,7 @@ function Router() {
       <Route path="/gift-boxes"><ProtectedRoute component={GiftBoxes} /></Route>
       <Route path="/secret-codes"><ProtectedRoute component={SecretCodes} /></Route>
       <Route path="/delivery"><ProtectedRoute component={Delivery} /></Route>
+      <Route path="/refund-calc"><ProtectedRoute component={RefundCalc} /></Route>
       <Route component={NotFound} />
     </Switch>
   );

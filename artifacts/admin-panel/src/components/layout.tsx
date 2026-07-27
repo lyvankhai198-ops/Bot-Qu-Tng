@@ -20,6 +20,7 @@ import {
   CalendarCheck,
   Target,
   Truck,
+  Calculator,
 } from "lucide-react"
 import { Button } from "./ui/button"
 
@@ -69,6 +70,7 @@ const navItems = [
   { href: "/intro",          label: "Cấu hình Intro",       icon: FileText },
   { href: "/receivers",      label: "Đã nhận quà",          icon: Gift },
   { href: "/refund-history", label: "Lịch sử hoàn tiền",   icon: Wallet },
+  { href: "/refund-calc",    label: "Máy tính hoàn tiền",  icon: Calculator },
   { href: "/checkin",        label: "Điểm danh",            icon: CalendarCheck },
   { href: "/gift-boxes",     label: "Ô Quà Bí Mật",         icon: Gift },
   { href: "/secret-codes",   label: "Săn mã bí mật",        icon: Target },
