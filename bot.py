@@ -1497,6 +1497,26 @@ async def handle_multi_warranty_desc(update: Update, context: ContextTypes.DEFAU
         return
     selected_accounts = eligible_accounts
 
+    # Chặn gửi trùng: nếu đã có yêu cầu bảo hành đang chờ/xử lý, báo và không tạo mới
+    vi = L == "vi"
+    existing_active = db.get_active_warranty_requests_by_user(user.id)
+    if existing_active:
+        ex = existing_active[-1]
+        ex_time = (ex.get("submittedAt") or "")[:16].replace("T", " ")
+        msg_dup = (
+            f"⏳ <b>Bạn đã có yêu cầu bảo hành đang chờ xử lý.</b>\n\n"
+            f"Yêu cầu gửi lúc <b>{ex_time}</b> đang ở trạng thái <b>chờ/đang xử lý</b>.\n"
+            f"Vui lòng chờ admin xử lý yêu cầu trước đó. Không cần gửi lại."
+            if vi else
+            f"⏳ <b>You already have a warranty request pending.</b>\n\n"
+            f"Request submitted at <b>{ex_time}</b> is still pending/processing.\n"
+            f"Please wait for admin to handle the previous request."
+        )
+        for key in ("conv_state", "_mw_accounts", "_mw_desc", "_mw_found", "_mw_sel", "_mw_state"):
+            db.clear_user_state(user.id, key)
+        await update.message.reply_text(msg_dup, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
+        return
+
     req_id = db.add_group_warranty_request(user.id, user.username, user.first_name, selected_accounts, description, L)
     db.add_log("GROUP_WARRANTY", f"@{user.username} ({user.id}) | {len(selected_accounts)} accounts", "")
 
@@ -1688,6 +1708,25 @@ async def handle_report_issue_input(update: Update, context: ContextTypes.DEFAUL
                 db.clear_user_state(user.id, key)
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
             return
+
+    # Chặn gửi trùng: nếu đã có yêu cầu bảo hành đang chờ/xử lý, báo và không tạo mới
+    existing_active = db.get_active_warranty_requests_by_user(user.id)
+    if existing_active:
+        ex = existing_active[-1]
+        ex_time = (ex.get("submittedAt") or "")[:16].replace("T", " ")
+        msg_dup = (
+            f"⏳ <b>Bạn đã có yêu cầu bảo hành đang chờ xử lý.</b>\n\n"
+            f"Yêu cầu gửi lúc <b>{ex_time}</b> đang ở trạng thái <b>chờ/đang xử lý</b>.\n"
+            f"Vui lòng chờ admin xử lý yêu cầu trước đó. Không cần gửi lại."
+            if vi else
+            f"⏳ <b>You already have a warranty request pending.</b>\n\n"
+            f"Request submitted at <b>{ex_time}</b> is still pending/processing.\n"
+            f"Please wait for admin to handle the previous request."
+        )
+        for key in ("conv_state", "_report_order_id", "_report_email", "_report_item_id"):
+            db.clear_user_state(user.id, key)
+        await update.message.reply_text(msg_dup, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
+        return
 
     req_id = db.add_warranty_request(user.id, user.username, user.first_name, order_id, email, description, L)
     db.add_log("WARRANTY_REQUEST", f"@{user.username} ({user.id}) | Order: {order_id}", "")
@@ -2402,7 +2441,9 @@ async def callback_warranty_ack(update: Update, context: ContextTypes.DEFAULT_TY
         "nextReminderAt": None,
         "reminderProcessing": False,
     })
-    db.add_log("WARRANTY_ACK", f"{req_id} by @{user.username or user.id}", "bot")
+    # Auto-ack any duplicate pending requests from the same user (merge into 1 on web)
+    auto_closed = db.ack_duplicate_warranty_requests(req.get("userId", ""), req_id, str(user.id))
+    db.add_log("WARRANTY_ACK", f"{req_id} by @{user.username or user.id}" + (f" (+{auto_closed} dup auto-acked)" if auto_closed else ""), "bot")
 
     # Send confirmation to customer
     if req.get("type") == "group":

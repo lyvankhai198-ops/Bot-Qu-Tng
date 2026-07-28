@@ -839,6 +839,41 @@ def migrate_order_items_to_chain() -> int:
 def get_warranty_requests() -> list:
     return load("warranty_requests", [])
 
+def get_active_warranty_requests_by_user(user_id: int) -> list:
+    """Return all pending/processing warranty requests for a user (any order)."""
+    uid = str(user_id)
+    return [
+        r for r in load("warranty_requests", [])
+        if r.get("userId") == uid and r.get("status") in ("pending", "processing")
+    ]
+
+def ack_duplicate_warranty_requests(user_id: int, exclude_id: str, acked_by: str) -> int:
+    """Mark all OTHER pending/processing warranty requests from the same user as acknowledged.
+    Returns count of requests auto-closed."""
+    uid = str(user_id)
+    now = datetime.now().isoformat()
+    requests = load("warranty_requests", [])
+    count = 0
+    for req in requests:
+        if req.get("id") == exclude_id:
+            continue
+        if req.get("userId") != uid:
+            continue
+        if req.get("status") not in ("pending", "processing"):
+            continue
+        req.update({
+            "status": "processing",
+            "acknowledgedAt": now,
+            "acknowledgedBy": acked_by,
+            "reminderEnabled": False,
+            "nextReminderAt": None,
+            "reminderProcessing": False,
+        })
+        count += 1
+    if count:
+        save("warranty_requests", requests)
+    return count
+
 def add_warranty_request(user_id: int, username: str, first_name: str,
                           order_id: str, email: str, description: str,
                           user_lang: str = "vi") -> str:
