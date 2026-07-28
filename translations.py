@@ -31,9 +31,16 @@ LANG = {
         "btn_report_issue": "⚠️ Báo Lỗi",
         "btn_back_menu": "🔙 Quay lại",
         # Support sub-menu
-        "btn_bao_loi": "⚠️ Báo Lỗi",
-        "btn_yeu_cau_giao": "📦 Yêu cầu giao hàng",
-        "support_submenu_title": "💬 <b>HỖ TRỢ KHÁCH HÀNG</b>\n\nBạn cần hỗ trợ gì?",
+        "btn_bao_loi": "⚠️ Báo lỗi bảo hành",
+        "btn_yeu_cau_giao": "📦 Yêu cầu nhận tài khoản",
+        "support_submenu_title": (
+            "💬 <b>HỖ TRỢ KHÁCH HÀNG</b>\n\n"
+            "Vui lòng chọn loại hỗ trợ:\n\n"
+            "📦 <b>Yêu cầu nhận tài khoản</b>\n"
+            "└ Đã mua nhưng <b>chưa được giao tài khoản</b>\n\n"
+            "⚠️ <b>Báo lỗi bảo hành</b>\n"
+            "└ Tài khoản <b>bị lỗi / không hoạt động</b>, còn trong thời hạn bảo hành"
+        ),
 
         # Check order / Support — order lookup
         "check_order_ask": (
@@ -372,9 +379,16 @@ LANG = {
         "btn_report_issue": "⚠️ Report Issue",
         "btn_back_menu": "🔙 Back",
         # Support sub-menu
-        "btn_bao_loi": "⚠️ Report Issue",
-        "btn_yeu_cau_giao": "📦 Request Delivery",
-        "support_submenu_title": "💬 <b>CUSTOMER SUPPORT</b>\n\nWhat do you need help with?",
+        "btn_bao_loi": "⚠️ Report Warranty Issue",
+        "btn_yeu_cau_giao": "📦 Request Account Delivery",
+        "support_submenu_title": (
+            "💬 <b>CUSTOMER SUPPORT</b>\n\n"
+            "Please choose the type of support:\n\n"
+            "📦 <b>Request Account Delivery</b>\n"
+            "└ Purchased but <b>haven't received your account</b> yet\n\n"
+            "⚠️ <b>Report Warranty Issue</b>\n"
+            "└ Account is <b>broken / not working</b> within warranty period"
+        ),
 
         # Check order / Support
         "check_order_ask": (

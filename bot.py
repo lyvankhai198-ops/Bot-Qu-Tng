@@ -556,7 +556,7 @@ async def cmd_myid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"🆔 Your ID: <code>{update.effective_user.id}</code>", parse_mode=ParseMode.HTML)
 
 async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await handle_support(update, context)
+    await handle_support_menu(update, context)
 
 async def cmd_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await handle_gift(update, context)
