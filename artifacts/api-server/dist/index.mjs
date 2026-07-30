@@ -53720,6 +53720,23 @@ router5.get("/bot/market-orders", requireAuth4, (req, res) => {
 router5.get("/bot/market-orders/status", requireAuth4, (_req, res) => {
   const status = readJson3("market_order_sync_status", {}) ?? {};
   const total = Object.keys(readJson3("market_orders", {}) ?? {}).length;
+  if (status.running) {
+    const startedAt = status.last_started_at ?? status.updated_at ?? "";
+    const ageMs = startedAt ? Date.now() - new Date(startedAt).getTime() : Infinity;
+    if (ageMs > 10 * 60 * 1e3) {
+      status.running = false;
+      status.last_run = {
+        ...status.last_run ?? {},
+        success: false,
+        message: "\u26A0\uFE0F Sync b\u1ECB gi\xE1n \u0111o\u1EA1n (process b\u1ECB kill) \u2014 t\u1EF1 \u0111\u1ED9ng reset sau 10 ph\xFAt",
+        ended_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      try {
+        fs3.writeFileSync(dataFile3("market_order_sync_status"), JSON.stringify(status, null, 2), "utf-8");
+      } catch {
+      }
+    }
+  }
   res.json({ ...status, total_stored: total });
 });
 router5.get("/bot/market-orders/logs", requireAuth4, (req, res) => {

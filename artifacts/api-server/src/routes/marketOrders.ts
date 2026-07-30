@@ -103,8 +103,27 @@ router.get("/bot/market-orders", requireAuth, (req: any, res: any) => {
 
 // ── GET /bot/market-orders/status ─────────────────────────────────────────────
 router.get("/bot/market-orders/status", requireAuth, (_req: any, res: any) => {
-  const status = readJson("market_order_sync_status", {}) ?? {};
+  const status: any = readJson("market_order_sync_status", {}) ?? {};
   const total  = Object.keys(readJson("market_orders", {}) ?? {}).length;
+
+  // Auto-reset nếu running: true quá 10 phút mà không có process (process bị kill đột ngột)
+  if (status.running) {
+    const startedAt = status.last_started_at ?? status.updated_at ?? "";
+    const ageMs = startedAt ? (Date.now() - new Date(startedAt).getTime()) : Infinity;
+    if (ageMs > 10 * 60 * 1000) {
+      status.running = false;
+      status.last_run = {
+        ...(status.last_run ?? {}),
+        success: false,
+        message: "⚠️ Sync bị gián đoạn (process bị kill) — tự động reset sau 10 phút",
+        ended_at: new Date().toISOString(),
+      };
+      try {
+        fs.writeFileSync(dataFile("market_order_sync_status"), JSON.stringify(status, null, 2), "utf-8");
+      } catch { /* ignore */ }
+    }
+  }
+
   res.json({ ...status, total_stored: total });
 });
 
