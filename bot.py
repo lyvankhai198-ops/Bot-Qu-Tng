@@ -2969,6 +2969,67 @@ def broadcast_worker():
         except Exception as e:
             logger.error(f"Broadcast worker error: {e}")
 
+# ─── Market order daily scheduler ────────────────────────────────────────────
+
+def market_order_scheduler_worker():
+    """
+    Chạy đồng bộ "Đơn hàng chợ" một lần mỗi ngày.
+    Giờ chạy mặc định: 03:00 (Asia/Ho_Chi_Minh).
+    Có thể ghi đè qua data/sync_robot_config.json:
+      "market_sync_hour": 3, "market_sync_minute": 0
+    Hoàn toàn độc lập — lỗi không ảnh hưởng các worker khác.
+    """
+    import time as _time
+    _last_run_date = None
+
+    while True:
+        _time.sleep(60)
+        try:
+            from pathlib import Path as _Path
+            import json as _json
+
+            data_dir = _Path(os.environ.get("DATA_DIR",
+                             _Path(__file__).parent / "data"))
+            cfg_file = data_dir / "sync_robot_config.json"
+            cfg: dict = {}
+            if cfg_file.exists():
+                try:
+                    cfg = _json.loads(cfg_file.read_text("utf-8"))
+                except Exception:
+                    pass
+
+            if not cfg:
+                continue   # chưa cấu hình → bỏ qua
+
+            target_hour   = int(cfg.get("market_sync_hour",   3))
+            target_minute = int(cfg.get("market_sync_minute", 0))
+
+            try:
+                from zoneinfo import ZoneInfo
+                now_tz = datetime.now(tz=ZoneInfo("Asia/Ho_Chi_Minh"))
+            except Exception:
+                from datetime import timezone, timedelta
+                now_tz = datetime.now(timezone.utc) + timedelta(hours=7)
+                now_tz = now_tz.replace(tzinfo=None)
+
+            today = now_tz.date()
+
+            if (now_tz.hour == target_hour
+                    and now_tz.minute == target_minute
+                    and _last_run_date != today):
+                _last_run_date = today
+                logger.info("[market-scheduler] Bắt đầu đồng bộ Đơn hàng chợ định kỳ")
+                try:
+                    from market_order_sync import sync_market_orders
+                    res = sync_market_orders(config=cfg)
+                    logger.info(f"[market-scheduler] Kết quả: {res.get('message','')}")
+                except Exception as ex:
+                    logger.error(f"[market-scheduler] Lỗi sync: {ex}")
+
+        except Exception as e:
+            logger.error(f"[market-scheduler] Vòng lặp lỗi: {e}")
+
+
 # ─── Check-in scheduler ───────────────────────────────────────────────────────
 
 def checkin_scheduler_worker():
@@ -3176,6 +3237,9 @@ def main():
 
     Thread(target=checkin_scheduler_worker, daemon=True).start()
     logger.info("Check-in scheduler started.")
+
+    Thread(target=market_order_scheduler_worker, daemon=True).start()
+    logger.info("Market order daily scheduler started.")
 
     # Startup: clear stale locks from crashed mid-send, migrate old ticket fields
     locked = db.reset_stale_reminder_locks()
