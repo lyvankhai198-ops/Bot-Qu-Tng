@@ -1219,7 +1219,10 @@ def _notify_admin_delivery(req_id: str, user, order_id: str) -> None:
             f"🆔 Request ID: <code>{req_id}</code>\n\n"
             f"➡️ Vào <b>Admin Panel → Giao tài khoản</b> để xử lý."
         )
-        _tg_send(TOKEN, ADMIN_ID, msg)
+        mid = _tg_send(TOKEN, ADMIN_ID, msg)
+        # Lưu message_id để reminder sau xóa được tin cũ
+        if mid:
+            db.update_delivery_request(req_id, {"adminMsgIds": {str(ADMIN_ID): mid}})
     except Exception as e:
         logger.error(f"_notify_admin_delivery error: {e}")
 
@@ -2401,21 +2404,32 @@ def delivery_reminder_worker() -> None:
                     elapsed_min = int((now_dt - datetime.fromisoformat(req["submittedAt"])).total_seconds() / 60)
                     uname = f"@{req['username']}" if req.get("username") else req.get("firstName") or req["userId"]
 
+                    # Xóa tin nhắn cũ trước khi gửi nhắc mới
+                    prev_msg_ids: dict = req.get("adminMsgIds") or {}
+                    for aid in admin_ids:
+                        old_mid = prev_msg_ids.get(str(aid))
+                        if old_mid:
+                            _tg_delete_message(TOKEN, aid, int(old_mid))
+
                     msg = (
-                        f"🔔 <b>Nhắc giao tài khoản</b>\n\n"
+                        f"🔔 <b>Nhắc giao tài khoản (lần {reminder_count + 1})</b>\n\n"
                         f"Bạn còn một yêu cầu giao tài khoản chưa xử lý.\n\n"
                         f"📦 Mã đơn: <code>{req['orderId']}</code>\n"
                         f"👤 Người dùng: {uname}\n"
                         f"⏱ Thời gian chờ: {elapsed_min} phút\n\n"
                         f"➡️ Vào <b>Admin Panel → 📦 Giao tài khoản</b> để xử lý."
                     )
+                    new_msg_ids: dict[str, int] = {}
                     for aid in admin_ids:
-                        _tg_send(TOKEN, aid, msg)
+                        mid = _tg_send(TOKEN, aid, msg)
+                        if mid:
+                            new_msg_ids[str(aid)] = mid
 
                     new_count = reminder_count + 1
                     update_fields: dict = {
-                        "reminderCount": new_count,
-                        "lastReminderAt": now_dt.isoformat(),
+                        "reminderCount":    new_count,
+                        "lastReminderAt":   now_dt.isoformat(),
+                        "adminMsgIds":      new_msg_ids,
                         "reminderProcessing": False,
                     }
                     if new_count < len(minutes_marks):
@@ -2893,15 +2907,19 @@ async def cmd_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ─── Broadcast worker ─────────────────────────────────────────────────────────
 
-def _tg_send(token: str, chat_id: int, text: str) -> bool:
+def _tg_send(token: str, chat_id: int, text: str) -> int | None:
+    """Send plain-text message; returns message_id on success, None on failure."""
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = _json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode()
         req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status == 200
+            if resp.status == 200:
+                body = _json.loads(resp.read())
+                return body.get("result", {}).get("message_id")
     except Exception:
-        return False
+        pass
+    return None
 
 def _tg_send_checkin(token: str, chat_id: int, text: str, btn_label: str) -> bool:
     """Send a message with a single inline [Điểm danh] button."""
