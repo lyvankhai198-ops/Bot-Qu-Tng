@@ -560,53 +560,29 @@ def _resolve_tab(product_name: str, tab_mappings: dict, default_tab: str) -> str
 
 def _get_or_create_worksheet(spreadsheet, tab_name: str, headers: list):
     """
-    Lấy worksheet theo tên, tạo mới nếu chưa tồn tại.
-    Chỉ tạo mới khi WorksheetNotFound — không tạo khi lỗi khác.
-    Fallback: tìm case-insensitive trong danh sách nếu gặp lỗi không rõ.
+    Lấy worksheet theo tên (exact → case-insensitive → tạo mới).
+    Không bao giờ tạo tab mới nếu đã có tab khớp case-insensitive.
     """
-    try:
-        from gspread.exceptions import WorksheetNotFound  # type: ignore
-    except ImportError:
-        WorksheetNotFound = Exception  # type: ignore
+    # ── Lấy danh sách tất cả worksheets 1 lần ─────────────────────────────────
+    all_ws = spreadsheet.worksheets()
+    name_lower = tab_name.strip().lower()
 
-    # ── Thử lấy theo tên chính xác ────────────────────────────────────────────
-    try:
-        ws = spreadsheet.worksheet(tab_name)
-        # Đảm bảo header nếu tab trống
-        try:
-            if not ws.row_values(1):
-                ws.append_row(headers, value_input_option="USER_ENTERED")
-        except Exception:
-            pass
-        return ws
-    except WorksheetNotFound:
-        pass  # Tab chưa tồn tại → tạo mới bên dưới
-    except Exception:
-        # Lỗi khác (network, permission...) → thử tìm case-insensitive trước
-        try:
-            all_ws = spreadsheet.worksheets()
-            for w in all_ws:
-                if w.title.strip().lower() == tab_name.strip().lower():
-                    logger.info(f"[MARKET-SHEETS] Tìm tab case-insensitive: {w.title!r} ~ {tab_name!r}")
-                    return w
-        except Exception:
-            pass
-        # Nếu vẫn không thấy → raise để caller biết
-        raise
+    # Exact match
+    for w in all_ws:
+        if w.title == tab_name:
+            return w
 
-    # ── Tạo tab mới ───────────────────────────────────────────────────────────
-    try:
-        ws = spreadsheet.add_worksheet(title=tab_name, rows=5000, cols=len(headers))
-        ws.append_row(headers, value_input_option="USER_ENTERED")
-        logger.info(f"[MARKET-SHEETS] Tạo mới tab: {tab_name!r}")
-        return ws
-    except Exception as e:
-        # Tab có thể đã được tạo đồng thời → thử lấy lại lần cuối
-        err_msg = str(e).lower()
-        if "already exists" in err_msg or "name" in err_msg:
-            logger.warning(f"[MARKET-SHEETS] Tab {tab_name!r} đã tồn tại (race), lấy lại.")
-            return spreadsheet.worksheet(tab_name)
-        raise
+    # Case-insensitive match
+    for w in all_ws:
+        if w.title.strip().lower() == name_lower:
+            logger.info(f"[MARKET-SHEETS] Tab khớp gần đúng: {w.title!r} ≈ {tab_name!r}")
+            return w
+
+    # Không tìm thấy → tạo mới
+    ws = spreadsheet.add_worksheet(title=tab_name, rows=5000, cols=len(headers))
+    ws.append_row(headers, value_input_option="USER_ENTERED")
+    logger.info(f"[MARKET-SHEETS] Tạo mới tab: {tab_name!r}")
+    return ws
 
 
 def _sync_to_sheets(new_orders: list) -> dict:
