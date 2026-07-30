@@ -53673,60 +53673,6 @@ router5.get("/bot/market-orders/logs", requireAuth4, (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 50), 200);
   res.json({ logs: [...logs].reverse().slice(0, limit) });
 });
-router5.get("/bot/market-orders/:orderId", requireAuth4, (req, res) => {
-  const orders = readJson3("market_orders", {}) ?? {};
-  const order = orders[req.params.orderId];
-  if (!order) {
-    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
-    return;
-  }
-  res.json(order);
-});
-router5.post("/bot/market-orders/sync", requireAuth4, (req, res) => {
-  const status = readJson3("market_order_sync_status", {}) ?? {};
-  if (status.running) {
-    res.json({ ok: false, message: "\u0110ang c\xF3 l\u1EA7n \u0111\u1ED3ng b\u1ED9 ch\u1EA1y \u2014 vui l\xF2ng ch\u1EDD" });
-    return;
-  }
-  const startedAt = now2();
-  const statusObj = { running: true, last_started_at: startedAt, updated_at: startedAt };
-  const statusFile = dataFile3("market_order_sync_status");
-  try {
-    fs3.mkdirSync(DATA_DIR3, { recursive: true });
-    fs3.writeFileSync(statusFile, JSON.stringify(statusObj, null, 2), "utf-8");
-  } catch {
-  }
-  const pythonBin = process.env.PYTHON_BIN ?? "/home/runner/workspace/.pythonlibs/bin/python3" ?? "python3";
-  const scriptPath = path3.join(BASE_DIR, "market_order_sync.py");
-  const env = {
-    ...process.env,
-    DATA_DIR: DATA_DIR3,
-    PYTHONPATH: BASE_DIR
-  };
-  const child = __require("child_process").spawn(pythonBin, [scriptPath], {
-    env,
-    cwd: BASE_DIR,
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: false
-  });
-  child.stdout?.on("data", (d) => {
-    const line = d.toString().trim();
-    if (line) console.log(`[market-sync] ${line}`);
-  });
-  child.stderr?.on("data", (d) => {
-    const line = d.toString().trim();
-    if (line) console.error(`[market-sync] ${line}`);
-  });
-  child.on("exit", (code) => {
-    console.log(`[market-sync] Process exited with code ${code}`);
-  });
-  child.unref();
-  res.json({
-    ok: true,
-    message: "\u0110\xE3 kh\u1EDFi \u0111\u1ED9ng \u0111\u1ED3ng b\u1ED9 \u0110\u01A1n h\xE0ng ch\u1EE3",
-    started_at: startedAt
-  });
-});
 router5.get("/bot/market-orders/config", requireAuth4, (_req, res) => {
   const syncCfg = readJson3("sync_robot_config", {}) ?? {};
   const sheetsCfg = readJson3("sheets_config", {}) ?? {};
@@ -53735,7 +53681,6 @@ router5.get("/bot/market-orders/config", requireAuth4, (_req, res) => {
     market_sync_hour: syncCfg.market_sync_hour ?? 3,
     market_sync_minute: syncCfg.market_sync_minute ?? 0,
     market_tab: sheetsCfg.market_tab ?? "\u0110\u01A1n h\xE0ng ch\u1EE3",
-    // Thông tin chỉ đọc (website / credentials đã cấu hình chưa)
     has_site_url: !!syncCfg.site_url,
     has_email: !!syncCfg.email,
     has_password: !!syncCfg.password
@@ -53766,6 +53711,60 @@ router5.put("/bot/market-orders/config", requireAuth4, (req, res) => {
     }
   }
   res.json({ ok: true, message: "\u0110\xE3 l\u01B0u c\u1EA5u h\xECnh \u0111\u1ED3ng b\u1ED9 \u0110\u01A1n h\xE0ng ch\u1EE3" });
+});
+router5.get("/bot/market-orders/:orderId", requireAuth4, (req, res) => {
+  const orders = readJson3("market_orders", {}) ?? {};
+  const order = orders[req.params.orderId];
+  if (!order) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
+    return;
+  }
+  res.json(order);
+});
+router5.post("/bot/market-orders/sync", requireAuth4, (req, res) => {
+  const status = readJson3("market_order_sync_status", {}) ?? {};
+  if (status.running) {
+    res.json({ ok: false, message: "\u0110ang c\xF3 l\u1EA7n \u0111\u1ED3ng b\u1ED9 ch\u1EA1y \u2014 vui l\xF2ng ch\u1EDD" });
+    return;
+  }
+  const startedAt = now2();
+  const statusObj = { running: true, last_started_at: startedAt, updated_at: startedAt };
+  const statusFile = dataFile3("market_order_sync_status");
+  try {
+    fs3.mkdirSync(DATA_DIR3, { recursive: true });
+    fs3.writeFileSync(statusFile, JSON.stringify(statusObj, null, 2), "utf-8");
+  } catch {
+  }
+  const pythonBin = process.env.PYTHON_BIN ?? "python3";
+  const scriptPath = path3.join(BASE_DIR, "market_order_sync.py");
+  const env = {
+    ...process.env,
+    DATA_DIR: DATA_DIR3,
+    PYTHONPATH: BASE_DIR
+  };
+  const child = __require("child_process").spawn(pythonBin, [scriptPath], {
+    env,
+    cwd: BASE_DIR,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: false
+  });
+  child.stdout?.on("data", (d) => {
+    const line = d.toString().trim();
+    if (line) console.log(`[market-sync] ${line}`);
+  });
+  child.stderr?.on("data", (d) => {
+    const line = d.toString().trim();
+    if (line) console.error(`[market-sync] ${line}`);
+  });
+  child.on("exit", (code) => {
+    console.log(`[market-sync] Process exited with code ${code}`);
+  });
+  child.unref();
+  res.json({
+    ok: true,
+    message: "\u0110\xE3 kh\u1EDFi \u0111\u1ED9ng \u0111\u1ED3ng b\u1ED9 \u0110\u01A1n h\xE0ng ch\u1EE3",
+    started_at: startedAt
+  });
 });
 var marketOrders_default = router5;
 

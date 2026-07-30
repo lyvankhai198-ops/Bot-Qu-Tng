@@ -115,6 +115,54 @@ router.get("/bot/market-orders/logs", requireAuth, (req: any, res: any) => {
   res.json({ logs: [...logs].reverse().slice(0, limit) });
 });
 
+// ── GET /bot/market-orders/config ─────────────────────────────────────────────
+// PHẢI đứng trước /:orderId để "config" không bị match như orderId
+router.get("/bot/market-orders/config", requireAuth, (_req: any, res: any) => {
+  const syncCfg: any   = readJson("sync_robot_config",  {}) ?? {};
+  const sheetsCfg: any = readJson("sheets_config",      {}) ?? {};
+
+  res.json({
+    market_sync_enabled: syncCfg.market_sync_enabled  ?? true,
+    market_sync_hour:    syncCfg.market_sync_hour     ?? 3,
+    market_sync_minute:  syncCfg.market_sync_minute   ?? 0,
+    market_tab:          sheetsCfg.market_tab          ?? "Đơn hàng chợ",
+    has_site_url:  !!(syncCfg.site_url),
+    has_email:     !!(syncCfg.email),
+    has_password:  !!(syncCfg.password),
+  });
+});
+
+// ── PUT /bot/market-orders/config ─────────────────────────────────────────────
+router.put("/bot/market-orders/config", requireAuth, (req: any, res: any) => {
+  const body = req.body ?? {};
+
+  const syncCfg: any = readJson("sync_robot_config", {}) ?? {};
+  if (typeof body.market_sync_enabled === "boolean")
+    syncCfg.market_sync_enabled = body.market_sync_enabled;
+  if (typeof body.market_sync_hour === "number")
+    syncCfg.market_sync_hour = Math.min(23, Math.max(0, Math.floor(body.market_sync_hour)));
+  if (typeof body.market_sync_minute === "number")
+    syncCfg.market_sync_minute = Math.min(59, Math.max(0, Math.floor(body.market_sync_minute)));
+
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(dataFile("sync_robot_config"), JSON.stringify(syncCfg, null, 2), "utf-8");
+  } catch (e: any) {
+    res.status(500).json({ ok: false, message: `Lỗi lưu sync config: ${e.message}` });
+    return;
+  }
+
+  if (typeof body.market_tab === "string" && body.market_tab.trim()) {
+    const sheetsCfg: any = readJson("sheets_config", {}) ?? {};
+    sheetsCfg.market_tab = body.market_tab.trim();
+    try {
+      fs.writeFileSync(dataFile("sheets_config"), JSON.stringify(sheetsCfg, null, 2), "utf-8");
+    } catch { /* sheets config optional */ }
+  }
+
+  res.json({ ok: true, message: "Đã lưu cấu hình đồng bộ Đơn hàng chợ" });
+});
+
 // ── GET /bot/market-orders/:orderId ───────────────────────────────────────────
 router.get("/bot/market-orders/:orderId", requireAuth, (req: any, res: any) => {
   const orders = readJson("market_orders", {}) ?? {};
@@ -142,9 +190,7 @@ router.post("/bot/market-orders/sync", requireAuth, (req: any, res: any) => {
   } catch {}
 
   // Fire-and-forget Python process
-  const pythonBin  = process.env.PYTHON_BIN
-    ?? "/home/runner/workspace/.pythonlibs/bin/python3"
-    ?? "python3";
+  const pythonBin  = process.env.PYTHON_BIN ?? "python3";
   const scriptPath = path.join(BASE_DIR, "market_order_sync.py");
 
   const env: NodeJS.ProcessEnv = {
@@ -180,55 +226,5 @@ router.post("/bot/market-orders/sync", requireAuth, (req: any, res: any) => {
   });
 });
 
-
-// ── GET /bot/market-orders/config ─────────────────────────────────────────────
-router.get("/bot/market-orders/config", requireAuth, (_req: any, res: any) => {
-  const syncCfg: any   = readJson("sync_robot_config",  {}) ?? {};
-  const sheetsCfg: any = readJson("sheets_config",      {}) ?? {};
-
-  res.json({
-    market_sync_enabled: syncCfg.market_sync_enabled  ?? true,
-    market_sync_hour:    syncCfg.market_sync_hour     ?? 3,
-    market_sync_minute:  syncCfg.market_sync_minute   ?? 0,
-    market_tab:          sheetsCfg.market_tab          ?? "Đơn hàng chợ",
-    // Thông tin chỉ đọc (website / credentials đã cấu hình chưa)
-    has_site_url:  !!(syncCfg.site_url),
-    has_email:     !!(syncCfg.email),
-    has_password:  !!(syncCfg.password),
-  });
-});
-
-// ── PUT /bot/market-orders/config ─────────────────────────────────────────────
-router.put("/bot/market-orders/config", requireAuth, (req: any, res: any) => {
-  const body = req.body ?? {};
-
-  // ── Cập nhật sync_robot_config.json (chỉ các key market_*) ──────────────────
-  const syncCfg: any = readJson("sync_robot_config", {}) ?? {};
-  if (typeof body.market_sync_enabled === "boolean")
-    syncCfg.market_sync_enabled = body.market_sync_enabled;
-  if (typeof body.market_sync_hour === "number")
-    syncCfg.market_sync_hour = Math.min(23, Math.max(0, Math.floor(body.market_sync_hour)));
-  if (typeof body.market_sync_minute === "number")
-    syncCfg.market_sync_minute = Math.min(59, Math.max(0, Math.floor(body.market_sync_minute)));
-
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(dataFile("sync_robot_config"), JSON.stringify(syncCfg, null, 2), "utf-8");
-  } catch (e: any) {
-    res.status(500).json({ ok: false, message: `Lỗi lưu sync config: ${e.message}` });
-    return;
-  }
-
-  // ── Cập nhật sheets_config.json (chỉ key market_tab) ────────────────────────
-  if (typeof body.market_tab === "string" && body.market_tab.trim()) {
-    const sheetsCfg: any = readJson("sheets_config", {}) ?? {};
-    sheetsCfg.market_tab = body.market_tab.trim();
-    try {
-      fs.writeFileSync(dataFile("sheets_config"), JSON.stringify(sheetsCfg, null, 2), "utf-8");
-    } catch { /* sheets config optional */ }
-  }
-
-  res.json({ ok: true, message: "Đã lưu cấu hình đồng bộ Đơn hàng chợ" });
-});
 
 export default router;
