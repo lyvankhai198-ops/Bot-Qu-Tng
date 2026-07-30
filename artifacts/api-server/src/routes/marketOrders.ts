@@ -20,7 +20,7 @@ const router        = Router();
 
 const DATA_DIR     = process.env.DATA_DIR     ?? path.resolve(process.cwd(), "../../data");
 const ADMIN_SECRET = process.env.SESSION_SECRET ?? "";
-const BASE_DIR     = process.env.BOT_BASE_DIR  ?? path.resolve(process.cwd(), "../..");
+const BASE_DIR     = process.env.BOT_BASE_DIR  ?? path.resolve(process.cwd());
 
 function dataFile(name: string) {
   return path.join(DATA_DIR, `${name}.json`);

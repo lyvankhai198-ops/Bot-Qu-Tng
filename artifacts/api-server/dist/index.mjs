@@ -53631,7 +53631,7 @@ router4.get("/bot/sheets/status", requireAuth3, (_req, res) => {
 router4.post("/bot/sheets/push-all", requireAuth3, (req, res) => {
   const { spawn } = __require("child_process");
   const pathMod = __require("path");
-  const BASE_DIR2 = path2.resolve(DATA_DIR2, "../..");
+  const BASE_DIR2 = path2.resolve(DATA_DIR2, "..");
   const pythonBin = process.env.PYTHON_BIN ?? "python3";
   const script = pathMod.join(BASE_DIR2, "market_order_sync.py");
   const filterTab = (req.body?.tab ?? "all").toString().trim();
@@ -53679,7 +53679,7 @@ var execFileAsync = promisify(execFile3);
 var router5 = (0, import_express5.Router)();
 var DATA_DIR3 = process.env.DATA_DIR ?? path3.resolve(process.cwd(), "../../data");
 var ADMIN_SECRET4 = process.env.SESSION_SECRET ?? "";
-var BASE_DIR = process.env.BOT_BASE_DIR ?? path3.resolve(process.cwd(), "../..");
+var BASE_DIR = process.env.BOT_BASE_DIR ?? path3.resolve(process.cwd());
 function dataFile3(name) {
   return path3.join(DATA_DIR3, `${name}.json`);
 }

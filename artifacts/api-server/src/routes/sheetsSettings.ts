@@ -139,7 +139,7 @@ router.get("/bot/sheets/status", requireAuth, (_req: any, res: any) => {
 router.post("/bot/sheets/push-all", requireAuth, (req: any, res: any) => {
   const { spawn } = require("child_process");
   const pathMod   = require("path");
-  const BASE_DIR  = path.resolve(DATA_DIR, "../..");
+  const BASE_DIR  = path.resolve(DATA_DIR, "..");
   const pythonBin = process.env.PYTHON_BIN ?? "python3";
   const script    = pathMod.join(BASE_DIR, "market_order_sync.py");
 
