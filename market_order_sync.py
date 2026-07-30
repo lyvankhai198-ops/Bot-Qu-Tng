@@ -559,21 +559,54 @@ def _resolve_tab(product_name: str, tab_mappings: dict, default_tab: str) -> str
 
 
 def _get_or_create_worksheet(spreadsheet, tab_name: str, headers: list):
-    """Lấy worksheet theo tên, tạo mới nếu chưa có, đảm bảo header dòng 1."""
+    """
+    Lấy worksheet theo tên, tạo mới nếu chưa tồn tại.
+    Chỉ tạo mới khi WorksheetNotFound — không tạo khi lỗi khác.
+    Fallback: tìm case-insensitive trong danh sách nếu gặp lỗi không rõ.
+    """
+    try:
+        from gspread.exceptions import WorksheetNotFound  # type: ignore
+    except ImportError:
+        WorksheetNotFound = Exception  # type: ignore
+
+    # ── Thử lấy theo tên chính xác ────────────────────────────────────────────
     try:
         ws = spreadsheet.worksheet(tab_name)
+        # Đảm bảo header nếu tab trống
+        try:
+            if not ws.row_values(1):
+                ws.append_row(headers, value_input_option="USER_ENTERED")
+        except Exception:
+            pass
+        return ws
+    except WorksheetNotFound:
+        pass  # Tab chưa tồn tại → tạo mới bên dưới
     except Exception:
+        # Lỗi khác (network, permission...) → thử tìm case-insensitive trước
+        try:
+            all_ws = spreadsheet.worksheets()
+            for w in all_ws:
+                if w.title.strip().lower() == tab_name.strip().lower():
+                    logger.info(f"[MARKET-SHEETS] Tìm tab case-insensitive: {w.title!r} ~ {tab_name!r}")
+                    return w
+        except Exception:
+            pass
+        # Nếu vẫn không thấy → raise để caller biết
+        raise
+
+    # ── Tạo tab mới ───────────────────────────────────────────────────────────
+    try:
         ws = spreadsheet.add_worksheet(title=tab_name, rows=5000, cols=len(headers))
         ws.append_row(headers, value_input_option="USER_ENTERED")
         logger.info(f"[MARKET-SHEETS] Tạo mới tab: {tab_name!r}")
         return ws
-    # Đảm bảo header nếu tab trống
-    try:
-        if not ws.row_values(1):
-            ws.append_row(headers, value_input_option="USER_ENTERED")
-    except Exception:
-        pass
-    return ws
+    except Exception as e:
+        # Tab có thể đã được tạo đồng thời → thử lấy lại lần cuối
+        err_msg = str(e).lower()
+        if "already exists" in err_msg or "name" in err_msg:
+            logger.warning(f"[MARKET-SHEETS] Tab {tab_name!r} đã tồn tại (race), lấy lại.")
+            return spreadsheet.worksheet(tab_name)
+        raise
 
 
 def _sync_to_sheets(new_orders: list) -> dict:
@@ -935,12 +968,15 @@ def push_all_to_sheets(filter_tab: str | None = None) -> dict:
 # ── CLI entry ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys as _sys
-    if len(_sys.argv) > 1 and _sys.argv[1] == "--push-all":
-        tab_filter = None
-        if "--tab" in _sys.argv:
-            idx = _sys.argv.index("--tab")
-            if idx + 1 < len(_sys.argv):
-                tab_filter = _sys.argv[idx + 1]
-        print(json.dumps(push_all_to_sheets(filter_tab=tab_filter), ensure_ascii=False, indent=2))
-    else:
-        print(json.dumps(sync_market_orders(), ensure_ascii=False, indent=2))
+    try:
+        if len(_sys.argv) > 1 and _sys.argv[1] == "--push-all":
+            tab_filter = None
+            if "--tab" in _sys.argv:
+                idx = _sys.argv.index("--tab")
+                if idx + 1 < len(_sys.argv):
+                    tab_filter = _sys.argv[idx + 1]
+            print(json.dumps(push_all_to_sheets(filter_tab=tab_filter), ensure_ascii=False, indent=2))
+        else:
+            print(json.dumps(sync_market_orders(), ensure_ascii=False, indent=2))
+    except Exception as _e:
+        print(json.dumps({"ok": False, "message": f"Lỗi: {_e}"}, ensure_ascii=False))
