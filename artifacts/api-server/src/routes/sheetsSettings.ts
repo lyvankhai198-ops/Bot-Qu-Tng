@@ -134,4 +134,18 @@ router.get("/bot/sheets/status", requireAuth, (_req: any, res: any) => {
   });
 });
 
+// ── GET /bot/sheets/synced ─────────────────────────────────────────────────────
+// Trả danh sách đơn đã được ghi lên Google Sheets (từ market_sheets_synced.json)
+router.get("/bot/sheets/synced", requireAuth, (_req: any, res: any) => {
+  const synced: Record<string, any> = readJson("market_sheets_synced", {}) ?? {};
+  const entries = Object.entries(synced).map(([order_id, info]: [string, any]) => ({
+    order_id,
+    tab:       typeof info === "string" ? info : (info?.tab ?? ""),
+    synced_at: typeof info === "object" ? info?.synced_at : undefined,
+  }));
+  // Sort mới nhất lên trước
+  entries.sort((a, b) => (b.synced_at ?? "").localeCompare(a.synced_at ?? ""));
+  res.json(entries);
+});
+
 export default router;

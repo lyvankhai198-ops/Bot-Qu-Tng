@@ -53628,6 +53628,16 @@ router4.get("/bot/sheets/status", requireAuth3, (_req, res) => {
     client_email: parsed.client_email
   });
 });
+router4.get("/bot/sheets/synced", requireAuth3, (_req, res) => {
+  const synced = readJson2("market_sheets_synced", {}) ?? {};
+  const entries = Object.entries(synced).map(([order_id, info]) => ({
+    order_id,
+    tab: typeof info === "string" ? info : info?.tab ?? "",
+    synced_at: typeof info === "object" ? info?.synced_at : void 0
+  }));
+  entries.sort((a, b) => (b.synced_at ?? "").localeCompare(a.synced_at ?? ""));
+  res.json(entries);
+});
 var sheetsSettings_default = router4;
 
 // src/routes/marketOrders.ts
