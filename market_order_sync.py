@@ -545,54 +545,81 @@ MARKET_SHEET_HEADERS = [
     "Tạo lúc", "Số dư sau GD", "Ngày đồng bộ",
 ]
 
-# Từ quá chung, không dùng làm tiêu chí phân biệt sản phẩm
-_MATCH_STOPWORDS = {
-    'bhf', 'bh', 'kbh', 'plus', 'pro', 'team', 'super', 'ai', 'api',
-    'cdk', 'admin', 'days', 'day', 'month', 'months', 'year', 'years',
-    'slot', 'mã', 'redeem', 'credit', 'token', 'plan', 'pack', 'web',
-    # viết tắt thời gian
-    '1d', '3d', '5d', '7d', '14d', '30d', '35d', '45d', '60d', '90d',
-    '1m', '2m', '3m', '6m', '12m', '24h', '1th', '3th', '6th', '12th',
-    # số đơn lẻ
-    '1', '2', '3', '4', '5', '6', '7',
-}
-
 import re as _re
 
-def _brand_words(keyword: str) -> list[str]:
+def _normalize_name(s: str) -> str:
     """
-    Tách keyword thành từ "thương hiệu" (bỏ stop words).
-    CamelCase → tách thành từng từ riêng:  ChatGPT → ['chat', 'gpt']
+    Chuẩn hóa tên sản phẩm:
+      - Lowercase
+      - Bỏ ký tự đặc biệt (giữ chữ, số, khoảng trắng)
+      - Collapse khoảng trắng thừa
+    Ví dụ: "GROK SUPER BHF 🔥" → "grok super bhf"
     """
-    # Tách CamelCase: "ChatGPT" → "Chat GPT", "CapCut" → "Cap Cut"
-    spaced = _re.sub(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ', keyword)
-    words  = [w.lower() for w in spaced.split() if len(w) > 1]
-    brand  = [w for w in words if w not in _MATCH_STOPWORDS]
-    return brand if brand else words          # fallback: dùng tất cả nếu toàn stop word
+    s = s.lower()
+    s = _re.sub(r'[^\w\s]', ' ', s)
+    s = _re.sub(r'\s+', ' ', s).strip()
+    return s
 
 
-def _resolve_tab(product_name: str, tab_mappings: dict, default_tab: str) -> str:
+def _resolve_tab(product_name: str, config: dict, default_tab: str) -> str:
     """
-    Tìm tab phù hợp cho đơn hàng dựa theo product_name.
+    Tìm tab phù hợp cho đơn hàng theo config (tab_rules hoặc tab_mappings cũ).
 
-    Thuật toán:
-      1. Tách keyword thành "brand words" (loại stop words như BHF, 30D…)
-      2. Mỗi brand word → kiểm tra có xuất hiện trong product_name không
-         (so sánh cả có dấu cách lẫn không có — xử lý "chatgpt" ≈ "chat gpt")
-      3. Cần ≥1 brand word khớp
-      4. Ưu tiên keyword có số brand word khớp nhiều nhất (cụ thể hơn)
+    Chế độ mới — tab_rules (include + exclude):
+      1. Chuẩn hóa tên sản phẩm
+      2. Với từng rule:
+         - Nếu tên chứa bất kỳ từ khóa Loại trừ → bỏ qua
+         - Đếm số từ khóa Bao gồm xuất hiện trong tên
+         - Cần ≥1 include khớp
+      3. Chọn rule có nhiều include khớp nhất (cụ thể hơn thắng)
+
+    Fallback — tab_mappings cũ:
+      - Dùng khi không có tab_rules
     """
-    name_lower   = product_name.lower()
-    name_nospace = name_lower.replace(' ', '')   # "chat gpt" → "chatgpt"
-    best_tab     = None
-    best_score   = 0
+    name_norm    = _normalize_name(product_name)
+    name_nospace = name_norm.replace(' ', '')      # "chat gpt" ≈ "chatgpt"
 
+    # ── Chế độ mới: tab_rules ─────────────────────────────────────────────────
+    tab_rules: list = config.get("tab_rules") or []
+    if tab_rules:
+        best_tab   = None
+        best_score = 0
+
+        for rule in tab_rules:
+            tab      = (rule.get("tab") or "").strip()
+            includes = [k.lower().strip() for k in (rule.get("include") or []) if k.strip()]
+            excludes = [k.lower().strip() for k in (rule.get("exclude") or []) if k.strip()]
+
+            if not tab or not includes:
+                continue
+
+            # Bất kỳ exclude keyword nào khớp → bỏ qua ngay
+            if any(kw in name_norm or kw in name_nospace for kw in excludes):
+                continue
+
+            # Đếm include keyword khớp (so sánh cả có/không dấu cách)
+            matched = sum(
+                1 for kw in includes
+                if kw in name_norm or kw in name_nospace
+            )
+            if matched > 0 and matched > best_score:
+                best_score = matched
+                best_tab   = tab
+
+        return best_tab if best_tab else default_tab
+
+    # ── Fallback: tab_mappings cũ ─────────────────────────────────────────────
+    tab_mappings: dict = config.get("tab_mappings") or {}
+    if not tab_mappings:
+        return default_tab
+
+    best_tab   = None
+    best_score = 0
     for keyword, tab in tab_mappings.items():
-        brands = _brand_words(keyword)
-        matched = sum(
-            1 for w in brands
-            if w in name_lower or w in name_nospace
-        )
+        # Tách CamelCase: "ChatGPT" → ["chat","gpt"]
+        spaced = _re.sub(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ', keyword)
+        words  = [w.lower() for w in spaced.split() if len(w) > 1]
+        matched = sum(1 for w in words if w in name_norm or w in name_nospace)
         if matched >= 1 and matched > best_score:
             best_score = matched
             best_tab   = tab.strip()
@@ -653,7 +680,6 @@ def _sync_to_sheets(new_orders: list) -> dict:
         return {"skipped": True, "reason": "Chưa cấu hình Spreadsheet ID"}
 
     default_tab  = (config.get("default_tab")  or "Đơn Hàng").strip()
-    tab_mappings: dict = config.get("tab_mappings") or {}
 
     synced: dict = _load_json(MARKET_SYNCED_FILE, {})
 
@@ -693,7 +719,7 @@ def _sync_to_sheets(new_orders: list) -> dict:
             continue
 
         product_name = order.get("product_name", "")
-        tab = _resolve_tab(product_name, tab_mappings, default_tab)
+        tab = _resolve_tab(product_name, config, default_tab)
         groups.setdefault(tab, []).append(order)
 
     if not groups:
@@ -947,7 +973,6 @@ def push_all_to_sheets(filter_tab: str | None = None) -> dict:
         return {"ok": False, "message": "Không có đơn nào trong DB để đẩy lên Sheet."}
 
     config: dict    = _load_json(DATA_DIR / "sheets_config.json", {})
-    tab_mappings    = config.get("tab_mappings") or {}
     default_tab     = (config.get("default_tab") or "Đơn Hàng").strip()
 
     all_orders = list(orders_dict.values())
@@ -956,7 +981,7 @@ def push_all_to_sheets(filter_tab: str | None = None) -> dict:
     if filter_tab and filter_tab != "all":
         all_orders = [
             o for o in all_orders
-            if _resolve_tab(o.get("product_name", ""), tab_mappings, default_tab) == filter_tab
+            if _resolve_tab(o.get("product_name", ""), config, default_tab) == filter_tab
         ]
         if not all_orders:
             return {

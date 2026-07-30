@@ -9,12 +9,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog"
 import {
   Save, Loader2, Plus, Trash2, RefreshCw,
-  TableProperties, Wifi, WifiOff, BookOpen, CheckCircle2, Upload, ChevronRight,
+  TableProperties, Wifi, WifiOff, BookOpen, CheckCircle2, Upload,
+  ChevronRight, ChevronDown, ShieldCheck, ShieldX,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -32,12 +34,19 @@ async function apiFetch(method: string, path: string, body?: unknown): Promise<a
   return res.json()
 }
 
+interface TabRule {
+  tab:     string
+  include: string[]
+  exclude: string[]
+}
+
 interface SheetsConfig {
   spreadsheet_id: string
   default_tab:    string
   market_tab:     string
   sync_enabled:   boolean
-  tab_mappings:   Record<string, string>
+  tab_mappings:   Record<string, string>   // backward compat
+  tab_rules:      TabRule[]                // new include/exclude system
 }
 
 interface SheetsStatus {
@@ -102,16 +111,14 @@ export default function SheetsSync() {
 
   const [cfg,     setCfg]     = useState<SheetsConfig>({
     spreadsheet_id: "", default_tab: "Đơn hàng", market_tab: "Đơn hàng chợ",
-    sync_enabled: false, tab_mappings: {},
+    sync_enabled: false, tab_mappings: {}, tab_rules: [],
   })
   const [loading,  setLoading]  = useState(true)
   const [saving,   setSaving]   = useState(false)
   const [synced,   setSynced]   = useState<SyncedEntry[]>([])
   const [syncLoad, setSyncLoad] = useState(false)
-
-  // Ánh xạ mới
-  const [newKw,  setNewKw]  = useState("")
-  const [newTab, setNewTab] = useState("")
+  // Trạng thái mở/đóng từng rule card
+  const [openRules, setOpenRules] = useState<Record<number, boolean>>({})
 
   const loadConfig = useCallback(async () => {
     setLoading(true)
@@ -177,20 +184,43 @@ export default function SheetsSync() {
   // Tính danh sách tab có thể chọn để đẩy
   const pushTabOptions = useMemo(() => {
     const tabs = new Set<string>()
-    Object.values(cfg.tab_mappings).forEach(t => tabs.add(t.trim()))
+    cfg.tab_rules?.forEach(r => r.tab && tabs.add(r.tab.trim()))
+    Object.values(cfg.tab_mappings || {}).forEach(t => tabs.add(t.trim()))
     if (cfg.default_tab) tabs.add(cfg.default_tab.trim())
     return Array.from(tabs).filter(Boolean)
-  }, [cfg.tab_mappings, cfg.default_tab])
+  }, [cfg.tab_rules, cfg.tab_mappings, cfg.default_tab])
 
-  function removeMapping(kw: string) {
+  // Rule CRUD
+  function addRule() {
+    const blank: TabRule = { tab: "", include: [], exclude: [] }
+    setCfg(c => ({ ...c, tab_rules: [...(c.tab_rules || []), blank] }))
+    const newIdx = (cfg.tab_rules?.length || 0)
+    setOpenRules(o => ({ ...o, [newIdx]: true }))
+  }
+  function updateRule(idx: number, rule: TabRule) {
     setCfg(c => {
-      const m = { ...c.tab_mappings }
-      delete m[kw]
-      return { ...c, tab_mappings: m }
+      const rules = [...(c.tab_rules || [])]
+      rules[idx] = rule
+      return { ...c, tab_rules: rules }
+    })
+  }
+  function deleteRule(idx: number) {
+    setCfg(c => ({ ...c, tab_rules: (c.tab_rules || []).filter((_, i) => i !== idx) }))
+    setOpenRules(o => {
+      const next: Record<number, boolean> = {}
+      Object.entries(o).forEach(([k, v]) => {
+        const n = Number(k)
+        if (n < idx) next[n] = v
+        else if (n > idx) next[n - 1] = v
+      })
+      return next
     })
   }
 
-  const mappings = Object.entries(cfg.tab_mappings)
+  // Parse textarea → string[]
+  function parseKws(text: string): string[] {
+    return text.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
+  }
 
   return (
     <div className="space-y-5">
@@ -281,59 +311,114 @@ export default function SheetsSync() {
             </CardContent>
           </Card>
 
-          {/* Ánh xạ sản phẩm → Tab */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Ánh xạ sản phẩm → Tab Sheet</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Mỗi loại sản phẩm sẽ được ghi vào tab tương ứng. So sánh theo từ khóa trong tên sản phẩm.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {mappings.length > 0 && (
-                <div className="space-y-2">
-                  {mappings.map(([kw, tab]) => (
-                    <div key={kw} className="flex items-center gap-2">
-                      <Input value={kw}  readOnly className="flex-1 bg-muted/40 text-sm" />
-                      <Input value={tab} readOnly className="flex-1 bg-muted/40 text-sm" />
+          {/* Ánh xạ sản phẩm → Tab (include / exclude) */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-sm">Ánh xạ sản phẩm → Tab Sheet</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Mỗi tab có từ khóa <span className="text-green-600 font-medium">Bao gồm</span> và{" "}
+                  <span className="text-destructive font-medium">Loại trừ</span>.
+                  Nhập mỗi từ khóa một dòng, không phân biệt hoa thường.
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={addRule}>
+                <Plus className="h-4 w-4 mr-1" /> Thêm tab
+              </Button>
+            </div>
+
+            {(!cfg.tab_rules || cfg.tab_rules.length === 0) && (
+              <div className="border border-dashed rounded-lg py-8 text-center text-muted-foreground text-sm">
+                Chưa có tab nào. Bấm <strong>Thêm tab</strong> để bắt đầu.
+              </div>
+            )}
+
+            {(cfg.tab_rules || []).map((rule, idx) => {
+              const isOpen = openRules[idx] ?? false
+              return (
+                <Card key={idx} className="overflow-hidden">
+                  {/* Header rule */}
+                  <div
+                    className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-muted/40 transition-colors"
+                    onClick={() => setOpenRules(o => ({ ...o, [idx]: !o[idx] }))}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {isOpen
+                        ? <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        : <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />}
+                      <span className="font-medium text-sm truncate">
+                        {rule.tab || <span className="text-muted-foreground italic">(chưa đặt tên)</span>}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                      <Badge variant="outline" className="text-xs gap-1 text-green-700 border-green-300">
+                        <ShieldCheck className="h-3 w-3" />{rule.include.length}
+                      </Badge>
+                      {rule.exclude.length > 0 && (
+                        <Badge variant="outline" className="text-xs gap-1 text-destructive border-destructive/30">
+                          <ShieldX className="h-3 w-3" />{rule.exclude.length}
+                        </Badge>
+                      )}
                       <Button
                         variant="ghost" size="icon"
-                        className="text-destructive hover:text-destructive flex-shrink-0"
-                        onClick={() => removeMapping(kw)}
+                        className="h-7 w-7 text-destructive hover:text-destructive"
+                        onClick={e => { e.stopPropagation(); deleteRule(idx) }}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
-                  ))}
-                </div>
-              )}
-              {/* Thêm mới */}
-              <div className="flex items-end gap-2 pt-1">
-                <div className="flex-1 space-y-1">
-                  <Label className="text-xs text-muted-foreground">Từ khóa sản phẩm</Label>
-                  <Input
-                    value={newKw}
-                    onChange={e => setNewKw(e.target.value)}
-                    placeholder="vd: Netflix"
-                    className="text-sm"
-                  />
-                </div>
-                <div className="flex-1 space-y-1">
-                  <Label className="text-xs text-muted-foreground">Tên tab Sheet</Label>
-                  <Input
-                    value={newTab}
-                    onChange={e => setNewTab(e.target.value)}
-                    placeholder="vd: Netflix"
-                    className="text-sm"
-                    onKeyDown={e => e.key === "Enter" && addMapping()}
-                  />
-                </div>
-                <Button variant="outline" size="sm" onClick={addMapping} className="flex-shrink-0">
-                  <Plus className="h-4 w-4 mr-1" /> Thêm
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+                  </div>
+
+                  {/* Body rule */}
+                  {isOpen && (
+                    <div className="px-4 pb-4 space-y-3 border-t">
+                      <div className="pt-3 space-y-1.5">
+                        <Label className="text-xs font-medium">Tên tab trong Google Sheet</Label>
+                        <Input
+                          value={rule.tab}
+                          onChange={e => updateRule(idx, { ...rule, tab: e.target.value })}
+                          placeholder="vd: ChatGPT BHF"
+                          className="text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium flex items-center gap-1">
+                          <ShieldCheck className="h-3.5 w-3.5 text-green-600" />
+                          <span className="text-green-700">Bao gồm</span>
+                          <span className="text-muted-foreground font-normal ml-1">— một từ khóa mỗi dòng</span>
+                        </Label>
+                        <Textarea
+                          value={rule.include.join("\n")}
+                          onChange={e => updateRule(idx, { ...rule, include: parseKws(e.target.value.replace(/,/g, "\n")) })}
+                          onBlur={e => updateRule(idx, { ...rule, include: parseKws(e.target.value) })}
+                          placeholder={"chatgpt\nchat gpt\ngpt plus"}
+                          className="text-sm font-mono min-h-[80px] resize-y"
+                          rows={4}
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium flex items-center gap-1">
+                          <ShieldX className="h-3.5 w-3.5 text-destructive" />
+                          <span className="text-destructive">Loại trừ</span>
+                          <span className="text-muted-foreground font-normal ml-1">— tên có từ này sẽ bị bỏ qua</span>
+                        </Label>
+                        <Textarea
+                          value={rule.exclude.join("\n")}
+                          onChange={e => updateRule(idx, { ...rule, exclude: parseKws(e.target.value.replace(/,/g, "\n")) })}
+                          onBlur={e => updateRule(idx, { ...rule, exclude: parseKws(e.target.value) })}
+                          placeholder={"api\ntoken\ncredit"}
+                          className="text-sm font-mono min-h-[60px] resize-y"
+                          rows={3}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              )
+            })}
+          </div>
 
           {/* Hướng dẫn */}
           <Card>

@@ -1,0 +1,167 @@
+Hiện tại chức năng ánh xạ sản phẩm → Google Sheet vẫn chưa đủ thông minh.
+
+Vấn đề:
+
+Hiện tại chỉ so khớp bằng 1 từ khóa nên rất dễ bị ghi nhầm.
+
+Ví dụ:
+
+- ChatGPT Plus 30D BHF
+- ChatGPT Plus Apple Pay BHF
+- ChatGPT Plus Acc Cấp BHF
+
+đều phải vào tab "ChatGPT BHF".
+
+Nhưng:
+
+- API ChatGPT
+- Codex API
+- ChatGPT Token
+- ChatGPT Credit
+
+KHÔNG được vào tab ChatGPT BHF.
+
+Tương tự:
+
+"Grok Super BHF"
+
+chỉ nhận các sản phẩm Grok Super BHF, không nhận:
+
+- Grok API
+- Grok Token
+- Grok Credit
+
+Seller đặt tên sản phẩm không thống nhất nên không thể dùng 1 từ khóa đơn giản.
+
+=================================================
+
+Yêu cầu sửa:
+
+Thay đổi hoàn toàn cơ chế ánh xạ.
+
+Mỗi tab phải có:
+
+- Tên tab
+- Danh sách từ khóa BAO GỒM
+- Danh sách từ khóa LOẠI TRỪ
+
+Ví dụ:
+
+Tab:
+ChatGPT BHF
+
+Bao gồm:
+chatgpt
+chat gpt
+gpt plus
+chatgpt plus
+
+Loại trừ:
+api
+codex
+token
+credit
+k12
+pixpay
+
+------------------------
+
+Tab:
+Grok Super BHF
+
+Bao gồm:
+grok
+super grok
+grok super
+supergrok
+
+Loại trừ:
+api
+token
+credit
+
+------------------------
+
+Tab:
+Claude BHF
+
+Bao gồm:
+claude pro
+claude slot
+claude
+
+Loại trừ:
+api
+token
+
+------------------------
+
+Tab:
+Gemini BHF
+
+Bao gồm:
+gemini
+
+Loại trừ:
+api
+token
+credit
+
+------------------------
+
+Tab:
+Kling 66 BHF
+
+Bao gồm:
+kling
+
+Loại trừ:
+credit
+redeem
+token
+
+=================================================
+
+Trước khi so khớp phải chuẩn hóa tên sản phẩm:
+
+- chuyển về chữ thường
+- bỏ khoảng trắng thừa
+- bỏ ký tự đặc biệt không cần thiết
+- coi:
+SUPERGROK
+Super Grok
+SUPER GROK
+grok super
+
+là giống nhau.
+
+=================================================
+
+Thuật toán:
+
+1. Chuẩn hóa tên sản phẩm.
+
+2. Với từng tab:
+
+- Nếu KHÔNG chứa bất kỳ từ khóa Bao gồm nào
+=> bỏ qua.
+
+- Nếu chứa một từ khóa Loại trừ
+=> bỏ qua.
+
+- Nếu có Bao gồm và không có Loại trừ
+=> ghi vào tab đó.
+
+=================================================
+
+Ưu tiên:
+
+Nếu nhiều tab cùng khớp thì chọn tab có số lượng từ khóa Bao gồm khớp nhiều nhất (ưu tiên cụ thể hơn).
+
+=================================================
+
+Không được phá vỡ hệ thống đồng bộ hiện tại.
+
+Chỉ thay đổi phần ánh xạ sản phẩm → Google Sheet.
+
+Mục tiêu là khi đồng bộ hàng nghìn đơn từ nhiều seller khác nhau thì robot vẫn phân loại đúng dù tên sản phẩm không thống nhất.
