@@ -21,6 +21,7 @@ import {
   Target,
   Truck,
   Calculator,
+  ShoppingBag,
 } from "lucide-react"
 import { Button } from "./ui/button"
 
@@ -74,6 +75,7 @@ const navItems = [
   { href: "/checkin",        label: "Điểm danh",            icon: CalendarCheck },
   { href: "/gift-boxes",     label: "Ô Quà Bí Mật",         icon: Gift },
   { href: "/secret-codes",   label: "Săn mã bí mật",        icon: Target },
+  { href: "/market-orders",  label: "Đơn hàng chợ",         icon: ShoppingBag },
   { href: "/sync-robot",     label: "Robot Đồng Bộ",        icon: RefreshCw,     badgeKey: "syncRobot" },
   { href: "/logs",           label: "Lịch sử hệ thống",    icon: Activity },
   { href: "/settings",       label: "Cài đặt",              icon: SettingsIcon },
