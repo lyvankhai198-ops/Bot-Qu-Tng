@@ -132,7 +132,15 @@ export default function SheetsSync() {
     setPushing(true)
     try {
       const res = await apiFetch("POST", "/bot/sheets/push-all")
-      toast({ title: res.ok ? "✅ Hoàn tất" : "Lỗi", description: res.message,
+      // Tạo mô tả chi tiết từng tab
+      let desc = res.message ?? ""
+      if (res.ok && res.tab_summary && Object.keys(res.tab_summary).length > 0) {
+        const tabLines = Object.entries(res.tab_summary as Record<string, number>)
+          .map(([tab, count]) => `• ${tab}: ${count} đơn`)
+          .join("\n")
+        desc = `${desc}\n${tabLines}`
+      }
+      toast({ title: res.ok ? "✅ Hoàn tất" : "Lỗi", description: desc,
               variant: res.ok ? "default" : "destructive" })
       if (res.ok) loadSynced()
     } catch (e: any) {

@@ -545,74 +545,93 @@ MARKET_SHEET_HEADERS = [
     "Tạo lúc", "Số dư sau GD", "Ngày đồng bộ",
 ]
 
+def _resolve_tab(product_name: str, tab_mappings: dict, default_tab: str) -> str:
+    """
+    Tìm tab phù hợp cho đơn hàng dựa theo product_name.
+    So sánh case-insensitive substring: nếu từ khóa có trong tên sản phẩm → dùng tab đó.
+    Không khớp → default_tab.
+    """
+    name_lower = product_name.lower()
+    for keyword, tab in tab_mappings.items():
+        if keyword.strip().lower() in name_lower:
+            return tab.strip()
+    return default_tab
+
+
+def _get_or_create_worksheet(spreadsheet, tab_name: str, headers: list):
+    """Lấy worksheet theo tên, tạo mới nếu chưa có, đảm bảo header dòng 1."""
+    try:
+        ws = spreadsheet.worksheet(tab_name)
+    except Exception:
+        ws = spreadsheet.add_worksheet(title=tab_name, rows=5000, cols=len(headers))
+        ws.append_row(headers, value_input_option="USER_ENTERED")
+        logger.info(f"[MARKET-SHEETS] Tạo mới tab: {tab_name!r}")
+        return ws
+    # Đảm bảo header nếu tab trống
+    try:
+        if not ws.row_values(1):
+            ws.append_row(headers, value_input_option="USER_ENTERED")
+    except Exception:
+        pass
+    return ws
+
+
 def _sync_to_sheets(new_orders: list) -> dict:
     """
-    Ghi đơn hàng chợ MỚI vào Google Sheets — tab "Đơn hàng chợ".
-    Đọc config từ data/sheets_config.json (cùng file với sheets_sync.py).
-    Chống trùng qua data/market_sheets_synced.json.
+    Ghi đơn hàng chợ MỚI vào Google Sheets với phân tab theo ánh xạ sản phẩm.
+
+    Luồng:
+      1. Đọc config: spreadsheet_id, default_tab, tab_mappings
+      2. Với mỗi đơn: match product_name với tab_mappings → chọn tab đích
+      3. Nhóm đơn theo tab → ghi batch vào từng tab
+      4. Chống trùng qua market_sheets_synced.json (lưu {order_id: {tab, synced_at}})
     """
     if not new_orders:
         return {"added": 0, "skipped_dup": 0, "errors": [], "skipped": False}
 
     try:
-        config_path = DATA_DIR / "sheets_config.json"
-        config: dict = _load_json(config_path, {})
+        config: dict = _load_json(DATA_DIR / "sheets_config.json", {})
     except Exception:
         config = {}
 
-    if not config.get("enabled"):
-        return {"skipped": True, "reason": "sheets_sync chưa được bật"}
+    if not config.get("sync_enabled"):
+        return {"skipped": True, "reason": "Tính năng đồng bộ Sheet chưa được bật"}
 
     spreadsheet_id = (config.get("spreadsheet_id") or "").strip()
     if not spreadsheet_id:
-        return {"skipped": True, "reason": "Chưa cấu hình spreadsheet_id"}
+        return {"skipped": True, "reason": "Chưa cấu hình Spreadsheet ID"}
 
-    # Đọc tab từ config — mặc định "Đơn hàng chợ"
-    market_tab = (config.get("market_tab") or "Đơn hàng chợ").strip()
+    default_tab  = (config.get("default_tab")  or "Đơn Hàng").strip()
+    tab_mappings: dict = config.get("tab_mappings") or {}
 
     synced: dict = _load_json(MARKET_SYNCED_FILE, {})
 
+    # ── Kết nối Google Sheets ──────────────────────────────────────────────────
     try:
         import gspread  # type: ignore
         from google.oauth2.service_account import Credentials  # type: ignore
+
         sa_json_str = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
         if not sa_json_str:
-            # Fallback: đọc từ file data/google_sa.json (dùng trên VPS)
             sa_file = DATA_DIR / "google_sa.json"
             if sa_file.exists():
                 sa_json_str = sa_file.read_text(encoding="utf-8").strip()
         if not sa_json_str:
             return {"skipped": True, "reason": "Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON"}
-        sa_info = json.loads(sa_json_str)
-        creds   = Credentials.from_service_account_info(
-            sa_info, scopes=["https://www.googleapis.com/auth/spreadsheets"]
+
+        creds       = Credentials.from_service_account_info(
+            json.loads(sa_json_str),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
         )
-        gc           = gspread.authorize(creds)
-        spreadsheet  = gc.open_by_key(spreadsheet_id)
+        spreadsheet = gspread.authorize(creds).open_by_key(spreadsheet_id)
     except Exception as e:
         logger.error(f"[MARKET-SHEETS] Không mở được spreadsheet: {e}")
         return {"added": 0, "skipped_dup": 0, "errors": [str(e)], "fatal": True}
 
-    # Lấy hoặc tạo worksheet
-    try:
-        try:
-            ws = spreadsheet.worksheet(market_tab)
-        except Exception:
-            ws = spreadsheet.add_worksheet(
-                title=market_tab, rows=5000, cols=len(MARKET_SHEET_HEADERS)
-            )
-            ws.append_row(MARKET_SHEET_HEADERS, value_input_option="USER_ENTERED")
-            logger.info(f"[MARKET-SHEETS] Tạo mới tab: {market_tab!r}")
-        # Đảm bảo header
-        if not ws.row_values(1):
-            ws.append_row(MARKET_SHEET_HEADERS, value_input_option="USER_ENTERED")
-    except Exception as e:
-        logger.error(f"[MARKET-SHEETS] Lỗi worksheet: {e}")
-        return {"added": 0, "skipped_dup": 0, "errors": [str(e)]}
-
-    added = 0
-    skipped_dup = 0
-    errors: list = []
+    # ── Phân loại đơn theo tab ─────────────────────────────────────────────────
+    # groups: {tab_name: [order, ...]}
+    groups: dict = {}
+    skipped_dup  = 0
 
     for order in new_orders:
         order_id = str(order.get("order_id", "")).strip().upper()
@@ -622,44 +641,93 @@ def _sync_to_sheets(new_orders: list) -> dict:
             skipped_dup += 1
             continue
 
-        try:
-            # STT = số hàng dữ liệu hiện tại + 1
-            try:
-                stt = max(0, len(ws.get_all_values()) - 1) + 1
-            except Exception:
-                stt = added + 1
+        product_name = order.get("product_name", "")
+        tab = _resolve_tab(product_name, tab_mappings, default_tab)
+        groups.setdefault(tab, []).append(order)
 
-            row_data = [
-                stt,
-                order_id,
-                order.get("seller",       ""),   # Seller bán
-                order.get("product_name", ""),
-                order.get("quantity",     ""),
-                order.get("price",        ""),   # Giá nguồn (mua)
-                order.get("sell_price",   ""),   # Số tiền (bán)
-                order.get("fee",          ""),   # Phí chợ
-                order.get("status",       ""),
-                order.get("status_tx",    ""),   # Trạng thái giao dịch
-                order.get("completed_at", ""),   # Chốt chợ lúc
-                order.get("created_at_raw", ""),
-                order.get("balance_after",""),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            ]
-            ws.append_row(row_data, value_input_option="USER_ENTERED")
-            synced[order_id] = datetime.now().isoformat()
-            added += 1
-            logger.info(f"[MARKET-SHEETS] Ghi đơn {order_id} → tab {market_tab!r}")
+    if not groups:
+        _save_json(MARKET_SYNCED_FILE, synced)
+        return {"added": 0, "skipped_dup": skipped_dup, "errors": [], "skipped": False,
+                "tab_summary": {}}
+
+    # ── Ghi từng tab ──────────────────────────────────────────────────────────
+    added       = 0
+    errors: list = []
+    tab_summary: dict = {}   # {tab_name: count}
+    now_str      = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ws_cache: dict = {}
+
+    for tab_name, orders in groups.items():
+        logger.info(f"[MARKET-SHEETS] Tab {tab_name!r}: {len(orders)} đơn")
+        try:
+            if tab_name not in ws_cache:
+                ws_cache[tab_name] = _get_or_create_worksheet(
+                    spreadsheet, tab_name, MARKET_SHEET_HEADERS
+                )
+            ws = ws_cache[tab_name]
+
+            # Lấy STT bắt đầu (số dòng dữ liệu hiện tại + 1)
+            try:
+                base_stt = max(0, len(ws.get_all_values()) - 1)
+            except Exception:
+                base_stt = 0
+
+            rows_to_append = []
+            order_ids_ok   = []
+
+            for i, order in enumerate(orders):
+                order_id = str(order.get("order_id", "")).strip().upper()
+                row_data = [
+                    base_stt + i + 1,
+                    order_id,
+                    order.get("seller",       ""),
+                    order.get("product_name", ""),
+                    order.get("quantity",     ""),
+                    order.get("price",        ""),   # Giá nguồn (mua)
+                    order.get("sell_price",   ""),   # Số tiền (bán)
+                    order.get("fee",          ""),   # Phí chợ
+                    order.get("status",       ""),
+                    order.get("status_tx",    ""),   # Trạng thái giao dịch
+                    order.get("completed_at", ""),   # Chốt chợ lúc
+                    order.get("created_at_raw", ""),
+                    order.get("balance_after",""),
+                    now_str,                          # Ngày đồng bộ
+                ]
+                rows_to_append.append(row_data)
+                order_ids_ok.append(order_id)
+
+            # Ghi batch (từng dòng — gspread v6 chưa hỗ trợ batch append đa hàng tiện)
+            for row_data, order_id in zip(rows_to_append, order_ids_ok):
+                try:
+                    ws.append_row(row_data, value_input_option="USER_ENTERED")
+                    synced[order_id] = {"tab": tab_name, "synced_at": now_str}
+                    added += 1
+                    logger.info(f"[MARKET-SHEETS] ✔ {order_id} → {tab_name!r}")
+                except Exception as e:
+                    logger.warning(f"[MARKET-SHEETS] Lỗi ghi {order_id}: {e}")
+                    errors.append({"order_id": order_id, "tab": tab_name, "error": str(e)})
+
+            tab_summary[tab_name] = len(order_ids_ok)
 
         except Exception as e:
-            logger.warning(f"[MARKET-SHEETS] Lỗi ghi đơn {order_id}: {e}")
-            errors.append({"order_id": order_id, "error": str(e)})
+            logger.error(f"[MARKET-SHEETS] Lỗi tab {tab_name!r}: {e}")
+            for order in orders:
+                errors.append({
+                    "order_id": str(order.get("order_id", "")),
+                    "tab": tab_name, "error": str(e),
+                })
 
     try:
         _save_json(MARKET_SYNCED_FILE, synced)
     except Exception as e:
         logger.warning(f"[MARKET-SHEETS] Không lưu market_sheets_synced.json: {e}")
 
-    return {"added": added, "skipped_dup": skipped_dup, "errors": errors}
+    return {
+        "added":       added,
+        "skipped_dup": skipped_dup,
+        "errors":      errors,
+        "tab_summary": tab_summary,
+    }
 
 
 # ── Public: sync_market_orders ─────────────────────────────────────────────────
