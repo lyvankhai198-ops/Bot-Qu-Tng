@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Search, RefreshCw, Loader2, CheckCircle2, AlertCircle,
   Clock, ShoppingBag, TrendingUp, Package, Settings, Save,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, Wifi, WifiOff,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -117,6 +117,58 @@ function fmtDate(s?: string) {
   } catch { return s }
 }
 
+// ── Google Sheets Status Banner ───────────────────────────────────────────────
+interface SheetsStatus {
+  connected:    boolean
+  message:      string
+  fix?:         string
+  project_id?:  string
+  client_email?: string
+}
+
+function GoogleSheetsStatusBanner() {
+  const [status,  setStatus]  = useState<SheetsStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    apiFetch("GET", "/bot/sheets/status")
+      .then((d: SheetsStatus) => setStatus(d))
+      .catch(() => setStatus({ connected: false, message: "Không thể kiểm tra trạng thái Google Sheets." }))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang kiểm tra kết nối Google Sheets…
+    </div>
+  )
+
+  if (!status) return null
+
+  return (
+    <div className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${
+      status.connected
+        ? "bg-green-50 border-green-200 text-green-800 dark:bg-green-950/30 dark:border-green-800 dark:text-green-300"
+        : "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300"
+    }`}>
+      {status.connected
+        ? <Wifi    className="h-4 w-4 mt-0.5 flex-shrink-0" />
+        : <WifiOff className="h-4 w-4 mt-0.5 flex-shrink-0" />}
+      <div className="flex-1 min-w-0">
+        <p className="font-medium">{status.message}</p>
+        {status.connected && status.client_email && (
+          <p className="text-xs opacity-70 mt-0.5 truncate">
+            {status.client_email} · {status.project_id}
+          </p>
+        )}
+        {!status.connected && status.fix && (
+          <p className="text-xs opacity-80 mt-0.5">{status.fix}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Settings Panel ────────────────────────────────────────────────────────────
 function SettingsPanel() {
   const { toast } = useToast()
@@ -194,6 +246,9 @@ function SettingsPanel() {
       {/* Body — chỉ hiện khi mở */}
       {open && (
         <CardContent className="pt-0 space-y-5">
+          {/* Trạng thái kết nối Google Sheets */}
+          <GoogleSheetsStatusBanner />
+
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
               <Loader2 className="h-4 w-4 animate-spin" /> Đang tải…

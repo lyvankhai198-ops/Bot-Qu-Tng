@@ -1,0 +1,129 @@
+/**
+ * sheetsSettings.ts — API routes cho cấu hình Google Sheets
+ *
+ * GET  /bot/sheets/config   — đọc cấu hình sheets (spreadsheet_id, tabs, enabled)
+ * PUT  /bot/sheets/config   — lưu cấu hình sheets
+ * GET  /bot/sheets/status   — kiểm tra kết nối Google Sheets qua Secret
+ */
+import { Router } from "express";
+import fs         from "fs";
+import path       from "path";
+
+const router   = Router();
+const DATA_DIR = process.env.DATA_DIR ?? path.resolve(process.cwd(), "../../data");
+const ADMIN_SECRET = process.env.SESSION_SECRET ?? "";
+
+function dataFile(name: string) {
+  return path.join(DATA_DIR, `${name}.json`);
+}
+
+function readJson(name: string, fallback: unknown = null): any {
+  const file = dataFile(name);
+  if (!fs.existsSync(file)) return fallback;
+  try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return fallback; }
+}
+
+function requireAuth(req: any, res: any, next: any) {
+  const auth  = (req.headers.authorization as string) ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!ADMIN_SECRET || token !== ADMIN_SECRET) {
+    res.status(401).json({ error: "Invalid token" });
+    return;
+  }
+  next();
+}
+
+// ── GET /bot/sheets/config ─────────────────────────────────────────────────────
+router.get("/bot/sheets/config", requireAuth, (_req: any, res: any) => {
+  const cfg: any = readJson("sheets_config", {}) ?? {};
+  res.json({
+    spreadsheet_id:  cfg.spreadsheet_id  ?? "",
+    default_tab:     cfg.default_tab     ?? "Đơn hàng",
+    market_tab:      cfg.market_tab      ?? "Đơn hàng chợ",
+    sync_enabled:    cfg.sync_enabled    ?? false,
+    tab_mappings:    cfg.tab_mappings    ?? {},
+  });
+});
+
+// ── PUT /bot/sheets/config ─────────────────────────────────────────────────────
+router.put("/bot/sheets/config", requireAuth, (req: any, res: any) => {
+  const body: any = req.body ?? {};
+  const cfg: any  = readJson("sheets_config", {}) ?? {};
+
+  if (typeof body.spreadsheet_id === "string")
+    cfg.spreadsheet_id = body.spreadsheet_id.trim();
+  if (typeof body.default_tab === "string" && body.default_tab.trim())
+    cfg.default_tab = body.default_tab.trim();
+  if (typeof body.market_tab === "string" && body.market_tab.trim())
+    cfg.market_tab = body.market_tab.trim();
+  if (typeof body.sync_enabled === "boolean")
+    cfg.sync_enabled = body.sync_enabled;
+  if (body.tab_mappings && typeof body.tab_mappings === "object")
+    cfg.tab_mappings = body.tab_mappings;
+
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(dataFile("sheets_config"), JSON.stringify(cfg, null, 2), "utf-8");
+    res.json({ ok: true, message: "Đã lưu cấu hình Google Sheets" });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, message: `Lỗi lưu cấu hình: ${e.message}` });
+  }
+});
+
+// ── GET /bot/sheets/status ─────────────────────────────────────────────────────
+// Kiểm tra GOOGLE_SERVICE_ACCOUNT_JSON secret — không cần gọi API Google,
+// chỉ xác nhận secret tồn tại và đúng định dạng.
+router.get("/bot/sheets/status", requireAuth, (_req: any, res: any) => {
+  const raw = (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").trim();
+
+  if (!raw) {
+    res.json({
+      connected: false,
+      message:   "Chưa cấu hình Secret GOOGLE_SERVICE_ACCOUNT_JSON trong Replit.",
+      fix:       "Vào Replit → Secrets → Thêm key: GOOGLE_SERVICE_ACCOUNT_JSON với nội dung file JSON Service Account.",
+    });
+    return;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    res.json({
+      connected: false,
+      message:   "GOOGLE_SERVICE_ACCOUNT_JSON không phải JSON hợp lệ.",
+      fix:       "Kiểm tra lại nội dung Secret — phải là file JSON Service Account nguyên vẹn.",
+    });
+    return;
+  }
+
+  const required = ["type", "project_id", "private_key", "client_email", "token_uri"];
+  const missing  = required.filter(k => !parsed[k]);
+
+  if (missing.length > 0) {
+    res.json({
+      connected: false,
+      message:   `JSON thiếu trường bắt buộc: ${missing.join(", ")}`,
+      fix:       "Tải lại file JSON Service Account từ Google Cloud Console và cập nhật Secret.",
+    });
+    return;
+  }
+
+  if (parsed.type !== "service_account") {
+    res.json({
+      connected: false,
+      message:   `Loại credentials không hợp lệ: "${parsed.type}". Cần "service_account".`,
+      fix:       "Đảm bảo tải đúng loại key JSON (Service Account Key) từ Google Cloud.",
+    });
+    return;
+  }
+
+  res.json({
+    connected:    true,
+    message:      "Đã kết nối Google Sheets thành công.",
+    project_id:   parsed.project_id,
+    client_email: parsed.client_email,
+  });
+});
+
+export default router;
