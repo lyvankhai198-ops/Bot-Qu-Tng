@@ -705,16 +705,13 @@ def _sync_to_sheets(new_orders: list) -> dict:
                 rows_to_append.append(row_data)
                 order_ids_ok.append(order_id)
 
-            # Ghi batch (từng dòng — gspread v6 chưa hỗ trợ batch append đa hàng tiện)
-            for row_data, order_id in zip(rows_to_append, order_ids_ok):
-                try:
-                    ws.append_row(row_data, value_input_option="USER_ENTERED")
+            # Ghi batch tất cả rows trong tab bằng 1 API call
+            if rows_to_append:
+                ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
+                for order_id in order_ids_ok:
                     synced[order_id] = {"tab": tab_name, "synced_at": now_str}
-                    added += 1
-                    logger.info(f"[MARKET-SHEETS] ✔ {order_id} → {tab_name!r}")
-                except Exception as e:
-                    logger.warning(f"[MARKET-SHEETS] Lỗi ghi {order_id}: {e}")
-                    errors.append({"order_id": order_id, "tab": tab_name, "error": str(e)})
+                added += len(order_ids_ok)
+                logger.info(f"[MARKET-SHEETS] ✔ Ghi {len(order_ids_ok)} đơn → {tab_name!r}")
 
             tab_summary[tab_name] = len(order_ids_ok)
 
