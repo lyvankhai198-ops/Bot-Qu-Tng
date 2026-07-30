@@ -28204,7 +28204,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path4 = __require("path");
-        const outputDir = "/home/runner/workspace/imported/Bot-Qu-Tng/artifacts/api-server/dist";
+        const outputDir = "/home/runner/workspace/artifacts/api-server/dist";
         return path4.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -53533,17 +53533,6 @@ function readJson2(name, fallback = null) {
     return fallback;
   }
 }
-function writeJson2(name, data) {
-  fs2.mkdirSync(DATA_DIR2, { recursive: true });
-  const file = dataFile2(name);
-  if (fs2.existsSync(file)) {
-    try {
-      fs2.copyFileSync(file, dataFile2(name + ".bak"));
-    } catch {
-    }
-  }
-  fs2.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
-}
 function requireAuth3(req, res, next) {
   const auth = req.headers.authorization ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -53553,36 +53542,82 @@ function requireAuth3(req, res, next) {
   }
   next();
 }
-var DEFAULTS = {
-  enabled: false,
-  spreadsheet_id: "",
-  default_tab: "\u0110\u01A1n h\xE0ng",
-  product_mappings: []
-};
-router4.get("/bot/sheets-settings", requireAuth3, (_req, res) => {
-  const stored = readJson2("sheets_config", {}) ?? {};
-  res.json({ ...DEFAULTS, ...stored });
+router4.get("/bot/sheets/config", requireAuth3, (_req, res) => {
+  const cfg = readJson2("sheets_config", {}) ?? {};
+  res.json({
+    spreadsheet_id: cfg.spreadsheet_id ?? "",
+    default_tab: cfg.default_tab ?? "\u0110\u01A1n h\xE0ng",
+    market_tab: cfg.market_tab ?? "\u0110\u01A1n h\xE0ng ch\u1EE3",
+    sync_enabled: cfg.sync_enabled ?? false,
+    tab_mappings: cfg.tab_mappings ?? {}
+  });
 });
-router4.put("/bot/sheets-settings", requireAuth3, (req, res) => {
-  const current = readJson2("sheets_config", {}) ?? {};
+router4.put("/bot/sheets/config", requireAuth3, (req, res) => {
   const body = req.body ?? {};
-  const updated = { ...current };
-  if (body.enabled !== void 0) updated.enabled = Boolean(body.enabled);
-  if (body.spreadsheet_id !== void 0) updated.spreadsheet_id = String(body.spreadsheet_id ?? "").trim();
-  if (body.default_tab !== void 0) updated.default_tab = String(body.default_tab ?? "").trim() || "\u0110\u01A1n h\xE0ng";
-  if (Array.isArray(body.product_mappings)) {
-    updated.product_mappings = body.product_mappings.map((m) => ({
-      product_name: String(m.product_name ?? "").trim(),
-      sheet_tab: String(m.sheet_tab ?? "").trim()
-    })).filter((m) => m.product_name && m.sheet_tab);
+  const cfg = readJson2("sheets_config", {}) ?? {};
+  if (typeof body.spreadsheet_id === "string")
+    cfg.spreadsheet_id = body.spreadsheet_id.trim();
+  if (typeof body.default_tab === "string" && body.default_tab.trim())
+    cfg.default_tab = body.default_tab.trim();
+  if (typeof body.market_tab === "string" && body.market_tab.trim())
+    cfg.market_tab = body.market_tab.trim();
+  if (typeof body.sync_enabled === "boolean")
+    cfg.sync_enabled = body.sync_enabled;
+  if (body.tab_mappings && typeof body.tab_mappings === "object")
+    cfg.tab_mappings = body.tab_mappings;
+  try {
+    fs2.mkdirSync(DATA_DIR2, { recursive: true });
+    fs2.writeFileSync(dataFile2("sheets_config"), JSON.stringify(cfg, null, 2), "utf-8");
+    res.json({ ok: true, message: "\u0110\xE3 l\u01B0u c\u1EA5u h\xECnh Google Sheets" });
+  } catch (e) {
+    res.status(500).json({ ok: false, message: `L\u1ED7i l\u01B0u c\u1EA5u h\xECnh: ${e.message}` });
   }
-  writeJson2("sheets_config", updated);
-  res.json({ ok: true, ...updated });
 });
-router4.get("/bot/sheets-synced", requireAuth3, (_req, res) => {
-  const synced = readJson2("sheets_synced", {}) ?? {};
-  const entries = Object.entries(synced).map(([orderId, syncedAt]) => ({ orderId, syncedAt })).sort((a, b) => b.syncedAt.localeCompare(a.syncedAt));
-  res.json({ count: entries.length, entries: entries.slice(0, 300) });
+router4.get("/bot/sheets/status", requireAuth3, (_req, res) => {
+  const raw = (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").trim();
+  if (!raw) {
+    res.json({
+      connected: false,
+      message: "Ch\u01B0a c\u1EA5u h\xECnh Secret GOOGLE_SERVICE_ACCOUNT_JSON trong Replit.",
+      fix: "V\xE0o Replit \u2192 Secrets \u2192 Th\xEAm key: GOOGLE_SERVICE_ACCOUNT_JSON v\u1EDBi n\u1ED9i dung file JSON Service Account."
+    });
+    return;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    res.json({
+      connected: false,
+      message: "GOOGLE_SERVICE_ACCOUNT_JSON kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7.",
+      fix: "Ki\u1EC3m tra l\u1EA1i n\u1ED9i dung Secret \u2014 ph\u1EA3i l\xE0 file JSON Service Account nguy\xEAn v\u1EB9n."
+    });
+    return;
+  }
+  const required = ["type", "project_id", "private_key", "client_email", "token_uri"];
+  const missing = required.filter((k) => !parsed[k]);
+  if (missing.length > 0) {
+    res.json({
+      connected: false,
+      message: `JSON thi\u1EBFu tr\u01B0\u1EDDng b\u1EAFt bu\u1ED9c: ${missing.join(", ")}`,
+      fix: "T\u1EA3i l\u1EA1i file JSON Service Account t\u1EEB Google Cloud Console v\xE0 c\u1EADp nh\u1EADt Secret."
+    });
+    return;
+  }
+  if (parsed.type !== "service_account") {
+    res.json({
+      connected: false,
+      message: `Lo\u1EA1i credentials kh\xF4ng h\u1EE3p l\u1EC7: "${parsed.type}". C\u1EA7n "service_account".`,
+      fix: "\u0110\u1EA3m b\u1EA3o t\u1EA3i \u0111\xFAng lo\u1EA1i key JSON (Service Account Key) t\u1EEB Google Cloud."
+    });
+    return;
+  }
+  res.json({
+    connected: true,
+    message: "\u0110\xE3 k\u1EBFt n\u1ED1i Google Sheets th\xE0nh c\xF4ng.",
+    project_id: parsed.project_id,
+    client_email: parsed.client_email
+  });
 });
 var sheetsSettings_default = router4;
 
