@@ -53574,12 +53574,21 @@ router4.put("/bot/sheets/config", requireAuth3, (req, res) => {
   }
 });
 router4.get("/bot/sheets/status", requireAuth3, (_req, res) => {
-  const raw = (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").trim();
+  let raw = (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").trim();
+  if (!raw) {
+    const saFile = path2.join(DATA_DIR2, "google_sa.json");
+    if (fs2.existsSync(saFile)) {
+      try {
+        raw = fs2.readFileSync(saFile, "utf-8").trim();
+      } catch {
+      }
+    }
+  }
   if (!raw) {
     res.json({
       connected: false,
-      message: "Ch\u01B0a c\u1EA5u h\xECnh Secret GOOGLE_SERVICE_ACCOUNT_JSON trong Replit.",
-      fix: "V\xE0o Replit \u2192 Secrets \u2192 Th\xEAm key: GOOGLE_SERVICE_ACCOUNT_JSON v\u1EDBi n\u1ED9i dung file JSON Service Account."
+      message: "Ch\u01B0a c\u1EA5u h\xECnh Secret GOOGLE_SERVICE_ACCOUNT_JSON.",
+      fix: "Replit: V\xE0o Secrets \u2192 Th\xEAm GOOGLE_SERVICE_ACCOUNT_JSON. VPS: Upload file data/google_sa.json."
     });
     return;
   }

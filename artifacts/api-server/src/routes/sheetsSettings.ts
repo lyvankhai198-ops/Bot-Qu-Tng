@@ -74,13 +74,21 @@ router.put("/bot/sheets/config", requireAuth, (req: any, res: any) => {
 // Kiểm tra GOOGLE_SERVICE_ACCOUNT_JSON secret — không cần gọi API Google,
 // chỉ xác nhận secret tồn tại và đúng định dạng.
 router.get("/bot/sheets/status", requireAuth, (_req: any, res: any) => {
-  const raw = (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").trim();
+  let raw = (process.env.GOOGLE_SERVICE_ACCOUNT_JSON ?? "").trim();
+
+  // Fallback: đọc từ data/google_sa.json (dùng trên VPS khi không có env var)
+  if (!raw) {
+    const saFile = path.join(DATA_DIR, "google_sa.json");
+    if (fs.existsSync(saFile)) {
+      try { raw = fs.readFileSync(saFile, "utf-8").trim(); } catch { /* ignore */ }
+    }
+  }
 
   if (!raw) {
     res.json({
       connected: false,
-      message:   "Chưa cấu hình Secret GOOGLE_SERVICE_ACCOUNT_JSON trong Replit.",
-      fix:       "Vào Replit → Secrets → Thêm key: GOOGLE_SERVICE_ACCOUNT_JSON với nội dung file JSON Service Account.",
+      message:   "Chưa cấu hình Secret GOOGLE_SERVICE_ACCOUNT_JSON.",
+      fix:       "Replit: Vào Secrets → Thêm GOOGLE_SERVICE_ACCOUNT_JSON. VPS: Upload file data/google_sa.json.",
     });
     return;
   }

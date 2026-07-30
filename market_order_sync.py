@@ -577,6 +577,11 @@ def _sync_to_sheets(new_orders: list) -> dict:
         from google.oauth2.service_account import Credentials  # type: ignore
         sa_json_str = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
         if not sa_json_str:
+            # Fallback: đọc từ file data/google_sa.json (dùng trên VPS)
+            sa_file = DATA_DIR / "google_sa.json"
+            if sa_file.exists():
+                sa_json_str = sa_file.read_text(encoding="utf-8").strip()
+        if not sa_json_str:
             return {"skipped": True, "reason": "Chưa cấu hình GOOGLE_SERVICE_ACCOUNT_JSON"}
         sa_info = json.loads(sa_json_str)
         creds   = Credentials.from_service_account_info(
