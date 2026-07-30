@@ -2,7 +2,7 @@
  * sheets-sync.tsx — Trang "Đồng bộ Sheet"
  * Cấu hình Google Sheets: Spreadsheet ID, tab mặc định, ánh xạ sản phẩm → tab
  */
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,8 +10,11 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from "@/components/ui/dialog"
+import {
   Save, Loader2, Plus, Trash2, RefreshCw,
-  TableProperties, Wifi, WifiOff, BookOpen, CheckCircle2, Upload,
+  TableProperties, Wifi, WifiOff, BookOpen, CheckCircle2, Upload, ChevronRight,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -93,7 +96,9 @@ function ConnectionStatus() {
 export default function SheetsSync() {
   const { toast } = useToast()
 
-  const [pushing, setPushing] = useState(false)
+  const [pushing,       setPushing]       = useState(false)
+  const [showPushDlg,   setShowPushDlg]   = useState(false)
+  const [selectedTab,   setSelectedTab]   = useState("all")
 
   const [cfg,     setCfg]     = useState<SheetsConfig>({
     spreadsheet_id: "", default_tab: "Đơn hàng", market_tab: "Đơn hàng chợ",
@@ -128,15 +133,15 @@ export default function SheetsSync() {
 
   useEffect(() => { loadConfig(); loadSynced() }, [loadConfig, loadSynced])
 
-  async function pushAll() {
+  async function pushAll(tab: string) {
+    setShowPushDlg(false)
     setPushing(true)
     try {
-      const res = await apiFetch("POST", "/bot/sheets/push-all")
-      // Tạo mô tả chi tiết từng tab
+      const res = await apiFetch("POST", "/bot/sheets/push-all", { tab })
       let desc = res.message ?? ""
       if (res.ok && res.tab_summary && Object.keys(res.tab_summary).length > 0) {
         const tabLines = Object.entries(res.tab_summary as Record<string, number>)
-          .map(([tab, count]) => `• ${tab}: ${count} đơn`)
+          .map(([t, count]) => `• ${t}: ${count} đơn`)
           .join("\n")
         desc = `${desc}\n${tabLines}`
       }
@@ -169,6 +174,14 @@ export default function SheetsSync() {
     setNewKw(""); setNewTab("")
   }
 
+  // Tính danh sách tab có thể chọn để đẩy
+  const pushTabOptions = useMemo(() => {
+    const tabs = new Set<string>()
+    Object.values(cfg.tab_mappings).forEach(t => tabs.add(t.trim()))
+    if (cfg.default_tab) tabs.add(cfg.default_tab.trim())
+    return Array.from(tabs).filter(Boolean)
+  }, [cfg.tab_mappings, cfg.default_tab])
+
   function removeMapping(kw: string) {
     setCfg(c => {
       const m = { ...c.tab_mappings }
@@ -199,10 +212,10 @@ export default function SheetsSync() {
               ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Đang lưu…</>
               : <><Save    className="h-4 w-4 mr-2" />Lưu cấu hình</>}
           </Button>
-          <Button variant="outline" onClick={pushAll} disabled={pushing || loading}>
+          <Button variant="outline" onClick={() => setShowPushDlg(true)} disabled={pushing || loading}>
             {pushing
               ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Đang đẩy…</>
-              : <><Upload  className="h-4 w-4 mr-2" />Đẩy tất cả lên Sheet</>}
+              : <><Upload  className="h-4 w-4 mr-2" />Đẩy lên Sheet</>}
           </Button>
         </div>
       </div>
@@ -397,6 +410,60 @@ export default function SheetsSync() {
           </Card>
         </>
       )}
+
+      {/* Dialog chọn loại đẩy */}
+      <Dialog open={showPushDlg} onOpenChange={setShowPushDlg}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="h-5 w-5 text-primary" />
+              Chọn loại đơn cần đẩy lên Sheet
+            </DialogTitle>
+            <DialogDescription>
+              Chọn tab muốn đẩy, hoặc đẩy tất cả cùng lúc.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 py-1">
+            {/* Đẩy tất cả */}
+            <button
+              onClick={() => { setSelectedTab("all"); pushAll("all") }}
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border text-sm font-medium transition-colors
+                ${selectedTab === "all"
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "hover:bg-muted border-border"}`}
+            >
+              <span>🗂 Tất cả đơn</span>
+              <ChevronRight className="h-4 w-4 opacity-50" />
+            </button>
+
+            {/* Từng tab */}
+            {pushTabOptions.map(tab => (
+              <button
+                key={tab}
+                onClick={() => { setSelectedTab(tab); pushAll(tab) }}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border text-sm transition-colors
+                  ${selectedTab === tab
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "hover:bg-muted border-border"}`}
+              >
+                <span>📋 {tab}</span>
+                <ChevronRight className="h-4 w-4 opacity-50" />
+              </button>
+            ))}
+
+            {pushTabOptions.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-2">
+                Chưa có ánh xạ tab — thêm ở mục "Ánh xạ sản phẩm" bên dưới
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowPushDlg(false)}>Hủy</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

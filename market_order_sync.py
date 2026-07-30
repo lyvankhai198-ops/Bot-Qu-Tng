@@ -888,34 +888,59 @@ def sync_market_orders(config: dict | None = None) -> dict:
 
 # ── Push-all: đẩy toàn bộ đơn trong DB lên Sheets (bỏ qua đã sync) ───────────
 
-def push_all_to_sheets() -> dict:
+def push_all_to_sheets(filter_tab: str | None = None) -> dict:
     """
-    Đẩy tất cả đơn trong market_orders.json lên Google Sheets.
-    Bỏ qua đơn đã có trong market_sheets_synced.json (chống trùng).
-    Không cần đăng nhập web — chỉ cần credentials + config.
+    Đẩy đơn trong market_orders.json lên Google Sheets.
+    filter_tab=None/"all" → đẩy tất cả
+    filter_tab="Kling 66" → chỉ đẩy đơn resolve về tab "Kling 66"
     """
     orders_dict: dict = _load_json(MARKET_ORDERS_FILE, {})
     if not orders_dict:
         return {"ok": False, "message": "Không có đơn nào trong DB để đẩy lên Sheet."}
 
+    config: dict    = _load_json(DATA_DIR / "sheets_config.json", {})
+    tab_mappings    = config.get("tab_mappings") or {}
+    default_tab     = (config.get("default_tab") or "Đơn Hàng").strip()
+
     all_orders = list(orders_dict.values())
+
+    # Lọc theo tab nếu được chỉ định
+    if filter_tab and filter_tab != "all":
+        all_orders = [
+            o for o in all_orders
+            if _resolve_tab(o.get("product_name", ""), tab_mappings, default_tab) == filter_tab
+        ]
+        if not all_orders:
+            return {
+                "ok": True, "added": 0, "skipped_dup": 0, "errors": [], "tab_summary": {},
+                "message": f"Không có đơn nào thuộc tab '{filter_tab}'.",
+            }
+
     result = _sync_to_sheets(all_orders)
 
     if result.get("skipped"):
         return {"ok": False, "message": result.get("reason", "Chưa cấu hình Google Sheets.")}
 
-    added     = result.get("added",       0)
-    skipped   = result.get("skipped_dup", 0)
-    errors    = result.get("errors",      [])
-    msg = f"✔ Đẩy lên Sheet: +{added} đơn mới, {skipped} đã có, {len(errors)} lỗi"
+    added    = result.get("added",       0)
+    skipped  = result.get("skipped_dup", 0)
+    errors   = result.get("errors",      [])
+    tab_sum  = result.get("tab_summary", {})
+    scope    = f"tab '{filter_tab}'" if filter_tab and filter_tab != "all" else "tất cả"
+    msg = f"✔ Đẩy {scope} lên Sheet: +{added} đơn mới, {skipped} đã có, {len(errors)} lỗi"
     logger.info(msg)
-    return {"ok": True, "message": msg, "added": added, "skipped_dup": skipped, "errors": errors}
+    return {"ok": True, "message": msg, "added": added, "skipped_dup": skipped,
+            "errors": errors, "tab_summary": tab_sum}
 
 
 # ── CLI entry ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys as _sys
     if len(_sys.argv) > 1 and _sys.argv[1] == "--push-all":
-        print(json.dumps(push_all_to_sheets(), ensure_ascii=False, indent=2))
+        tab_filter = None
+        if "--tab" in _sys.argv:
+            idx = _sys.argv.index("--tab")
+            if idx + 1 < len(_sys.argv):
+                tab_filter = _sys.argv[idx + 1]
+        print(json.dumps(push_all_to_sheets(filter_tab=tab_filter), ensure_ascii=False, indent=2))
     else:
         print(json.dumps(sync_market_orders(), ensure_ascii=False, indent=2))
