@@ -2119,8 +2119,8 @@ def _warranty_acked_markup(req_id: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton("✅ Đã tiếp nhận", callback_data="warranty_noop"),
     ]])
 
-def _tg_send_markup(token: str, chat_id: int, text: str, markup: dict | None = None, max_retries: int = 3) -> bool:
-    """Send message with optional inline keyboard; retries up to max_retries times."""
+def _tg_send_markup(token: str, chat_id: int, text: str, markup: dict | None = None, max_retries: int = 3) -> int | None:
+    """Send message with optional inline keyboard; returns message_id on success, None on failure."""
     payload: dict = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if markup:
         payload["reply_markup"] = markup
@@ -2131,13 +2131,26 @@ def _tg_send_markup(token: str, chat_id: int, text: str, markup: dict | None = N
             req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
             with urllib.request.urlopen(req, timeout=10) as resp:
                 if resp.status == 200:
-                    return True
+                    body = _json.loads(resp.read())
+                    return body.get("result", {}).get("message_id")
         except Exception as e:
             logger.warning(f"TG send markup attempt {attempt+1} failed for chat {chat_id}: {e}")
             if attempt < max_retries - 1:
                 time.sleep(1)
     db.add_log("NOTIF_SEND_FAIL", f"chat_id={chat_id}", "bot")
-    return False
+    return None
+
+def _tg_delete_message(token: str, chat_id: int, message_id: int) -> bool:
+    """Delete a previously sent message. Silently ignores 'message not found' errors."""
+    try:
+        url = f"https://api.telegram.org/bot{token}/deleteMessage"
+        data = _json.dumps({"chat_id": chat_id, "message_id": message_id}).encode()
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except Exception as e:
+        logger.debug(f"TG delete message {message_id} in {chat_id}: {e}")
+        return False
 
 def _build_group_notif_msg(req: dict, tag: str = "🔔", urgency: str = "") -> str:
     accounts = req.get("accounts", [])
@@ -2214,8 +2227,12 @@ def _notify_admins_warranty(req: dict, order: dict | None = None) -> None:
 
         msg    = _build_warranty_notif_msg(req, order)
         markup = _warranty_admin_markup(req_id)
+        # Lưu message_id của từng admin để xóa khi nhắc lại
+        admin_msg_ids: dict[str, int] = {}
         for aid in admin_ids:
-            _tg_send_markup(TOKEN, aid, msg, markup)
+            mid = _tg_send_markup(TOKEN, aid, msg, markup)
+            if mid:
+                admin_msg_ids[str(aid)] = mid
 
         # Persist notification state and schedule first reminder
         now_dt = datetime.now()
@@ -2223,6 +2240,7 @@ def _notify_admins_warranty(req: dict, order: dict | None = None) -> None:
         next_reminder = (now_dt + timedelta(minutes=r1_min)).isoformat()
         db.update_warranty_request(req_id, {
             "adminNotifiedAt": now_dt.isoformat(),
+            "adminMsgIds":     admin_msg_ids,   # {chat_id: message_id}
             "reminderEnabled": True,
             "reminderCount": 0,
             "nextReminderAt": next_reminder,
@@ -2289,14 +2307,26 @@ def warranty_reminder_worker() -> None:
                     order = db.get_order(req.get("orderId", ""))
                     tag, suffix, log_action, next_delta = _REMINDER_STAGES[reminder_count]
 
-                    msg = _build_warranty_notif_msg(req, order, tag, suffix)
+                    # Xóa tin nhắn cũ của từng admin trước khi gửi tin nhắc mới
+                    prev_msg_ids: dict = req.get("adminMsgIds") or {}
                     for aid in admin_ids:
-                        _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
+                        old_mid = prev_msg_ids.get(str(aid))
+                        if old_mid:
+                            _tg_delete_message(TOKEN, aid, int(old_mid))
+
+                    # Gửi tin nhắc mới và lưu message_id mới
+                    msg = _build_warranty_notif_msg(req, order, tag, suffix)
+                    new_msg_ids: dict[str, int] = {}
+                    for aid in admin_ids:
+                        mid = _tg_send_markup(TOKEN, aid, msg, _warranty_admin_markup(req_id))
+                        if mid:
+                            new_msg_ids[str(aid)] = mid
 
                     new_count = reminder_count + 1
                     update = {
-                        "reminderCount": new_count,
-                        "lastReminderAt": now_dt.isoformat(),
+                        "reminderCount":    new_count,
+                        "lastReminderAt":   now_dt.isoformat(),
+                        "adminMsgIds":      new_msg_ids,   # cập nhật msg_id mới nhất
                         "reminderProcessing": False,
                     }
                     if next_delta is not None:
