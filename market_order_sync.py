@@ -818,6 +818,36 @@ def sync_market_orders(config: dict | None = None) -> dict:
     return result
 
 
+# ── Push-all: đẩy toàn bộ đơn trong DB lên Sheets (bỏ qua đã sync) ───────────
+
+def push_all_to_sheets() -> dict:
+    """
+    Đẩy tất cả đơn trong market_orders.json lên Google Sheets.
+    Bỏ qua đơn đã có trong market_sheets_synced.json (chống trùng).
+    Không cần đăng nhập web — chỉ cần credentials + config.
+    """
+    orders_dict: dict = _load_json(MARKET_ORDERS_FILE, {})
+    if not orders_dict:
+        return {"ok": False, "message": "Không có đơn nào trong DB để đẩy lên Sheet."}
+
+    all_orders = list(orders_dict.values())
+    result = _sync_to_sheets(all_orders)
+
+    if result.get("skipped"):
+        return {"ok": False, "message": result.get("reason", "Chưa cấu hình Google Sheets.")}
+
+    added     = result.get("added",       0)
+    skipped   = result.get("skipped_dup", 0)
+    errors    = result.get("errors",      [])
+    msg = f"✔ Đẩy lên Sheet: +{added} đơn mới, {skipped} đã có, {len(errors)} lỗi"
+    logger.info(msg)
+    return {"ok": True, "message": msg, "added": added, "skipped_dup": skipped, "errors": errors}
+
+
 # ── CLI entry ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print(json.dumps(sync_market_orders(), ensure_ascii=False, indent=2))
+    import sys as _sys
+    if len(_sys.argv) > 1 and _sys.argv[1] == "--push-all":
+        print(json.dumps(push_all_to_sheets(), ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps(sync_market_orders(), ensure_ascii=False, indent=2))

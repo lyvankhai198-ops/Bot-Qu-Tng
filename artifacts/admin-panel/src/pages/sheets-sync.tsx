@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import {
   Save, Loader2, Plus, Trash2, RefreshCw,
-  TableProperties, Wifi, WifiOff, BookOpen, CheckCircle2,
+  TableProperties, Wifi, WifiOff, BookOpen, CheckCircle2, Upload,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -93,6 +93,8 @@ function ConnectionStatus() {
 export default function SheetsSync() {
   const { toast } = useToast()
 
+  const [pushing, setPushing] = useState(false)
+
   const [cfg,     setCfg]     = useState<SheetsConfig>({
     spreadsheet_id: "", default_tab: "Đơn hàng", market_tab: "Đơn hàng chợ",
     sync_enabled: false, tab_mappings: {},
@@ -125,6 +127,18 @@ export default function SheetsSync() {
   }, [])
 
   useEffect(() => { loadConfig(); loadSynced() }, [loadConfig, loadSynced])
+
+  async function pushAll() {
+    setPushing(true)
+    try {
+      const res = await apiFetch("POST", "/bot/sheets/push-all")
+      toast({ title: res.ok ? "✅ Hoàn tất" : "Lỗi", description: res.message,
+              variant: res.ok ? "default" : "destructive" })
+      if (res.ok) loadSynced()
+    } catch (e: any) {
+      toast({ title: "Lỗi đẩy Sheet", description: e.message, variant: "destructive" })
+    } finally { setPushing(false) }
+  }
 
   async function save() {
     setSaving(true)
@@ -171,11 +185,18 @@ export default function SheetsSync() {
             Tự động ghi đơn hàng mới vào đúng bảng Sheet theo loại sản phẩm
           </p>
         </div>
-        <Button onClick={save} disabled={saving || loading} className="self-start sm:self-auto">
-          {saving
-            ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Đang lưu…</>
-            : <><Save    className="h-4 w-4 mr-2" />Lưu cấu hình</>}
-        </Button>
+        <div className="flex gap-2 flex-wrap self-start sm:self-auto">
+          <Button onClick={save} disabled={saving || loading}>
+            {saving
+              ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Đang lưu…</>
+              : <><Save    className="h-4 w-4 mr-2" />Lưu cấu hình</>}
+          </Button>
+          <Button variant="outline" onClick={pushAll} disabled={pushing || loading}>
+            {pushing
+              ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Đang đẩy…</>
+              : <><Upload  className="h-4 w-4 mr-2" />Đẩy tất cả lên Sheet</>}
+          </Button>
+        </div>
       </div>
 
       {/* Trạng thái kết nối */}

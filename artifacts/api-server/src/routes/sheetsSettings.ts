@@ -134,6 +134,35 @@ router.get("/bot/sheets/status", requireAuth, (_req: any, res: any) => {
   });
 });
 
+// ── POST /bot/sheets/push-all ─────────────────────────────────────────────────
+// Đẩy tất cả đơn trong market_orders.json lên Sheets (bỏ qua đã sync)
+router.post("/bot/sheets/push-all", requireAuth, (_req: any, res: any) => {
+  const { spawn } = require("child_process");
+  const pathMod   = require("path");
+  const BASE_DIR  = path.resolve(DATA_DIR, "../..");
+  const pythonBin = process.env.PYTHON_BIN ?? "python3";
+  const script    = pathMod.join(BASE_DIR, "market_order_sync.py");
+
+  const child = spawn(pythonBin, [script, "--push-all"], {
+    env: { ...process.env, DATA_DIR },
+    cwd: BASE_DIR,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let out = "";
+  child.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
+  child.stderr?.on("data", (d: Buffer) => { console.error("[push-all]", d.toString().trim()); });
+
+  child.on("close", (code: number) => {
+    try {
+      const result = JSON.parse(out.trim());
+      res.json(result);
+    } catch {
+      res.json({ ok: code === 0, message: out.trim() || `Exit ${code}` });
+    }
+  });
+});
+
 // ── GET /bot/sheets/synced ─────────────────────────────────────────────────────
 // Trả danh sách đơn đã được ghi lên Google Sheets (từ market_sheets_synced.json)
 router.get("/bot/sheets/synced", requireAuth, (_req: any, res: any) => {

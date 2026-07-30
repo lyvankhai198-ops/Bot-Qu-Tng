@@ -53628,6 +53628,33 @@ router4.get("/bot/sheets/status", requireAuth3, (_req, res) => {
     client_email: parsed.client_email
   });
 });
+router4.post("/bot/sheets/push-all", requireAuth3, (_req, res) => {
+  const { spawn } = __require("child_process");
+  const pathMod = __require("path");
+  const BASE_DIR2 = path2.resolve(DATA_DIR2, "../..");
+  const pythonBin = process.env.PYTHON_BIN ?? "python3";
+  const script = pathMod.join(BASE_DIR2, "market_order_sync.py");
+  const child = spawn(pythonBin, [script, "--push-all"], {
+    env: { ...process.env, DATA_DIR: DATA_DIR2 },
+    cwd: BASE_DIR2,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let out = "";
+  child.stdout?.on("data", (d) => {
+    out += d.toString();
+  });
+  child.stderr?.on("data", (d) => {
+    console.error("[push-all]", d.toString().trim());
+  });
+  child.on("close", (code) => {
+    try {
+      const result = JSON.parse(out.trim());
+      res.json(result);
+    } catch {
+      res.json({ ok: code === 0, message: out.trim() || `Exit ${code}` });
+    }
+  });
+});
 router4.get("/bot/sheets/synced", requireAuth3, (_req, res) => {
   const synced = readJson2("market_sheets_synced", {}) ?? {};
   const entries = Object.entries(synced).map(([order_id, info]) => ({
