@@ -548,14 +548,30 @@ MARKET_SHEET_HEADERS = [
 def _resolve_tab(product_name: str, tab_mappings: dict, default_tab: str) -> str:
     """
     Tìm tab phù hợp cho đơn hàng dựa theo product_name.
-    So sánh case-insensitive substring: nếu từ khóa có trong tên sản phẩm → dùng tab đó.
-    Không khớp → default_tab.
+
+    Thuật toán word-overlap:
+      - Tách keyword thành từng từ riêng (bỏ từ ≤1 ký tự)
+      - Đếm số từ của keyword xuất hiện trong product_name (case-insensitive)
+      - keyword 1 từ  → cần khớp đúng từ đó
+      - keyword ≥2 từ → cần khớp ≥2 từ
+      - Ưu tiên keyword có số từ khớp NHIỀU NHẤT (match cụ thể hơn thắng)
+      - Không khớp → default_tab
     """
     name_lower = product_name.lower()
+    best_tab   = None
+    best_score = 0                        # số từ khớp tốt nhất
+
     for keyword, tab in tab_mappings.items():
-        if keyword.strip().lower() in name_lower:
-            return tab.strip()
-    return default_tab
+        words = [w for w in keyword.strip().lower().split() if len(w) > 1]
+        if not words:
+            continue
+        matched   = sum(1 for w in words if w in name_lower)
+        threshold = 1 if len(words) == 1 else 2
+        if matched >= threshold and matched > best_score:
+            best_score = matched
+            best_tab   = tab.strip()
+
+    return best_tab if best_tab else default_tab
 
 
 def _get_or_create_worksheet(spreadsheet, tab_name: str, headers: list):
