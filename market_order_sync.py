@@ -545,29 +545,55 @@ MARKET_SHEET_HEADERS = [
     "Tạo lúc", "Số dư sau GD", "Ngày đồng bộ",
 ]
 
+# Từ quá chung, không dùng làm tiêu chí phân biệt sản phẩm
+_MATCH_STOPWORDS = {
+    'bhf', 'bh', 'kbh', 'plus', 'pro', 'team', 'super', 'ai', 'api',
+    'cdk', 'admin', 'days', 'day', 'month', 'months', 'year', 'years',
+    'slot', 'mã', 'redeem', 'credit', 'token', 'plan', 'pack', 'web',
+    # viết tắt thời gian
+    '1d', '3d', '5d', '7d', '14d', '30d', '35d', '45d', '60d', '90d',
+    '1m', '2m', '3m', '6m', '12m', '24h', '1th', '3th', '6th', '12th',
+    # số đơn lẻ
+    '1', '2', '3', '4', '5', '6', '7',
+}
+
+import re as _re
+
+def _brand_words(keyword: str) -> list[str]:
+    """
+    Tách keyword thành từ "thương hiệu" (bỏ stop words).
+    CamelCase → tách thành từng từ riêng:  ChatGPT → ['chat', 'gpt']
+    """
+    # Tách CamelCase: "ChatGPT" → "Chat GPT", "CapCut" → "Cap Cut"
+    spaced = _re.sub(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ', keyword)
+    words  = [w.lower() for w in spaced.split() if len(w) > 1]
+    brand  = [w for w in words if w not in _MATCH_STOPWORDS]
+    return brand if brand else words          # fallback: dùng tất cả nếu toàn stop word
+
+
 def _resolve_tab(product_name: str, tab_mappings: dict, default_tab: str) -> str:
     """
     Tìm tab phù hợp cho đơn hàng dựa theo product_name.
 
-    Thuật toán word-overlap:
-      - Tách keyword thành từng từ riêng (bỏ từ ≤1 ký tự)
-      - Đếm số từ của keyword xuất hiện trong product_name (case-insensitive)
-      - keyword 1 từ  → cần khớp đúng từ đó
-      - keyword ≥2 từ → cần khớp ≥2 từ
-      - Ưu tiên keyword có số từ khớp NHIỀU NHẤT (match cụ thể hơn thắng)
-      - Không khớp → default_tab
+    Thuật toán:
+      1. Tách keyword thành "brand words" (loại stop words như BHF, 30D…)
+      2. Mỗi brand word → kiểm tra có xuất hiện trong product_name không
+         (so sánh cả có dấu cách lẫn không có — xử lý "chatgpt" ≈ "chat gpt")
+      3. Cần ≥1 brand word khớp
+      4. Ưu tiên keyword có số brand word khớp nhiều nhất (cụ thể hơn)
     """
-    name_lower = product_name.lower()
-    best_tab   = None
-    best_score = 0                        # số từ khớp tốt nhất
+    name_lower   = product_name.lower()
+    name_nospace = name_lower.replace(' ', '')   # "chat gpt" → "chatgpt"
+    best_tab     = None
+    best_score   = 0
 
     for keyword, tab in tab_mappings.items():
-        words = [w for w in keyword.strip().lower().split() if len(w) > 1]
-        if not words:
-            continue
-        matched   = sum(1 for w in words if w in name_lower)
-        threshold = 1 if len(words) == 1 else 2
-        if matched >= threshold and matched > best_score:
+        brands = _brand_words(keyword)
+        matched = sum(
+            1 for w in brands
+            if w in name_lower or w in name_nospace
+        )
+        if matched >= 1 and matched > best_score:
             best_score = matched
             best_tab   = tab.strip()
 
