@@ -496,6 +496,30 @@ export default function SheetsSync() {
         </>
       )}
 
+      {/* Sticky save bar — luôn hiện khi có dữ liệu */}
+      {!loading && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-background/95 backdrop-blur border-t px-4 py-3 flex items-center justify-between gap-3 shadow-lg">
+          <span className="text-xs text-muted-foreground hidden sm:block">
+            Nhớ lưu sau khi chỉnh sửa cấu hình
+          </span>
+          <div className="flex gap-2 w-full sm:w-auto">
+            <Button onClick={save} disabled={saving} className="flex-1 sm:flex-none">
+              {saving
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Đang lưu…</>
+                : <><Save    className="h-4 w-4 mr-2" />Lưu cấu hình</>}
+            </Button>
+            <Button variant="outline" onClick={() => setShowPushDlg(true)} disabled={pushing} className="flex-1 sm:flex-none">
+              {pushing
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Đang đẩy…</>
+                : <><Upload  className="h-4 w-4 mr-2" />Đẩy lên Sheet</>}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Khoảng trống tránh bị sticky bar che */}
+      {!loading && <div className="h-20" />}
+
       {/* Dialog chọn loại đẩy */}
       <Dialog open={showPushDlg} onOpenChange={setShowPushDlg}>
         <DialogContent className="max-w-sm">
