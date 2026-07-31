@@ -146,10 +146,11 @@ router.post("/bot/sheets/push-all", requireAuth, (req: any, res: any) => {
   const pythonBin = process.env.PYTHON_BIN ?? "python3";
   const script    = pathMod.join(BASE_DIR, "market_order_sync.py");
 
-  const filterTab: string = (req.body?.tab ?? "all").toString().trim();
-  const args = filterTab && filterTab !== "all"
-    ? [script, "--push-all", "--tab", filterTab]
-    : [script, "--push-all"];
+  const filterTab: string = (req.body?.tab   ?? "all").toString().trim();
+  const force:     boolean = req.body?.force === true;
+  const args: string[] = [script, "--push-all"];
+  if (filterTab && filterTab !== "all") args.push("--tab", filterTab);
+  if (force) args.push("--force");
 
   const child = spawn(pythonBin, args, {
     env: { ...process.env, DATA_DIR },

@@ -972,11 +972,12 @@ def sync_market_orders(config: dict | None = None) -> dict:
 
 # ── Push-all: đẩy toàn bộ đơn trong DB lên Sheets (bỏ qua đã sync) ───────────
 
-def push_all_to_sheets(filter_tab: str | None = None) -> dict:
+def push_all_to_sheets(filter_tab: str | None = None, force: bool = False) -> dict:
     """
     Đẩy đơn trong market_orders.json lên Google Sheets.
     filter_tab=None/"all" → đẩy tất cả
     filter_tab="Kling 66" → chỉ đẩy đơn resolve về tab "Kling 66"
+    force=True → xoá cache synced của tab trước khi đẩy (đẩy lại toàn bộ)
     """
     orders_dict: dict = _load_json(MARKET_ORDERS_FILE, {})
     if not orders_dict:
@@ -998,6 +999,17 @@ def push_all_to_sheets(filter_tab: str | None = None) -> dict:
                 "ok": True, "added": 0, "skipped_dup": 0, "errors": [], "tab_summary": {},
                 "message": f"Không có đơn nào thuộc tab '{filter_tab}'.",
             }
+
+    # force=True → xoá record synced của các đơn sẽ được đẩy
+    if force:
+        synced: dict = _load_json(MARKET_SYNCED_FILE, {})
+        target_ids = {str(o.get("order_id", "")).strip().upper() for o in all_orders}
+        removed = sum(1 for oid in target_ids if oid in synced)
+        for oid in target_ids:
+            synced.pop(oid, None)
+        _save_json(MARKET_SYNCED_FILE, synced)
+        scope_log = f"tab '{filter_tab}'" if filter_tab and filter_tab != "all" else "tất cả"
+        logger.info(f"[push-all] Force re-push {scope_log}: đã xoá {removed} record synced")
 
     result = _sync_to_sheets(all_orders)
 
@@ -1025,7 +1037,8 @@ if __name__ == "__main__":
                 idx = _sys.argv.index("--tab")
                 if idx + 1 < len(_sys.argv):
                     tab_filter = _sys.argv[idx + 1]
-            print(json.dumps(push_all_to_sheets(filter_tab=tab_filter), ensure_ascii=False, indent=2))
+            force_flag = "--force" in _sys.argv
+            print(json.dumps(push_all_to_sheets(filter_tab=tab_filter, force=force_flag), ensure_ascii=False, indent=2))
         else:
             print(json.dumps(sync_market_orders(), ensure_ascii=False, indent=2))
     except Exception as _e:

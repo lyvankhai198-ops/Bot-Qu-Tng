@@ -108,6 +108,7 @@ export default function SheetsSync() {
   const [pushing,       setPushing]       = useState(false)
   const [showPushDlg,   setShowPushDlg]   = useState(false)
   const [selectedTab,   setSelectedTab]   = useState("all")
+  const [forceRepush,   setForceRepush]   = useState(false)
 
   const [cfg,     setCfg]     = useState<SheetsConfig>({
     spreadsheet_id: "", default_tab: "Đơn hàng", market_tab: "Đơn hàng chợ",
@@ -144,7 +145,7 @@ export default function SheetsSync() {
     setShowPushDlg(false)
     setPushing(true)
     try {
-      const res = await apiFetch("POST", "/bot/sheets/push-all", { tab })
+      const res = await apiFetch("POST", "/bot/sheets/push-all", { tab, force: forceRepush })
       let desc = res.message ?? ""
       if (res.ok && res.tab_summary && Object.keys(res.tab_summary).length > 0) {
         const tabLines = Object.entries(res.tab_summary as Record<string, number>)
@@ -533,6 +534,24 @@ export default function SheetsSync() {
             </DialogDescription>
           </DialogHeader>
 
+          {/* Toggle đẩy lại */}
+          <button
+            type="button"
+            onClick={() => setForceRepush(f => !f)}
+            className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm transition-colors
+              ${forceRepush
+                ? "bg-orange-50 border-orange-400 text-orange-700 dark:bg-orange-950/40 dark:border-orange-600 dark:text-orange-400"
+                : "border-dashed border-muted-foreground/40 text-muted-foreground hover:bg-muted/40"}`}
+          >
+            <span className="flex items-center gap-2">
+              <RefreshCw className={`h-4 w-4 ${forceRepush ? "text-orange-500" : ""}`} />
+              {forceRepush ? "Đẩy lại (ghi đè đơn đã sync)" : "Chỉ đẩy đơn chưa sync"}
+            </span>
+            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${forceRepush ? "bg-orange-200 text-orange-700 dark:bg-orange-800 dark:text-orange-200" : "bg-muted text-muted-foreground"}`}>
+              {forceRepush ? "BẬT" : "TẮT"}
+            </span>
+          </button>
+
           <div className="space-y-2 py-1">
             {/* Đẩy tất cả */}
             <button
@@ -569,7 +588,7 @@ export default function SheetsSync() {
           </div>
 
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setShowPushDlg(false)}>Hủy</Button>
+            <Button variant="ghost" onClick={() => { setShowPushDlg(false); setForceRepush(false) }}>Hủy</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
