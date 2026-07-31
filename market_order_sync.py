@@ -664,8 +664,9 @@ def _setup_sheet_structure(ws, tab_name: str):
 
 def _trim_empty_rows(ws):
     """
-    Xoá các dòng trống ở cuối sheet (dưới dữ liệu thực).
+    Thu nhỏ sheet về đúng số dòng có dữ liệu.
     Giữ lại tối thiểu MARKET_DATA_START_ROW - 1 dòng (title + header).
+    Dùng resize() thay vì delete_rows() để tránh lỗi "cannot delete all non-frozen rows".
     """
     try:
         all_vals = ws.get_all_values()
@@ -675,11 +676,10 @@ def _trim_empty_rows(ws):
             if any(c.strip() for c in all_vals[last_data - 1]):
                 break
             last_data -= 1
-        # Xoá các dòng trống phía dưới
-        total = ws.row_count
-        if total > last_data:
-            ws.delete_rows(last_data + 1, total)
-            logger.info(f"[MARKET-SHEETS] Trim: xoá {total - last_data} dòng trống cuối")
+        target = max(last_data, MARKET_DATA_START_ROW - 1)
+        if ws.row_count > target:
+            ws.resize(rows=target)
+            logger.info(f"[MARKET-SHEETS] Trim: resize về {target} dòng")
     except Exception as e:
         logger.warning(f"[MARKET-SHEETS] Trim empty rows: {e}")
 
@@ -815,15 +815,12 @@ def _sync_to_sheets(new_orders: list, force: bool = False) -> dict:
             # force → xoá toàn bộ dữ liệu từ dòng 3 trở xuống, giữ title (row 1) + header (row 2)
             if force:
                 try:
-                    total_rows = ws.row_count
-                    if total_rows >= MARKET_DATA_START_ROW:
-                        ws.delete_rows(MARKET_DATA_START_ROW, total_rows)
-                        logger.info(
-                            f"[MARKET-SHEETS] Force: xoá {total_rows - MARKET_DATA_START_ROW + 1}"
-                            f" dòng dữ liệu cũ trong tab {tab_name!r}"
-                        )
-                    # Đảm bảo title + header đúng cấu trúc
+                    # batch_clear xoá nội dung, resize thu nhỏ grid — không dùng delete_rows
+                    # để tránh lỗi "cannot delete all non-frozen rows"
+                    ws.batch_clear([f"A{MARKET_DATA_START_ROW}:ZZ500000"])
+                    ws.resize(rows=MARKET_DATA_START_ROW - 1)
                     _setup_sheet_structure(ws, tab_name)
+                    logger.info(f"[MARKET-SHEETS] Force: đã reset tab {tab_name!r} về title+header")
                 except Exception as e:
                     logger.warning(f"[MARKET-SHEETS] Force clear tab {tab_name!r}: {e}")
 
