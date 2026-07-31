@@ -664,24 +664,37 @@ def _setup_sheet_structure(ws, tab_name: str):
 
 def _trim_empty_rows(ws):
     """
-    Thu nhỏ sheet về đúng số dòng có dữ liệu.
-    Giữ lại tối thiểu MARKET_DATA_START_ROW - 1 dòng (title + header).
-    Dùng resize() thay vì delete_rows() để tránh lỗi "cannot delete all non-frozen rows".
+    Thu nhỏ grid sheet về đúng số dòng có dữ liệu (xoá dòng trống cuối).
+    Dùng spreadsheet.batch_update với updateSheetProperties để set rowCount trực tiếp.
+    Nếu Google Sheets từ chối (ví dụ sheet có frozen rows), bỏ qua — không crash.
     """
     try:
         all_vals = ws.get_all_values()
         last_data = len(all_vals)
-        # Tìm dòng cuối cùng có dữ liệu (không kể trống)
+        # Tìm dòng cuối cùng có dữ liệu
         while last_data > (MARKET_DATA_START_ROW - 1):
             if any(c.strip() for c in all_vals[last_data - 1]):
                 break
             last_data -= 1
         target = max(last_data, MARKET_DATA_START_ROW - 1)
-        if ws.row_count > target:
-            ws.resize(rows=target)
-            logger.info(f"[MARKET-SHEETS] Trim: resize về {target} dòng")
+        current = ws.row_count
+        if current <= target:
+            return   # Không cần trim
+        # Dùng batch_update setRowCount — không xoá frozen rows
+        ws.spreadsheet.batch_update({
+            "requests": [{
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": ws.id,
+                        "gridProperties": {"rowCount": target},
+                    },
+                    "fields": "gridProperties.rowCount",
+                }
+            }]
+        })
+        logger.info(f"[MARKET-SHEETS] Trim: {current} → {target} dòng")
     except Exception as e:
-        logger.warning(f"[MARKET-SHEETS] Trim empty rows: {e}")
+        logger.debug(f"[MARKET-SHEETS] Trim empty rows skip: {e}")
 
 
 def _get_or_create_worksheet(spreadsheet, tab_name: str):
@@ -812,15 +825,31 @@ def _sync_to_sheets(new_orders: list, force: bool = False) -> dict:
                 ws_cache[tab_name] = _get_or_create_worksheet(spreadsheet, tab_name)
             ws = ws_cache[tab_name]
 
-            # force → xoá toàn bộ dữ liệu từ dòng 3 trở xuống, giữ title (row 1) + header (row 2)
+            # force → xoá content dòng 3+ rồi thu nhỏ grid, giữ title (row 1) + header (row 2)
             if force:
                 try:
-                    # batch_clear xoá nội dung, resize thu nhỏ grid — không dùng delete_rows
-                    # để tránh lỗi "cannot delete all non-frozen rows"
+                    # Bước 1: xoá nội dung toàn bộ vùng dữ liệu
                     ws.batch_clear([f"A{MARKET_DATA_START_ROW}:ZZ500000"])
-                    ws.resize(rows=MARKET_DATA_START_ROW - 1)
+                    # Bước 2: thu nhỏ grid — silent nếu Sheets từ chối (frozen rows, v.v.)
+                    target_rows = MARKET_DATA_START_ROW - 1
+                    if ws.row_count > target_rows:
+                        try:
+                            ws.spreadsheet.batch_update({
+                                "requests": [{
+                                    "updateSheetProperties": {
+                                        "properties": {
+                                            "sheetId": ws.id,
+                                            "gridProperties": {"rowCount": target_rows},
+                                        },
+                                        "fields": "gridProperties.rowCount",
+                                    }
+                                }]
+                            })
+                        except Exception:
+                            pass   # Grid size không quan trọng bằng content
+                    # Bước 3: đảm bảo title + header đúng
                     _setup_sheet_structure(ws, tab_name)
-                    logger.info(f"[MARKET-SHEETS] Force: đã reset tab {tab_name!r} về title+header")
+                    logger.info(f"[MARKET-SHEETS] Force: reset tab {tab_name!r} — content cleared")
                 except Exception as e:
                     logger.warning(f"[MARKET-SHEETS] Force clear tab {tab_name!r}: {e}")
 
