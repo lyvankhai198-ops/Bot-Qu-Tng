@@ -538,12 +538,16 @@ async def _do_market_playwright_sync(config: dict) -> dict:
 
 # ── Google Sheets sync (đơn hàng chợ) ─────────────────────────────────────────
 
+# Dòng 1: tiêu đề tab  →  "📦 ChatGPT BHF"
+# Dòng 2: header cột
+# Dòng 3+: dữ liệu (mới nhất ở trên)
+MARKET_SHEET_TITLE_PREFIX = "📦"
 MARKET_SHEET_HEADERS = [
-    "STT", "Mã đơn", "Seller bán", "Sản phẩm", "SL",
-    "Giá nguồn (mua)", "Số tiền (bán)", "Phí chợ",
-    "Trạng thái", "Trạng thái GD", "Hoàn tất (Chốt chợ)",
-    "Tạo lúc", "Số dư sau GD", "Ngày đồng bộ",
+    "STT", "Mã đơn", "Người bán", "Sản phẩm", "SL",
+    "Giá nguồn", "Giá bán", "Phí chợ", "Lợi nhuận",
+    "Trạng thái", "Ngày mua",
 ]
+MARKET_DATA_START_ROW = 3   # dữ liệu bắt đầu từ row 3
 
 import re as _re
 
@@ -627,12 +631,64 @@ def _resolve_tab(product_name: str, config: dict, default_tab: str) -> str:
     return best_tab if best_tab else default_tab
 
 
-def _get_or_create_worksheet(spreadsheet, tab_name: str, headers: list):
+def _parse_amount(val) -> float:
+    """Chuyển giá trị tiền tệ dạng string sang float. Trả 0.0 nếu lỗi."""
+    if val is None or val == "":
+        return 0.0
+    s = str(val).strip().replace("₫", "").replace("đ", "").replace(" ", "")
+    if "," in s and "." in s:
+        # "1.500,50" → Vietnamese: dấu chấm = ngàn, dấu phẩy = thập phân
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        # "1500,50" hoặc "150.000" (chỉ phẩy)
+        s = s.replace(",", "")
+    else:
+        s = s.replace(".", "")
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def _setup_sheet_structure(ws, tab_name: str):
+    """
+    Đảm bảo worksheet có đúng cấu trúc:
+      Row 1: tiêu đề tab  (📦 ChatGPT BHF)
+      Row 2: header cột
+    Không tạo thêm dòng trống.
+    Gọi khi tạo mới hoặc khi force-reset.
+    """
+    title_row = [f"{MARKET_SHEET_TITLE_PREFIX} {tab_name}"] + [""] * (len(MARKET_SHEET_HEADERS) - 1)
+    ws.update("A1", [title_row, MARKET_SHEET_HEADERS], value_input_option="USER_ENTERED")
+
+
+def _trim_empty_rows(ws):
+    """
+    Xoá các dòng trống ở cuối sheet (dưới dữ liệu thực).
+    Giữ lại tối thiểu MARKET_DATA_START_ROW - 1 dòng (title + header).
+    """
+    try:
+        all_vals = ws.get_all_values()
+        last_data = len(all_vals)
+        # Tìm dòng cuối cùng có dữ liệu (không kể trống)
+        while last_data > (MARKET_DATA_START_ROW - 1):
+            if any(c.strip() for c in all_vals[last_data - 1]):
+                break
+            last_data -= 1
+        # Xoá các dòng trống phía dưới
+        total = ws.row_count
+        if total > last_data:
+            ws.delete_rows(last_data + 1, total)
+            logger.info(f"[MARKET-SHEETS] Trim: xoá {total - last_data} dòng trống cuối")
+    except Exception as e:
+        logger.warning(f"[MARKET-SHEETS] Trim empty rows: {e}")
+
+
+def _get_or_create_worksheet(spreadsheet, tab_name: str):
     """
     Lấy worksheet theo tên (exact → case-insensitive → tạo mới).
-    Không bao giờ tạo tab mới nếu đã có tab khớp case-insensitive.
+    Tab mới: 2 dòng (title + header), không tạo sẵn dòng trống.
     """
-    # ── Lấy danh sách tất cả worksheets 1 lần ─────────────────────────────────
     all_ws = spreadsheet.worksheets()
     name_lower = tab_name.strip().lower()
 
@@ -647,9 +703,13 @@ def _get_or_create_worksheet(spreadsheet, tab_name: str, headers: list):
             logger.info(f"[MARKET-SHEETS] Tab khớp gần đúng: {w.title!r} ≈ {tab_name!r}")
             return w
 
-    # Không tìm thấy → tạo mới
-    ws = spreadsheet.add_worksheet(title=tab_name, rows=5000, cols=len(headers))
-    ws.append_row(headers, value_input_option="USER_ENTERED")
+    # Không tìm thấy → tạo mới (chỉ 2 dòng: title + header)
+    ws = spreadsheet.add_worksheet(
+        title=tab_name,
+        rows=MARKET_DATA_START_ROW - 1,   # bắt đầu chỉ với title + header
+        cols=len(MARKET_SHEET_HEADERS),
+    )
+    _setup_sheet_structure(ws, tab_name)
     logger.info(f"[MARKET-SHEETS] Tạo mới tab: {tab_name!r}")
     return ws
 
@@ -749,18 +809,21 @@ def _sync_to_sheets(new_orders: list, force: bool = False) -> dict:
         logger.info(f"[MARKET-SHEETS] Tab {tab_name!r}: {len(orders)} đơn")
         try:
             if tab_name not in ws_cache:
-                ws_cache[tab_name] = _get_or_create_worksheet(
-                    spreadsheet, tab_name, MARKET_SHEET_HEADERS
-                )
+                ws_cache[tab_name] = _get_or_create_worksheet(spreadsheet, tab_name)
             ws = ws_cache[tab_name]
 
-            # force → xoá toàn bộ dữ liệu bên dưới header (dòng 1), giữ nguyên header
+            # force → xoá toàn bộ dữ liệu từ dòng 3 trở xuống, giữ title (row 1) + header (row 2)
             if force:
                 try:
                     total_rows = ws.row_count
-                    if total_rows > 1:
-                        ws.delete_rows(2, total_rows)
-                        logger.info(f"[MARKET-SHEETS] Force: đã xoá {total_rows - 1} dòng cũ trong tab {tab_name!r}")
+                    if total_rows >= MARKET_DATA_START_ROW:
+                        ws.delete_rows(MARKET_DATA_START_ROW, total_rows)
+                        logger.info(
+                            f"[MARKET-SHEETS] Force: xoá {total_rows - MARKET_DATA_START_ROW + 1}"
+                            f" dòng dữ liệu cũ trong tab {tab_name!r}"
+                        )
+                    # Đảm bảo title + header đúng cấu trúc
+                    _setup_sheet_structure(ws, tab_name)
                 except Exception as e:
                     logger.warning(f"[MARKET-SHEETS] Force clear tab {tab_name!r}: {e}")
 
@@ -774,33 +837,43 @@ def _sync_to_sheets(new_orders: list, force: bool = False) -> dict:
 
             for order in orders_sorted:
                 order_id = str(order.get("order_id", "")).strip().upper()
+
+                # Tính lợi nhuận = Giá bán − Giá nguồn − Phí chợ
+                sell  = _parse_amount(order.get("sell_price", ""))
+                cost  = _parse_amount(order.get("price",      ""))
+                fee_v = _parse_amount(order.get("fee",        ""))
+                profit = sell - cost - fee_v if (sell or cost or fee_v) else ""
+
+                # Ngày mua: ưu tiên completed_at, fallback created_at_raw
+                ngay_mua = (order.get("completed_at") or order.get("created_at_raw") or "")
+
                 row_data = [
-                    "",                               # STT — để trống, tự quản
-                    order_id,
-                    order.get("seller",       ""),
-                    order.get("product_name", ""),
-                    order.get("quantity",     ""),
-                    order.get("price",        ""),   # Giá nguồn (mua)
-                    order.get("sell_price",   ""),   # Số tiền (bán)
-                    order.get("fee",          ""),   # Phí chợ
-                    order.get("status",       ""),
-                    order.get("status_tx",    ""),   # Trạng thái giao dịch
-                    order.get("completed_at", ""),   # Chốt chợ lúc
-                    order.get("created_at_raw", ""),
-                    order.get("balance_after",""),
-                    now_str,                          # Ngày đồng bộ
+                    "=ROW()-2",                       # STT tự tính, không bị lệch khi insert
+                    order_id,                         # Mã đơn
+                    order.get("seller",       ""),    # Người bán
+                    order.get("product_name", ""),    # Sản phẩm
+                    order.get("quantity",     ""),    # SL
+                    order.get("price",        ""),    # Giá nguồn
+                    order.get("sell_price",   ""),    # Giá bán
+                    order.get("fee",          ""),    # Phí chợ
+                    profit,                           # Lợi nhuận
+                    order.get("status",       ""),    # Trạng thái
+                    ngay_mua,                         # Ngày mua
                 ]
                 rows_to_insert.append(row_data)
                 order_ids_ok.append(order_id)
 
-            # Ghi batch — insert tại row 2 → đơn mới nhất luôn ở đầu
+            # Ghi batch — insert tại row 3 → đơn mới nhất luôn ngay dưới header
             if rows_to_insert:
-                ws.insert_rows(rows_to_insert, row=2,
+                ws.insert_rows(rows_to_insert, row=MARKET_DATA_START_ROW,
                                value_input_option="USER_ENTERED")
                 for order_id in order_ids_ok:
                     synced[order_id] = {"tab": tab_name, "synced_at": now_str}
                 added += len(order_ids_ok)
                 logger.info(f"[MARKET-SHEETS] ✔ Ghi {len(order_ids_ok)} đơn → {tab_name!r}")
+
+            # Trim dòng trống cuối sheet
+            _trim_empty_rows(ws)
 
             tab_summary[tab_name] = len(order_ids_ok)
 
