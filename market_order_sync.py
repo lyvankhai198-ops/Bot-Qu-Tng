@@ -714,12 +714,22 @@ def _sync_to_sheets(new_orders: list) -> dict:
         order_id = str(order.get("order_id", "")).strip().upper()
         if not order_id:
             continue
-        if order_id in synced:
-            skipped_dup += 1
-            continue
 
         product_name = order.get("product_name", "")
         tab = _resolve_tab(product_name, config, default_tab)
+
+        if order_id in synced:
+            if synced[order_id].get("tab") == tab:
+                # Đã synced đúng tab → bỏ qua
+                skipped_dup += 1
+                continue
+            # Tab thay đổi (do cập nhật tab_rules) → xóa record cũ, ghi lại
+            logger.info(
+                f"[MARKET-SHEETS] Re-sync {order_id}: "
+                f"{synced[order_id].get('tab')!r} → {tab!r}"
+            )
+            del synced[order_id]
+
         groups.setdefault(tab, []).append(order)
 
     if not groups:
@@ -743,19 +753,18 @@ def _sync_to_sheets(new_orders: list) -> dict:
                 )
             ws = ws_cache[tab_name]
 
-            # Lấy STT bắt đầu (số dòng dữ liệu hiện tại + 1)
-            try:
-                base_stt = max(0, len(ws.get_all_values()) - 1)
-            except Exception:
-                base_stt = 0
+            # Sort mới nhất lên đầu — dùng completed_at hoặc created_at_raw
+            def _order_sort_key(o):
+                return o.get("completed_at", "") or o.get("created_at_raw", "") or ""
+            orders_sorted = sorted(orders, key=_order_sort_key, reverse=True)
 
-            rows_to_append = []
+            rows_to_insert = []
             order_ids_ok   = []
 
-            for i, order in enumerate(orders):
+            for order in orders_sorted:
                 order_id = str(order.get("order_id", "")).strip().upper()
                 row_data = [
-                    base_stt + i + 1,
+                    "",                               # STT — để trống, tự quản
                     order_id,
                     order.get("seller",       ""),
                     order.get("product_name", ""),
@@ -770,12 +779,13 @@ def _sync_to_sheets(new_orders: list) -> dict:
                     order.get("balance_after",""),
                     now_str,                          # Ngày đồng bộ
                 ]
-                rows_to_append.append(row_data)
+                rows_to_insert.append(row_data)
                 order_ids_ok.append(order_id)
 
-            # Ghi batch tất cả rows trong tab bằng 1 API call
-            if rows_to_append:
-                ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
+            # Ghi batch — insert tại row 2 → đơn mới nhất luôn ở đầu
+            if rows_to_insert:
+                ws.insert_rows(rows_to_insert, row=2,
+                               value_input_option="USER_ENTERED")
                 for order_id in order_ids_ok:
                     synced[order_id] = {"tab": tab_name, "synced_at": now_str}
                 added += len(order_ids_ok)
