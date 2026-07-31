@@ -42,6 +42,7 @@ router.get("/bot/sheets/config", requireAuth, (_req: any, res: any) => {
     market_tab:      cfg.market_tab      ?? "Đơn hàng chợ",
     sync_enabled:    cfg.sync_enabled    ?? false,
     tab_mappings:    cfg.tab_mappings    ?? {},
+    tab_rules:       cfg.tab_rules       ?? [],
   });
 });
 
@@ -60,6 +61,8 @@ router.put("/bot/sheets/config", requireAuth, (req: any, res: any) => {
     cfg.sync_enabled = body.sync_enabled;
   if (body.tab_mappings && typeof body.tab_mappings === "object")
     cfg.tab_mappings = body.tab_mappings;
+  if (Array.isArray(body.tab_rules))
+    cfg.tab_rules = body.tab_rules;
 
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });

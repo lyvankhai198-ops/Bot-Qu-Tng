@@ -53549,7 +53549,8 @@ router4.get("/bot/sheets/config", requireAuth3, (_req, res) => {
     default_tab: cfg.default_tab ?? "\u0110\u01A1n h\xE0ng",
     market_tab: cfg.market_tab ?? "\u0110\u01A1n h\xE0ng ch\u1EE3",
     sync_enabled: cfg.sync_enabled ?? false,
-    tab_mappings: cfg.tab_mappings ?? {}
+    tab_mappings: cfg.tab_mappings ?? {},
+    tab_rules: cfg.tab_rules ?? []
   });
 });
 router4.put("/bot/sheets/config", requireAuth3, (req, res) => {
@@ -53565,6 +53566,8 @@ router4.put("/bot/sheets/config", requireAuth3, (req, res) => {
     cfg.sync_enabled = body.sync_enabled;
   if (body.tab_mappings && typeof body.tab_mappings === "object")
     cfg.tab_mappings = body.tab_mappings;
+  if (Array.isArray(body.tab_rules))
+    cfg.tab_rules = body.tab_rules;
   try {
     fs2.mkdirSync(DATA_DIR2, { recursive: true });
     fs2.writeFileSync(dataFile2("sheets_config"), JSON.stringify(cfg, null, 2), "utf-8");
