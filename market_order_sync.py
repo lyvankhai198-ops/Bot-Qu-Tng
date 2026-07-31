@@ -654,7 +654,7 @@ def _get_or_create_worksheet(spreadsheet, tab_name: str, headers: list):
     return ws
 
 
-def _sync_to_sheets(new_orders: list) -> dict:
+def _sync_to_sheets(new_orders: list, force: bool = False) -> dict:
     """
     Ghi đơn hàng chợ MỚI vào Google Sheets với phân tab theo ánh xạ sản phẩm.
 
@@ -663,6 +663,7 @@ def _sync_to_sheets(new_orders: list) -> dict:
       2. Với mỗi đơn: match product_name với tab_mappings → chọn tab đích
       3. Nhóm đơn theo tab → ghi batch vào từng tab
       4. Chống trùng qua market_sheets_synced.json (lưu {order_id: {tab, synced_at}})
+    force=True → xoá toàn bộ dữ liệu trong tab (giữ header) trước khi ghi lại
     """
     if not new_orders:
         return {"added": 0, "skipped_dup": 0, "errors": [], "skipped": False}
@@ -752,6 +753,16 @@ def _sync_to_sheets(new_orders: list) -> dict:
                     spreadsheet, tab_name, MARKET_SHEET_HEADERS
                 )
             ws = ws_cache[tab_name]
+
+            # force → xoá toàn bộ dữ liệu bên dưới header (dòng 1), giữ nguyên header
+            if force:
+                try:
+                    total_rows = ws.row_count
+                    if total_rows > 1:
+                        ws.delete_rows(2, total_rows)
+                        logger.info(f"[MARKET-SHEETS] Force: đã xoá {total_rows - 1} dòng cũ trong tab {tab_name!r}")
+                except Exception as e:
+                    logger.warning(f"[MARKET-SHEETS] Force clear tab {tab_name!r}: {e}")
 
             # Sort mới nhất lên đầu — dùng completed_at hoặc created_at_raw
             def _order_sort_key(o):
@@ -1011,7 +1022,7 @@ def push_all_to_sheets(filter_tab: str | None = None, force: bool = False) -> di
         scope_log = f"tab '{filter_tab}'" if filter_tab and filter_tab != "all" else "tất cả"
         logger.info(f"[push-all] Force re-push {scope_log}: đã xoá {removed} record synced")
 
-    result = _sync_to_sheets(all_orders)
+    result = _sync_to_sheets(all_orders, force=force)
 
     if result.get("skipped"):
         return {"ok": False, "message": result.get("reason", "Chưa cấu hình Google Sheets.")}
