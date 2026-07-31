@@ -659,7 +659,8 @@ def _setup_sheet_structure(ws, tab_name: str):
     Gọi khi tạo mới hoặc khi force-reset.
     """
     title_row = [f"{MARKET_SHEET_TITLE_PREFIX} {tab_name}"] + [""] * (len(MARKET_SHEET_HEADERS) - 1)
-    ws.update("A1", [title_row, MARKET_SHEET_HEADERS], value_input_option="USER_ENTERED")
+    # gspread 6.x: update(values, range_name) — thứ tự tham số đã đổi
+    ws.update([title_row, MARKET_SHEET_HEADERS], "A1", value_input_option="USER_ENTERED")
 
 
 def _trim_empty_rows(ws):
