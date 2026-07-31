@@ -901,6 +901,23 @@ def _sync_to_sheets(new_orders: list, force: bool = False) -> dict:
             # Trim dòng trống cuối sheet
             _trim_empty_rows(ws)
 
+            # Auto-resize tất cả cột theo nội dung
+            try:
+                ws.spreadsheet.batch_update({
+                    "requests": [{
+                        "autoResizeDimensions": {
+                            "dimensions": {
+                                "sheetId":    ws.id,
+                                "dimension":  "COLUMNS",
+                                "startIndex": 0,
+                                "endIndex":   len(MARKET_SHEET_HEADERS),
+                            }
+                        }
+                    }]
+                })
+            except Exception as e:
+                logger.debug(f"[MARKET-SHEETS] Auto-resize columns skip: {e}")
+
             tab_summary[tab_name] = len(order_ids_ok)
 
         except Exception as e:
