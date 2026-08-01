@@ -26,6 +26,7 @@ import Delivery from "@/pages/delivery";
 import RefundCalc from "@/pages/refund-calc";
 import MarketOrders from "@/pages/market-orders";
 import SheetsSync from "@/pages/sheets-sync";
+import WarrantyScan from "@/pages/warranty-scan";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -89,6 +90,7 @@ function Router() {
       <Route path="/refund-calc"><ProtectedRoute component={RefundCalc} /></Route>
       <Route path="/market-orders"><ProtectedRoute component={MarketOrders} /></Route>
       <Route path="/sheets-sync"><ProtectedRoute component={SheetsSync} /></Route>
+      <Route path="/warranty-scan"><ProtectedRoute component={WarrantyScan} /></Route>
       <Route component={NotFound} />
     </Switch>
   );

@@ -1,0 +1,283 @@
+Thêm một tính năng mới trên web tên:
+
+QUÉT ĐƠN CÒN BẢO HÀNH
+
+Mục tiêu:
+Khi có đợt quét tài khoản từ nhà cung cấp, admin chỉ cần chọn sản phẩm và bấm một nút. Hệ thống tự lấy các đơn trong mục “Đơn hàng chợ”, lọc đúng sản phẩm còn bảo hành tính đến thời điểm hiện tại, tính tiền hoàn và tạo một tab Google Sheet mới để gửi ngay cho nhà cung cấp.
+
+Không được làm ảnh hưởng tới chức năng đồng bộ đơn hàng hiện tại.
+
+==================================================
+1. GIAO DIỆN
+==================================================
+
+Tạo một trang riêng trên web:
+
+Quét đơn còn bảo hành
+
+Các trường:
+
+- Chọn bộ sản phẩm:
+  + ChatGPT Plus BHF 30D
+  + Grok Super BHF
+  + Có thể thêm bộ mới sau này
+
+- Ngày tính:
+  + Mặc định là ngày hiện tại
+  + Có thể đổi ngày thủ công
+
+- Thời hạn bảo hành:
+  + Tự lấy từ preset
+  + ChatGPT BHF 30D = 30 ngày
+  + Cho phép chỉnh trước khi quét
+
+- Giá hoàn:
+  + Chọn “Giá bán”
+  + Hoặc nhập giá hoàn cố định
+  + Mặc định dùng giá bán của từng đơn
+
+- Nút:
+  XEM TRƯỚC
+
+- Nút:
+  TẠO SHEET
+
+==================================================
+2. PRESET CHATGPT PLUS BHF 30D
+==================================================
+
+Chỉ nhận sản phẩm có một trong các từ khóa:
+
+- chatgpt
+- chat gpt
+- gpt plus
+- chatgpt plus
+
+Và phải là gói bảo hành 30 ngày, có một trong:
+
+- 30d
+- 30 d
+- 30 ngày
+- bh30d
+- bh 30d
+- bảo hành 30 ngày
+- 1 tháng bhf
+
+Loại trừ ngay nếu có:
+
+- api
+- codex
+- token
+- credit
+- k12
+- edu
+- bh 2
+- bh2
+- 2 ngày
+- bh 24h
+- bh24h
+- 24h
+- 1 ngày
+- kbh
+- không bảo hành
+- no warranty
+
+Một đơn chỉ được lấy nếu:
+- Trạng thái giao dịch hợp lệ/hoàn tất.
+- Có ngày mua hoặc thời gian hoàn tất.
+- Chưa bị đánh dấu đã hoàn tiền trong hệ thống.
+- Tính đến ngày quét vẫn còn bảo hành.
+
+==================================================
+3. CÁCH TÍNH CÒN BẢO HÀNH
+==================================================
+
+Ngày bắt đầu:
+Ưu tiên ngày hoàn tất đơn hàng.
+Nếu không có thì dùng ngày mua.
+
+Ngày hết hạn:
+Ngày bắt đầu + số ngày bảo hành.
+
+Số ngày đã dùng:
+Ngày quét - ngày bắt đầu.
+
+Số ngày còn lại:
+Số ngày bảo hành - số ngày đã dùng.
+
+Chỉ đưa vào kết quả khi:
+Số ngày còn lại > 0.
+
+Nếu đơn mua trong tương lai hoặc dữ liệu ngày sai:
+Đưa vào danh sách lỗi, không tự tính.
+
+==================================================
+4. CÔNG THỨC HOÀN TIỀN
+==================================================
+
+Tiền hoàn dự kiến:
+
+Giá bán / Tổng số ngày bảo hành × Số ngày còn lại
+
+Làm tròn đến đồng.
+
+Nếu hệ thống đã có công thức hoàn tiền hiện tại thì tái sử dụng đúng công thức đó, không tạo công thức khác.
+
+Ví dụ:
+- Giá bán: 350.000
+- Bảo hành: 30 ngày
+- Đã dùng: 10 ngày
+- Còn lại: 20 ngày
+
+Hoàn dự kiến:
+350.000 / 30 × 20
+
+==================================================
+5. XEM TRƯỚC TRƯỚC KHI TẠO SHEET
+==================================================
+
+Khi bấm “Xem trước”, hiển thị:
+
+- Tổng đơn đã quét
+- Tổng đơn khớp sản phẩm
+- Tổng đơn còn bảo hành
+- Tổng đơn hết bảo hành
+- Tổng đơn bị loại bởi rule
+- Tổng đơn thiếu dữ liệu
+- Tổng tiền hoàn dự kiến
+
+Hiển thị danh sách các đơn sẽ được đưa vào Sheet.
+
+Không ghi Google Sheet ở bước xem trước.
+
+==================================================
+6. TẠO TAB SHEET MỚI
+==================================================
+
+Khi bấm “Tạo Sheet”:
+
+Không ghi vào tab đồng bộ đơn hàng hiện tại.
+
+Phải tạo một tab mới trong cùng Spreadsheet.
+
+Tên tab ví dụ:
+
+QUET_CHATGPT_BH30D_2026-08-01
+
+Nếu tên tab đã tồn tại thì thêm thời gian:
+
+QUET_CHATGPT_BH30D_2026-08-01_1645
+
+Dữ liệu phải sắp xếp:
+Từ đơn cũ nhất đến đơn mới nhất.
+
+Không tạo hàng trống thừa.
+
+Dòng 1:
+Tiêu đề đợt quét.
+
+Dòng 2:
+Thông tin tổng hợp:
+- Ngày quét
+- Thời hạn BH
+- Tổng tài khoản
+- Tổng tiền hoàn
+
+Dòng 4 trở đi là bảng dữ liệu.
+
+==================================================
+7. CÁC CỘT TRONG SHEET
+==================================================
+
+STT
+Mã đơn
+Người bán
+Khách hàng
+Sản phẩm gốc
+Tài khoản đã giao
+Email
+Mật khẩu
+2FA
+Ngày mua
+Ngày hết hạn
+Tổng ngày BH
+Đã sử dụng
+Còn lại
+Giá bán
+Giá nguồn
+Tiền hoàn dự kiến
+Trạng thái hoàn
+Ghi chú
+
+Yêu cầu:
+- Nếu “Tài khoản đã giao” có định dạng email|password|2fa thì tự tách ra các cột Email, Mật khẩu, 2FA.
+- Vẫn giữ nguyên cột “Tài khoản đã giao” để đối chiếu.
+- Ngày hiển thị theo định dạng dd/MM/yyyy.
+- Tiền hiển thị định dạng VNĐ.
+- Cố định hàng tiêu đề.
+- Có bộ lọc.
+- Không gộp ô trong vùng dữ liệu.
+
+==================================================
+8. CHỐNG TRÙNG
+==================================================
+
+Không được đưa trùng cùng một tài khoản vào đợt quét.
+
+Ưu tiên kiểm tra trùng theo thứ tự:
+
+1. Email
+2. Tài khoản đã giao
+3. Mã đơn
+
+Nếu một email xuất hiện nhiều lần:
+- Giữ bản ghi hợp lệ mới nhất hoặc bản ghi thuộc chuỗi bảo hành hiện tại.
+- Đánh dấu các dòng còn lại là trùng.
+- Hiển thị trong phần xem trước để admin kiểm tra.
+
+Không được âm thầm xóa dữ liệu trùng mà không báo.
+
+==================================================
+9. NÚT TẢI FILE
+==================================================
+
+Sau khi tạo tab Google Sheet thành công, hiển thị:
+
+- Mở Google Sheet
+- Tải XLSX
+- Tải CSV
+- Gửi file qua bot admin
+
+File tải xuống phải có đúng dữ liệu của đợt quét, không bao gồm các tab khác.
+
+==================================================
+10. LƯU LỊCH SỬ ĐỢT QUÉT
+==================================================
+
+Lưu lịch sử mỗi lần quét:
+
+- Mã đợt quét
+- Sản phẩm
+- Ngày quét
+- Số đơn
+- Tổng tiền hoàn
+- Tên tab đã tạo
+- Người thực hiện
+- Thời gian tạo
+
+Có nút:
+- Mở lại
+- Tải lại file
+- Xóa tab đợt quét
+
+==================================================
+11. QUAN TRỌNG
+==================================================
+
+- Dữ liệu nguồn phải lấy trực tiếp từ “Đơn hàng chợ”.
+- Không lấy từ Sheet cũ vì Sheet có thể thiếu hoặc đã bị chỉnh tay.
+- Không thay đổi chức năng đồng bộ hiện tại.
+- Không ghi đè dữ liệu cũ.
+- Không tự đánh dấu đơn đã hoàn chỉ vì đã đưa vào đợt quét.
+- Chỉ khi admin xác nhận đã được nguồn hoàn thì mới cập nhật trạng thái “Đã hoàn”.
+- Mỗi lần bấm quét phải tính lại số ngày còn bảo hành theo ngày hiện tại.
