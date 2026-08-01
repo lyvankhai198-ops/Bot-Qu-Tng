@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { execFile } from "child_process";
+import { requireAuth, verifyPassword, generateToken, revokeToken, loginRateLimiter } from "../lib/auth";
 
 const router = Router();
 
@@ -60,17 +61,6 @@ function normalizeAccount(acc: any): any {
   };
 }
 
-// ── Auth middleware ─────────────────────────────────────────────────────────
-const ADMIN_SECRET = process.env.SESSION_SECRET ?? "";
-
-function requireAuth(req: any, res: any, next: any) {
-  const auth = req.headers["authorization"] ?? "";
-  if (!auth.startsWith("Bearer ")) { res.status(401).json({ error: "Unauthorized" }); return; }
-  const token = auth.slice(7);
-  if (!ADMIN_SECRET || token !== ADMIN_SECRET) { res.status(401).json({ error: "Invalid token" }); return; }
-  next();
-}
-
 // ── Settings helpers ────────────────────────────────────────────────────────
 function readSettings(): any {
   const defaults = {
@@ -101,13 +91,35 @@ function settingsToApi(s: any) {
 }
 
 // ── POST /bot/auth ──────────────────────────────────────────────────────────
-router.post("/bot/auth", (req: any, res: any) => {
+router.post("/bot/auth", loginRateLimiter, async (req: any, res: any) => {
   const { password } = req.body ?? {};
-  if (!ADMIN_SECRET || password !== ADMIN_SECRET) {
+  const ok = await verifyPassword(password ?? "");
+  if (!ok) {
     res.status(401).json({ error: "Mật khẩu không đúng" });
     return;
   }
-  res.json({ token: ADMIN_SECRET });
+  const token = generateToken();
+  // Set HttpOnly cookie (Secure only in production to allow local dev)
+  res.cookie("admin_token", token, {
+    httpOnly:  true,
+    secure:    process.env.NODE_ENV === "production",
+    sameSite:  "strict",
+    maxAge:    8 * 60 * 60 * 1000, // 8h in ms
+    path:      "/",
+  });
+  // Also return token in body for backward-compat (admin panel stores in localStorage)
+  res.json({ token });
+});
+
+// ── POST /bot/auth/logout ────────────────────────────────────────────────────
+router.post("/bot/auth/logout", (req: any, res: any) => {
+  const cookieToken = req.cookies?.admin_token ?? "";
+  const authHeader  = (req.headers["authorization"] as string) ?? "";
+  const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const token = cookieToken || bearerToken;
+  if (token) revokeToken(token);
+  res.clearCookie("admin_token", { path: "/" });
+  res.json({ ok: true });
 });
 
 // ── GET /bot/pending-counts ─────────────────────────────────────────────────

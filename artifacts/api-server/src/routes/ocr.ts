@@ -10,14 +10,7 @@ import { writeFile, readFile, unlink } from "node:fs/promises";
 import { tmpdir }                      from "node:os";
 import { join }                        from "node:path";
 
-const ADMIN_SECRET = process.env.SESSION_SECRET ?? "";
-
-function requireAuth(req: any, res: any, next: any) {
-  const auth = req.headers["authorization"] ?? "";
-  if (!auth.startsWith("Bearer ")) { res.status(401).json({ error: "Unauthorized" }); return; }
-  if (!ADMIN_SECRET || auth.slice(7) !== ADMIN_SECRET) { res.status(401).json({ error: "Invalid token" }); return; }
-  next();
-}
+import { requireAuth } from "../lib/auth";
 
 // ── Multer ────────────────────────────────────────────────────────────────────
 const upload = multer({

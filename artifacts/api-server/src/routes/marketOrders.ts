@@ -14,12 +14,12 @@ import fs                   from "fs";
 import path                 from "path";
 import { execFile }         from "child_process";
 import { promisify }        from "util";
+import { requireAuth }      from "../lib/auth";
 
 const execFileAsync = promisify(execFile);
 const router        = Router();
 
 const DATA_DIR     = process.env.DATA_DIR     ?? path.resolve(process.cwd(), "../../data");
-const ADMIN_SECRET = process.env.SESSION_SECRET ?? "";
 const BASE_DIR     = process.env.BOT_BASE_DIR  ?? path.resolve(process.cwd());
 
 function dataFile(name: string) {
@@ -30,16 +30,6 @@ function readJson(name: string, fallback: unknown = null): any {
   const file = dataFile(name);
   if (!fs.existsSync(file)) return fallback;
   try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return fallback; }
-}
-
-function requireAuth(req: any, res: any, next: any) {
-  const auth  = (req.headers.authorization as string) ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!ADMIN_SECRET || token !== ADMIN_SECRET) {
-    res.status(401).json({ error: "Invalid token" });
-    return;
-  }
-  next();
 }
 
 function now() { return new Date().toISOString(); }

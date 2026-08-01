@@ -440,6 +440,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const handleLogoutClick = React.useCallback(() => {
     closeDrawer()
+    const token = localStorage.getItem("admin_token") ?? ""
+    // Revoke server-side session (fire-and-forget)
+    fetch("/api/bot/auth/logout", {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).catch(() => {})
     localStorage.removeItem("admin_token")
     setLocation("/login")
   }, [closeDrawer, setLocation])

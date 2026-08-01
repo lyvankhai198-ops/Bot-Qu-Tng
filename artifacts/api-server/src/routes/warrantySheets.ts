@@ -13,20 +13,10 @@ import { Router } from "express";
 import fs   from "fs";
 import path from "path";
 import { spawn } from "child_process";
+import { requireAuth } from "../lib/auth";
 
 const router     = Router();
 const DATA_DIR   = process.env.DATA_DIR ?? path.resolve(process.cwd(), "../../data");
-const ADMIN_SECRET = process.env.SESSION_SECRET ?? "";
-
-function requireAuth(req: any, res: any, next: any) {
-  const auth  = (req.headers.authorization as string) ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!ADMIN_SECRET || token !== ADMIN_SECRET) {
-    res.status(401).json({ error: "Invalid token" });
-    return;
-  }
-  next();
-}
 
 function readJson(name: string, fallback: unknown = null): any {
   const file = path.join(DATA_DIR, `${name}.json`);
