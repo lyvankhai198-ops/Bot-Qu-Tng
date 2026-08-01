@@ -10,7 +10,7 @@ import {
   TableProperties, Activity, Send, FileText, CalendarCheck,
   Gift, PackageOpen, Target, Settings as SettingsIcon,
   LogOut, Bot, Menu, X, ChevronDown, ChevronRight,
-  Star, PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen,
 } from "lucide-react"
 import { Button } from "./ui/button"
 import {
@@ -97,8 +97,6 @@ const NAV_GROUPS: NavGroup[] = [
 // All items flat (for search & label lookup)
 const ALL_ITEMS: NavItem[] = NAV_GROUPS.flatMap(g => g.items)
 
-const DEFAULT_PINS = ["/market-orders", "/warranty-scan", "/sheets-sync"]
-const LS_PINS      = "sidebar_pins_v1"
 const LS_GROUPS    = "sidebar_groups_v1"
 const LS_COLLAPSED = "sidebar_collapsed_v1"
 
@@ -115,9 +113,6 @@ function normalizeVi(s: string): string {
     .replace(/đ/g, "d")
 }
 
-function lsGetArray(key: string, fallback: string[]): string[] {
-  try { return JSON.parse(localStorage.getItem(key) ?? "") } catch { return fallback }
-}
 function lsGetObj(key: string, fallback: Record<string, boolean>): Record<string, boolean> {
   try { return JSON.parse(localStorage.getItem(key) ?? "") } catch { return fallback }
 }
@@ -160,16 +155,13 @@ function Badge({ count }: { count: number }) {
 // ─────────────────────────── single nav item row ──────────────────────────────
 
 function NavRow({
-  item, isActive, badgeCount, collapsed, onNavigate, pinned, onTogglePin, showPin,
+  item, isActive, badgeCount, collapsed, onNavigate,
 }: {
   item: NavItem
   isActive: boolean
   badgeCount: number
   collapsed: boolean
   onNavigate: () => void
-  pinned: boolean
-  onTogglePin: (href: string) => void
-  showPin: boolean
 }) {
   const Icon = item.icon
   const row = (
@@ -197,19 +189,6 @@ function NavRow({
         <>
           <span className="flex-1 truncate">{item.label}</span>
           <Badge count={badgeCount} />
-          {showPin && (
-            <button
-              onClick={e => { e.preventDefault(); e.stopPropagation(); onTogglePin(item.href) }}
-              className={[
-                "opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded",
-                pinned ? "opacity-100 text-yellow-500" : "text-sidebar-foreground/40 hover:text-yellow-400",
-              ].join(" ")}
-              title={pinned ? "Bỏ ghim" : "Ghim vào Dùng nhanh"}
-              aria-label={pinned ? "Bỏ ghim" : "Ghim"}
-            >
-              <Star className={["h-3.5 w-3.5", pinned ? "fill-yellow-400" : ""].join(" ")} />
-            </button>
-          )}
         </>
       )}
     </Link>
@@ -248,16 +227,6 @@ function SidebarContent({
   const [query, setQuery] = React.useState("")
   const normQuery = normalizeVi(query.trim())
 
-  // Pinned items
-  const [pins, setPins] = React.useState<string[]>(() => lsGetArray(LS_PINS, DEFAULT_PINS))
-  const togglePin = React.useCallback((href: string) => {
-    setPins(prev => {
-      const next = prev.includes(href) ? prev.filter(h => h !== href) : [...prev, href]
-      localStorage.setItem(LS_PINS, JSON.stringify(next))
-      return next
-    })
-  }, [])
-
   // Group open/close — default: open group that contains active route
   const activeGroup = NAV_GROUPS.find(g => g.items.some(i => location.startsWith(i.href)))?.key ?? ""
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>(() => {
@@ -290,8 +259,6 @@ function SidebarContent({
   const searchResults = normQuery
     ? ALL_ITEMS.filter(i => normalizeVi(i.label).includes(normQuery))
     : []
-
-  const pinnedItems = ALL_ITEMS.filter(i => pins.includes(i.href))
 
   return (
     <div className="flex flex-col h-full">
@@ -362,9 +329,6 @@ function SidebarContent({
                     badgeCount={"badgeKey" in item && item.badgeKey ? counts[item.badgeKey] ?? 0 : 0}
                     collapsed={collapsed}
                     onNavigate={() => { setQuery(""); onNavigate() }}
-                    pinned={pins.includes(item.href)}
-                    onTogglePin={togglePin}
-                    showPin={true}
                   />
                 ))}
               </div>
@@ -372,32 +336,6 @@ function SidebarContent({
           </div>
         ) : (
           <>
-            {/* Dùng nhanh */}
-            {pinnedItems.length > 0 && (
-              <div className="mb-1">
-                {!collapsed && (
-                  <p className="px-4 pt-1 pb-1 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/40">
-                    Dùng nhanh
-                  </p>
-                )}
-                {collapsed && <div className="mx-1 my-1 border-t border-sidebar-border/50" />}
-                {pinnedItems.map(item => (
-                  <NavRow
-                    key={item.href}
-                    item={item}
-                    isActive={location.startsWith(item.href)}
-                    badgeCount={"badgeKey" in item && item.badgeKey ? counts[item.badgeKey] ?? 0 : 0}
-                    collapsed={collapsed}
-                    onNavigate={onNavigate}
-                    pinned={true}
-                    onTogglePin={togglePin}
-                    showPin={true}
-                  />
-                ))}
-                {!collapsed && <div className="mx-3 mt-2 border-t border-sidebar-border/40" />}
-              </div>
-            )}
-
             {/* Groups */}
             {NAV_GROUPS.map(group => {
               const isOpen = openGroups[group.key] ?? false
@@ -427,9 +365,6 @@ function SidebarContent({
                       badgeCount={item.badgeKey ? counts[item.badgeKey] ?? 0 : 0}
                       collapsed={collapsed}
                       onNavigate={onNavigate}
-                      pinned={pins.includes(item.href)}
-                      onTogglePin={togglePin}
-                      showPin={true}
                     />
                   ))}
                 </div>
