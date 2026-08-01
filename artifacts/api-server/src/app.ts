@@ -53,9 +53,13 @@ app.use(
 app.use(cookieParser());
 
 // ── Body limits ───────────────────────────────────────────────────────────────
-// Default: 100kb — tight enough to prevent memory-bomb attacks.
-// Upload routes (/ocr-extract, /xlsx-import) use multer and are unaffected by this.
-// Broadcast endpoint body is text-only — 100kb covers any reasonable message.
+// Default: 100kb — prevents memory-bomb attacks for most endpoints.
+// Exceptions (applied BEFORE the global limit via explicit route middleware):
+//   /api/bot/orders/xlsx-import — pre-parsed rows from admin XLSX dialog (up to ~5mb JSON)
+//   /api/bot/orders/bulk        — bulk order insert (up to ~5mb JSON)
+// Note: /ocr-extract and /orders/ocr use multer (multipart), unaffected by this.
+app.use("/api/bot/orders/xlsx-import", express.json({ limit: "10mb" }));
+app.use("/api/bot/orders/bulk",        express.json({ limit: "10mb" }));
 app.use(express.json({ limit: "100kb" }));
 app.use(express.urlencoded({ extended: true, limit: "100kb" }));
 

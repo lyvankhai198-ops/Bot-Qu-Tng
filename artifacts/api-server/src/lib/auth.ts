@@ -13,14 +13,21 @@ import rateLimit from "express-rate-limit";
 import type { Request, Response, NextFunction } from "express";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const JWT_SECRET          = process.env.SESSION_SECRET ?? "dev-secret-change-me";
 const JWT_TTL             = "8h";
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH ?? "";
 const ADMIN_SECRET_LEGACY = process.env.SESSION_SECRET ?? "";
 
 if (!process.env.SESSION_SECRET) {
-  console.warn("[auth] WARNING: SESSION_SECRET is not set — using insecure default");
+  if (process.env.NODE_ENV === "production") {
+    // Fail fast in production — a missing secret would let attackers forge tokens
+    throw new Error("[auth] FATAL: SESSION_SECRET environment variable is not set. Server cannot start safely.");
+  }
+  console.warn("[auth] WARNING: SESSION_SECRET is not set — using insecure fallback (dev only)");
 }
+
+// Resolve JWT secret — never a hardcoded fallback in production (enforced above)
+const JWT_SECRET = process.env.SESSION_SECRET ?? `__dev_only_${Math.random().toString(36)}__`;
+
 if (!ADMIN_PASSWORD_HASH && process.env.NODE_ENV === "production") {
   console.warn("[auth] WARNING: ADMIN_PASSWORD_HASH not set — using legacy SESSION_SECRET comparison");
   console.warn("[auth] To migrate: node -e \"require('bcryptjs').hash('YOUR_PASSWORD',12).then(h=>console.log(h))\"");

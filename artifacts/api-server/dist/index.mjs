@@ -56840,13 +56840,16 @@ var rateLimit = (passedOptions) => {
 var lib_default = rateLimit;
 
 // src/lib/auth.ts
-var JWT_SECRET = process.env.SESSION_SECRET ?? "dev-secret-change-me";
 var JWT_TTL = "8h";
 var ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH ?? "";
 var ADMIN_SECRET_LEGACY = process.env.SESSION_SECRET ?? "";
 if (!process.env.SESSION_SECRET) {
-  console.warn("[auth] WARNING: SESSION_SECRET is not set \u2014 using insecure default");
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("[auth] FATAL: SESSION_SECRET environment variable is not set. Server cannot start safely.");
+  }
+  console.warn("[auth] WARNING: SESSION_SECRET is not set \u2014 using insecure fallback (dev only)");
 }
+var JWT_SECRET = process.env.SESSION_SECRET ?? `__dev_only_${Math.random().toString(36)}__`;
 if (!ADMIN_PASSWORD_HASH && process.env.NODE_ENV === "production") {
   console.warn("[auth] WARNING: ADMIN_PASSWORD_HASH not set \u2014 using legacy SESSION_SECRET comparison");
   console.warn(`[auth] To migrate: node -e "require('bcryptjs').hash('YOUR_PASSWORD',12).then(h=>console.log(h))"`);
@@ -61173,6 +61176,8 @@ app.use(
   })
 );
 app.use((0, import_cookie_parser.default)());
+app.use("/api/bot/orders/xlsx-import", import_express8.default.json({ limit: "10mb" }));
+app.use("/api/bot/orders/bulk", import_express8.default.json({ limit: "10mb" }));
 app.use(import_express8.default.json({ limit: "100kb" }));
 app.use(import_express8.default.urlencoded({ extended: true, limit: "100kb" }));
 app.use("/api", routes_default);
