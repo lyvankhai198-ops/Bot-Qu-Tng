@@ -1,0 +1,265 @@
+Hãy sắp xếp lại toàn bộ menu Admin Panel cho gọn gàng, chuyên nghiệp và dễ sử dụng trên điện thoại.
+
+QUAN TRỌNG:
+
+- Không được xóa bất kỳ chức năng nào.
+- Không được đổi API, route, database hoặc logic hiện tại.
+- Không được viết lại toàn bộ giao diện.
+- Chỉ chỉnh bố cục menu, cách nhóm chức năng, icon, khoảng cách và trải nghiệm mobile.
+- Các chức năng hiện tại đang ổn định phải được giữ nguyên.
+- Sau khi sửa phải kiểm tra lại tất cả đường dẫn menu.
+
+==================================================
+1. CẤU TRÚC MENU MỚI
+==================================================
+
+Phần đầu menu hiển thị:
+
+Bot Quà Tặng AI
+- Chấm xanh: Hệ thống đang hoạt động
+- Phiên bản nhỏ bên dưới, ví dụ: Admin Panel v2.0
+- Nút đóng menu ở góc phải
+
+Các nhóm menu:
+
+1. TỔNG QUAN
+
+- Tổng quan
+- Người dùng
+- Kho tài khoản
+
+2. ĐƠN HÀNG
+
+- Đơn hàng
+- Đơn hàng chợ
+- Giao tài khoản
+
+3. BẢO HÀNH & HOÀN TIỀN
+
+- Bảo hành
+- Quét đơn còn BH
+- Máy tính hoàn tiền
+- Lịch sử hoàn tiền
+
+Badge số yêu cầu mới vẫn phải hiển thị ở mục Bảo hành.
+
+4. ĐỒNG BỘ
+
+- Robot đồng bộ
+- Đồng bộ Google Sheets
+- Lịch sử hệ thống
+
+5. CHĂM SÓC KHÁCH HÀNG
+
+- Gửi tin nhắn
+- Cấu hình Intro
+
+6. QUÀ TẶNG
+
+- Điểm danh
+- Đã nhận quà
+- Ô Quà Bí Mật
+- Săn mã bí mật
+
+7. HỆ THỐNG
+
+- Cài đặt
+- Đăng xuất
+
+==================================================
+2. MENU DẠNG THU GỌN
+==================================================
+
+Các nhóm lớn phải có thể đóng/mở.
+
+Ví dụ:
+
+▾ Đơn hàng
+   Đơn hàng
+   Đơn hàng chợ
+   Giao tài khoản
+
+▸ Quà tặng
+
+Chỉ mở nhóm đang được sử dụng.
+
+Trạng thái nhóm đang mở phải được lưu trong localStorage để khi tải lại trang không bị đóng hết.
+
+Trên điện thoại:
+
+- Khi chọn một chức năng, menu tự động đóng.
+- Không để người dùng phải cuộn quá dài.
+- Giữ nút Đăng xuất cố định dưới cùng.
+- Phần danh sách menu ở giữa được phép cuộn độc lập.
+
+==================================================
+3. MỤC ĐƯỢC CHỌN
+==================================================
+
+Mục đang mở phải nổi bật rõ ràng:
+
+- Nền tím/xanh nhạt.
+- Thanh chỉ báo dọc bên trái.
+- Icon và chữ dùng màu chủ đạo.
+- Không chỉ đổi màu chữ.
+
+Không tô nổi bật cả nhóm nếu chỉ một menu con đang được chọn.
+
+==================================================
+4. ICON
+==================================================
+
+Dùng cùng một bộ icon hiện tại hoặc Lucide Icons.
+
+Icon gợi ý:
+
+- Tổng quan: LayoutDashboard
+- Người dùng: Users
+- Kho tài khoản: Package
+- Đơn hàng: ShoppingCart
+- Đơn hàng chợ: Store
+- Giao tài khoản: Truck
+- Bảo hành: ShieldCheck
+- Quét đơn còn BH: Search
+- Máy tính hoàn tiền: Calculator
+- Lịch sử hoàn tiền: WalletCards
+- Robot đồng bộ: RefreshCw
+- Đồng bộ Sheet: TableProperties
+- Lịch sử hệ thống: Activity
+- Gửi tin nhắn: Send
+- Cấu hình Intro: FileText
+- Điểm danh: CalendarCheck
+- Đã nhận quà: Gift
+- Ô Quà Bí Mật: PackageOpen
+- Săn mã bí mật: Target
+- Cài đặt: Settings
+- Đăng xuất: LogOut
+
+Tất cả icon phải cùng kích thước và căn thẳng hàng.
+
+==================================================
+5. KHOẢNG CÁCH VÀ KÍCH THƯỚC
+==================================================
+
+Trên mobile:
+
+- Chiều cao mỗi menu khoảng 48–52px.
+- Khoảng cách giữa icon và chữ: 12px.
+- Font chữ menu: 15–16px.
+- Tiêu đề nhóm: 11–12px, chữ in hoa, màu xám.
+- Không để khoảng cách dọc quá lớn như giao diện hiện tại.
+- Không để menu rộng quá mức cần thiết.
+
+Sidebar mobile rộng khoảng 82–86% màn hình, tối đa 340px.
+
+==================================================
+6. THANH TÌM KIẾM MENU
+==================================================
+
+Thêm ô tìm kiếm ngay dưới phần tiêu đề:
+
+Placeholder:
+
+“Tìm chức năng…”
+
+Khi nhập:
+
+- “hoàn” → hiện Máy tính hoàn tiền và Lịch sử hoàn tiền.
+- “sheet” → hiện Đồng bộ Google Sheets.
+- “quà” → hiện các chức năng quà tặng.
+- Không phân biệt chữ hoa, chữ thường và dấu tiếng Việt.
+
+Khi xóa từ khóa tìm kiếm, menu quay lại trạng thái ban đầu.
+
+==================================================
+7. MỤC DÙNG NHANH
+==================================================
+
+Thêm nhóm “Dùng nhanh” ở đầu menu.
+
+Mặc định gồm:
+
+- Đơn hàng chợ
+- Quét đơn còn BH
+- Đồng bộ Sheet
+
+Mỗi menu có nút ngôi sao nhỏ để ghim hoặc bỏ ghim.
+
+Danh sách ghim lưu bằng localStorage, không cần thay đổi database.
+
+==================================================
+8. BADGE VÀ TRẠNG THÁI
+==================================================
+
+Badge Bảo hành:
+
+- Màu đỏ nếu có yêu cầu mới.
+- Ẩn badge nếu số lượng bằng 0.
+- Nếu lớn hơn 99 thì hiển thị “99+”.
+
+Trạng thái robot:
+
+- Chấm xanh: đang hoạt động.
+- Chấm vàng: đang đồng bộ.
+- Chấm đỏ: lỗi hoặc mất kết nối.
+
+Chỉ dùng dữ liệu trạng thái hiện có, không tạo logic giả.
+
+==================================================
+9. HEADER MOBILE
+==================================================
+
+Ở phần nội dung chính:
+
+- Header cố định trên cùng.
+- Có nút mở menu rõ ràng.
+- Hiển thị tên trang hiện tại.
+- Không để nút hoặc chữ bị chồng lên Dynamic Island/status bar.
+- Thêm padding theo safe-area của iPhone.
+
+Sử dụng:
+
+padding-top: env(safe-area-inset-top);
+padding-bottom: env(safe-area-inset-bottom);
+
+==================================================
+10. RESPONSIVE
+==================================================
+
+Desktop:
+
+- Sidebar cố định bên trái.
+- Có nút thu nhỏ sidebar thành chế độ chỉ icon.
+- Khi rê chuột vào icon có tooltip.
+
+Mobile:
+
+- Sidebar dạng drawer.
+- Có lớp nền tối phía sau.
+- Nhấn ra ngoài để đóng.
+- Vuốt hoặc nhấn X để đóng.
+- Nội dung phía sau không được cuộn khi menu đang mở.
+
+==================================================
+11. YÊU CẦU KIỂM TRA
+==================================================
+
+Sau khi sửa phải kiểm tra:
+
+- Tất cả menu mở đúng trang cũ.
+- Badge Bảo hành vẫn hoạt động.
+- Đăng xuất vẫn hoạt động.
+- Menu không bị tràn hoặc mất mục trên iPhone.
+- Menu không che nút dưới cùng.
+- Khi chọn trang, sidebar tự đóng trên mobile.
+- Tìm kiếm menu hoạt động đúng.
+- Ghim mục dùng nhanh hoạt động.
+- Refresh trang không làm mất các mục đã ghim.
+- Không có lỗi TypeScript mới.
+
+Cuối cùng hãy báo rõ:
+
+1. Những file đã sửa.
+2. Route nào được giữ nguyên.
+3. Các chức năng nào đã kiểm thử.
+4. Gửi ảnh hoặc mô tả giao diện mobile sau khi hoàn thành.
