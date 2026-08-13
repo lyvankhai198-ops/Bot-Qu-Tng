@@ -25,7 +25,8 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import type { WarrantyRequest, WarrantyAccount } from "@workspace/api-client-react"
 import { format } from "date-fns"
-import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle, Clock, Users, ChevronDown, ChevronUp, MessageSquareReply } from "lucide-react"
+import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle, Clock, Users, ChevronDown, ChevronUp, MessageSquareReply, Bell as BellIcon } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
 
 // Parse ?id=xxx from URL hash (e.g. #/warranty?id=abc123)
 function getUrlTargetId(): string | null {
@@ -80,6 +81,7 @@ export default function Warranty() {
   const [rejReason,  setRejReason]  = useState("")
   const [respondMsg, setRespondMsg] = useState("")
   const [doneNote,   setDoneNote]   = useState("")
+  const [doneNotify, setDoneNotify] = useState(true)
   const [doneLoading, setDoneLoading] = useState(false)
 
   // Deep-link highlight
@@ -159,10 +161,11 @@ export default function Warranty() {
           const res = await fetch(path, {
             method: "POST",
             headers: { ...authHeader(), "Content-Type": "application/json" },
-            body: JSON.stringify({ note: doneNote.trim() || undefined }),
+            body: JSON.stringify({ note: doneNote.trim() || undefined, notify: doneNotify }),
           })
           const data = await res.json()
           if (!data.ok) toast({ title: "Đã lưu nhưng gửi Telegram thất bại", description: data.message, variant: "destructive" })
+          else if (!doneNotify) toast({ title: "✅ Đã đánh dấu hoàn thành", description: "Không gửi thông báo cho khách" })
           else toast({ title: "✅ Đã đánh dấu hoàn thành", description: "Khách hàng đã được thông báo" })
           invalidate()
           setModalType(null); setActiveReq(null); setActiveAcc(null)
@@ -407,7 +410,7 @@ export default function Warranty() {
                       <Button size="sm" variant="ghost" className="h-8 text-xs text-violet-600 hover:bg-violet-500/10" onClick={() => openModal(req, "respond", acc)}>
                         <MessageSquareReply className="w-3 h-3 mr-1" /> Phản hồi
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-8 text-xs text-emerald-600 hover:bg-emerald-500/10" onClick={() => { openModal(req, "done", acc); setDoneNote("") }}>
+                      <Button size="sm" variant="ghost" className="h-8 text-xs text-emerald-600 hover:bg-emerald-500/10" onClick={() => { openModal(req, "done", acc); setDoneNote(""); setDoneNotify(true) }}>
                         <CheckCircle2 className="w-3 h-3 mr-1" /> Đã xong
                       </Button>
                       <Button size="sm" variant="ghost" className="h-8 text-xs text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject", acc)}>
@@ -482,7 +485,7 @@ export default function Warranty() {
                       <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-violet-600 hover:bg-violet-500/10" onClick={() => openModal(req, "respond")}>
                         <MessageSquareReply className="w-4 h-4 mr-2" /> Phản hồi
                       </Button>
-                      <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-emerald-600 hover:bg-emerald-500/10" onClick={() => { openModal(req, "done"); setDoneNote("") }}>
+                      <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-emerald-600 hover:bg-emerald-500/10" onClick={() => { openModal(req, "done"); setDoneNote(""); setDoneNotify(true) }}>
                         <CheckCircle2 className="w-4 h-4 mr-2" /> Đã xong
                       </Button>
                       <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject")}>
@@ -572,7 +575,7 @@ export default function Warranty() {
                         <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-violet-600 hover:bg-violet-500/10" onClick={() => openModal(req, "respond")}>
                           <MessageSquareReply className="w-4 h-4 mr-2" /> Phản hồi
                         </Button>
-                        <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-emerald-600 hover:bg-emerald-500/10" onClick={() => { openModal(req, "done"); setDoneNote("") }}>
+                        <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-emerald-600 hover:bg-emerald-500/10" onClick={() => { openModal(req, "done"); setDoneNote(""); setDoneNotify(true) }}>
                           <CheckCircle2 className="w-4 h-4 mr-2" /> Đã xong
                         </Button>
                         <Button size="sm" variant="ghost" className="w-full sm:flex-1 min-h-[44px] text-destructive hover:bg-destructive/10" onClick={() => openModal(req, "reject")}>
@@ -747,17 +750,34 @@ export default function Warranty() {
               Đánh dấu đã xong{activeAcc ? ` — ${activeAcc.email}` : ""}
             </DialogTitle>
             <DialogDescription>
-              Bot sẽ thông báo cho khách rằng yêu cầu đã được xử lý xong. Khách vẫn có thể gửi yêu cầu bảo hành mới nếu cần.
+              Đánh dấu yêu cầu đã xử lý xong. Chọn có gửi thông báo Telegram cho khách hay không.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {/* Toggle thông báo */}
+            <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <BellIcon className="w-4 h-4 text-muted-foreground" />
+                  Thông báo cho khách
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {doneNotify ? "Bot sẽ nhắn tin Telegram báo khách đã xong" : "Chỉ đánh dấu nội bộ, không nhắn khách"}
+                </p>
+              </div>
+              <Switch checked={doneNotify} onCheckedChange={setDoneNotify} />
+            </div>
+
+            {/* Ghi chú */}
             <div className="grid gap-2">
-              <Label>Ghi chú gửi kèm <span className="text-muted-foreground text-xs">(tuỳ chọn)</span></Label>
+              <Label>Ghi chú gửi kèm <span className="text-muted-foreground text-xs">(tuỳ chọn{!doneNotify ? ", sẽ không được gửi" : ""})</span></Label>
               <Textarea
                 value={doneNote}
                 onChange={e => setDoneNote(e.target.value)}
                 placeholder="VD: Tài khoản đã hoạt động trở lại, vui lòng kiểm tra..."
                 rows={3}
+                disabled={!doneNotify}
+                className={!doneNotify ? "opacity-50" : ""}
               />
             </div>
           </div>
