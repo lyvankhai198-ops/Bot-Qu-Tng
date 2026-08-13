@@ -1280,7 +1280,7 @@ def return_account_to_pool(account_email: str) -> bool:
         save("accounts", accounts)
     return found
 
-def reset_user_gift_status(user_id: int, cooldown_hours: int = 24) -> bool:
+def reset_user_gift_status(user_id: int, cooldown_hours: int = 1) -> bool:
     """Reset user's gift flag + set cooldown_hours before they can claim again."""
     users = load("users", {})
     uid = str(user_id)

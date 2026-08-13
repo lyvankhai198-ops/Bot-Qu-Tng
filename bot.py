@@ -1307,16 +1307,16 @@ async def callback_return_gift_confirm(update: Update, context: ContextTypes.DEF
     # Xoá thông tin quà khỏi user_data
     context.user_data.pop("last_gift", None)
 
-    cooldown_until = datetime.now() + timedelta(hours=24)
+    cooldown_until = datetime.now() + timedelta(hours=1)
     await query.edit_message_text(
         f"✅ <b>Đã nhường quà thành công!</b>\n\n"
         f"Cảm ơn bạn đã nhường lại để tránh lãng phí 💚\n\n"
-        f"⏰ Để tránh lạm dụng, bạn có thể nhận quà lại sau <b>24 giờ</b>.\n"
+        f"⏰ Để tránh lạm dụng, bạn có thể nhận quà lại sau <b>1 giờ</b>.\n"
         f"Mở lại lúc: <code>{cooldown_until.strftime('%H:%M ngày %d/%m/%Y')}</code>" if vi
         else
         f"✅ <b>Gift returned successfully!</b>\n\n"
         f"Thank you for giving it back 💚\n\n"
-        f"⏰ To prevent abuse, you may claim again after <b>24 hours</b>.\n"
+        f"⏰ To prevent abuse, you may claim again after <b>1 hour</b>.\n"
         f"Available at: <code>{cooldown_until.strftime('%H:%M on %d/%m/%Y')}</code>",
         parse_mode=ParseMode.HTML,
     )
