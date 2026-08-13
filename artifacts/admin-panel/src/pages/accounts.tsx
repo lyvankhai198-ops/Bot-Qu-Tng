@@ -32,11 +32,18 @@ function StatusBadge({ status }: { status?: string }) {
   return <Badge className="bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-300 shrink-0">Chưa nhận</Badge>
 }
 
-/** Hiển thị thống nhất: nếu < 7 ngày → "X phút/giờ/ngày trước", nếu cũ hơn → "dd/MM/yyyy HH:mm" */
+/** Normalize ISO string: server lưu UTC không có suffix → thêm Z để browser parse đúng */
+function normalizeISO(iso: string): string {
+  if (/[Z]$/.test(iso) || /[+-]\d{2}:\d{2}$/.test(iso)) return iso
+  return iso + "Z"
+}
+
+/** Hiển thị thống nhất: < 7 ngày → "X phút/giờ/ngày trước", cũ hơn → "dd/MM/yyyy" */
 function smartDate(iso?: string | null): { label: string; title: string } | null {
   if (!iso) return null
   try {
-    const d = new Date(iso)
+    const d = new Date(normalizeISO(iso))
+    if (isNaN(d.getTime())) return null
     const title = format(d, "HH:mm dd/MM/yyyy")
     const daysDiff = differenceInDays(new Date(), d)
     const label = daysDiff < 7

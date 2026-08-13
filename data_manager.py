@@ -7,7 +7,18 @@ import os
 import re
 import shutil
 import uuid
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
+
+def _utcnow() -> datetime:
+    """Timezone-aware current UTC time."""
+    return datetime.now(timezone.utc)
+
+def _parse_dt(s: str) -> datetime:
+    """Parse ISO string → timezone-aware datetime. Assumes UTC if no tz info."""
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
@@ -51,7 +62,7 @@ def save(name: str, data):
 def save_user(user_id: int, username: str, first_name: str):
     users = load("users", {})
     uid = str(user_id)
-    now = datetime.now().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     existing = users.get(uid, {})
     users[uid] = {
         "user_id": user_id,
@@ -125,7 +136,7 @@ def _normalize_account(acc) -> dict:
     acc.setdefault("id", str(uuid.uuid4())[:8])
     acc.setdefault("type", "")
     acc.setdefault("note", "")
-    acc.setdefault("addedAt", datetime.now().isoformat())
+    acc.setdefault("addedAt", datetime.now(timezone.utc).isoformat())
     acc.setdefault("status", "available")
     acc.setdefault("distributedTo", None)
     acc.setdefault("distributedAt", None)
@@ -137,7 +148,7 @@ def get_accounts() -> list:
 def add_accounts(accounts_list: list):
     """accounts_list: list of dicts with at minimum {email, password}"""
     accounts = get_accounts()
-    now = datetime.now().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     for acc in accounts_list:
         accounts.append(_normalize_account({
             "id": str(uuid.uuid4())[:8],
@@ -159,7 +170,7 @@ def pop_account():
     for i, acc in enumerate(accounts):
         if acc.get("status", "available") in ("available", "returned"):
             accounts[i]["status"] = "distributed"
-            accounts[i]["distributedAt"] = datetime.now().isoformat()
+            accounts[i]["distributedAt"] = datetime.now(timezone.utc).isoformat()
             save("accounts", accounts)
             return acc
     return None
@@ -170,7 +181,7 @@ def mark_account_distributed(email: str, user_id: int):
         if acc.get("email") == email:
             acc["status"] = "distributed"
             acc["distributedTo"] = str(user_id)
-            acc["distributedAt"] = datetime.now().isoformat()
+            acc["distributedAt"] = datetime.now(timezone.utc).isoformat()
     save("accounts", accounts)
 
 def delete_account(email: str):
@@ -295,7 +306,7 @@ def add_order(order: dict) -> str:
     orders = load("orders", {})
     order_id = "ORD" + str(uuid.uuid4())[:6].upper()
     order["orderId"] = order_id
-    order.setdefault("createdAt", datetime.now().isoformat())
+    order.setdefault("createdAt", datetime.now(timezone.utc).isoformat())
     order.setdefault("status", "active")
     orders[order_id] = order
     save("orders", orders)
@@ -306,7 +317,7 @@ def update_order(order_id: str, fields: dict) -> bool:
     if order_id not in orders:
         return False
     orders[order_id].update(fields)
-    orders[order_id]["updatedAt"] = datetime.now().isoformat()
+    orders[order_id]["updatedAt"] = datetime.now(timezone.utc).isoformat()
     save("orders", orders)
     return True
 
@@ -346,7 +357,7 @@ def add_order_item(order_id: str, item: dict) -> str:
         all_items[order_id] = []
     item_id = str(uuid.uuid4())[:8].upper()
     item = {**item, "itemId": item_id}
-    item.setdefault("createdAt", datetime.now().isoformat())
+    item.setdefault("createdAt", datetime.now(timezone.utc).isoformat())
     item.setdefault("status", "active")
     all_items[order_id].append(item)
     save("order_items", all_items)
@@ -358,7 +369,7 @@ def update_order_item(order_id: str, item_id: str, fields: dict) -> bool:
     items = all_items.get(order_id, [])
     for i, item in enumerate(items):
         if item.get("itemId") == item_id:
-            items[i] = {**item, **fields, "updatedAt": datetime.now().isoformat()}
+            items[i] = {**item, **fields, "updatedAt": datetime.now(timezone.utc).isoformat()}
             all_items[order_id] = items
             save("order_items", all_items)
             return True
@@ -559,7 +570,7 @@ def migrate_to_order_items() -> int:
             "password": order.get("password"),
             "twoFA": order.get("twoFA"),
             "status": order.get("status", "active"),
-            "createdAt": order.get("createdAt", datetime.now().isoformat()),
+            "createdAt": order.get("createdAt", datetime.now(timezone.utc).isoformat()),
         }]
         migrated += 1
     if migrated:
@@ -589,7 +600,7 @@ def add_account_replacement(
     if item_id not in reps:
         reps[item_id] = []
     replacement_number = len(reps[item_id]) + 1
-    now_iso = datetime.now().isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
     rec = {
         "id": str(uuid.uuid4())[:12],
         "orderId": order_id,
@@ -853,7 +864,7 @@ def ack_duplicate_warranty_requests(user_id: int, exclude_id: str, acked_by: str
     """Mark all OTHER pending/processing warranty requests from the same user as acknowledged.
     Returns count of requests auto-closed."""
     uid = str(user_id)
-    now = datetime.now().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     requests = load("warranty_requests", [])
     count = 0
     for req in requests:
@@ -889,7 +900,7 @@ def add_warranty_request(user_id: int, username: str, first_name: str,
         "email": email,
         "description": description,
         "userLang": user_lang,
-        "submittedAt": datetime.now().isoformat(),
+        "submittedAt": datetime.now(timezone.utc).isoformat(),
         "status": "pending",
         "resolution": None,
         "resolvedAt": None,
@@ -977,7 +988,7 @@ def add_group_warranty_request(user_id: int, username: str, first_name: str,
         "firstName": first_name or "",
         "description": description,
         "userLang": user_lang,
-        "submittedAt": datetime.now().isoformat(),
+        "submittedAt": datetime.now(timezone.utc).isoformat(),
         "status": "pending",
         "resolution": None,
         "resolvedAt": None,
@@ -1016,7 +1027,7 @@ def update_warranty_account(req_id: str, acc_id: str, fields: dict) -> bool:
                 if all(s in ("resolved", "rejected") for s in statuses):
                     req["status"] = "resolved"
                     if not req.get("resolvedAt"):
-                        req["resolvedAt"] = datetime.now().isoformat()
+                        req["resolvedAt"] = datetime.now(timezone.utc).isoformat()
                 elif any(s == "processing" for s in statuses) or req.get("acknowledgedAt"):
                     if req.get("status") != "resolved":
                         req["status"] = "processing"
@@ -1179,7 +1190,7 @@ def set_membership_verified(user_id: int, channel_key: str, status: str) -> None
     uid = str(user_id)
     if uid not in memberships:
         memberships[uid] = {}
-    now = datetime.now().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     existing = memberships[uid].get(channel_key, {})
     memberships[uid][channel_key] = {
         "id": existing.get("id") or str(uuid.uuid4())[:12],
@@ -1200,7 +1211,7 @@ def set_membership_left(user_id: int, channel_key: str, status: str = "left") ->
     uid = str(user_id)
     if uid not in memberships:
         memberships[uid] = {}
-    now = datetime.now().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     existing = memberships[uid].get(channel_key, {})
     memberships[uid][channel_key] = {
         "id": existing.get("id") or str(uuid.uuid4())[:12],
@@ -1228,8 +1239,8 @@ def is_membership_cache_valid(user_id: int, channel_key: str,
     if not verified_at:
         return False
     try:
-        vt = datetime.fromisoformat(verified_at)
-        return datetime.now() < vt + timedelta(hours=ttl_hours)
+        vt = _parse_dt(verified_at)
+        return _utcnow() < vt + timedelta(hours=ttl_hours)
     except Exception:
         return False
 
@@ -1249,7 +1260,7 @@ def add_return_entry(user_id: int, username: str, first_name: str,
         "firstName": first_name or "",
         "accountEmail": account_email,
         "accountPassword": account_password,
-        "returnedAt": datetime.now().isoformat(),
+        "returnedAt": datetime.now(timezone.utc).isoformat(),
         "claimTime": claim_time,
         "notifyStatus": "pending",   # pending | approved | rejected
         "approvedAt": None,
@@ -1276,7 +1287,7 @@ def return_account_to_pool(account_email: str) -> bool:
     for i, acc in enumerate(accounts):
         if acc.get("email") == account_email:
             accounts[i]["status"] = "returned"
-            accounts[i]["returnedAt"] = datetime.now().isoformat()
+            accounts[i]["returnedAt"] = datetime.now(timezone.utc).isoformat()
             found = True
     if found:
         save("accounts", accounts)
@@ -1289,7 +1300,7 @@ def reset_user_gift_status(user_id: int, cooldown_hours: int = 1) -> bool:
     if uid in users:
         users[uid]["has_received_gift"] = False
         users[uid]["gift_received"] = None
-        cooldown_until = (datetime.now() + timedelta(hours=cooldown_hours)).isoformat()
+        cooldown_until = (_utcnow() + timedelta(hours=cooldown_hours)).isoformat()
         users[uid]["gift_return_cooldown_until"] = cooldown_until
         save("users", users)
         return True
@@ -1300,7 +1311,7 @@ def reset_user_gift_status(user_id: int, cooldown_hours: int = 1) -> bool:
 def add_log(action: str, user: str = "", admin: str = ""):
     logs = load("logs", [])
     logs.append({
-        "time": datetime.now().isoformat(),
+        "time": datetime.now(timezone.utc).isoformat(),
         "action": action,
         "user": user,
         "admin": admin,
@@ -1322,7 +1333,7 @@ def queue_broadcast(message: str, target: str = "all"):
     pending.append({
         "message": message,
         "target": target,
-        "queued_at": datetime.now().isoformat(),
+        "queued_at": datetime.now(timezone.utc).isoformat(),
     })
     save("pending_broadcasts", pending)
 
@@ -1528,7 +1539,7 @@ def add_voucher(user_id: int, code: str, label: str, value: str) -> None:
         "code": code,
         "label": label,
         "value": value,
-        "createdAt": datetime.now().isoformat(),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
         "used": False,
     })
     save("vouchers", vouchers)
@@ -1725,7 +1736,7 @@ def add_delivery_request(user_id: int, username: str, first_name: str,
         "firstName": first_name or "",
         "orderId": order_id,
         "userLang": user_lang,
-        "submittedAt": datetime.now().isoformat(),
+        "submittedAt": datetime.now(timezone.utc).isoformat(),
         "status": "pending",           # pending | sent | failed
         "sentAt": None,
         "sentBy": None,
@@ -1773,7 +1784,7 @@ def unlock_delivery_order(order_id: str):
     """
     all_items = load("order_items", {})
     items = all_items.get(order_id, [])
-    unlocked_now = datetime.now().isoformat()
+    unlocked_now = datetime.now(timezone.utc).isoformat()
     result = []
 
     for i, item in enumerate(items):

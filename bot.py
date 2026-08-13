@@ -11,7 +11,17 @@ import urllib.request
 import urllib.error
 import random
 import string
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+def _parse_dt(s: str) -> datetime:
+    """Parse ISO string → timezone-aware. Assumes UTC if no tz suffix."""
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 from threading import Thread
 
 from flask import Flask, jsonify
@@ -859,10 +869,10 @@ async def _claim_gift(user, context, L: str, settings: dict) -> None:
         if cooldown_h == 0:
             await context.bot.send_message(user.id, t(L, "gift_already_round"))
             return
-        claim_time  = datetime.fromisoformat(claimed[uid]["claim_time"])
+        claim_time  = _parse_dt(claimed[uid]["claim_time"])
         eligible_at = claim_time + timedelta(hours=cooldown_h)
-        if datetime.now() < eligible_at:
-            rem = eligible_at - datetime.now()
+        if _utcnow() < eligible_at:
+            rem = eligible_at - _utcnow()
             h = int(rem.total_seconds() // 3600)
             m = int((rem.total_seconds() % 3600) // 60)
             await context.bot.send_message(user.id, t(L, "gift_already", h=h, m=m))
@@ -876,7 +886,7 @@ async def _claim_gift(user, context, L: str, settings: dict) -> None:
     email        = account.get("email", "")
     password     = account.get("password", "")
     account_type = account.get("type", "")
-    now_str      = datetime.now().isoformat()
+    now_str      = datetime.now(timezone.utc).isoformat()
 
     db.add_claim(round_id, user.id, user.username, user.first_name, email, now_str)
     db.add_log("CLAIM_GIFT", f"@{user.username} ({user.id})", "")
@@ -1058,9 +1068,9 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         cooldown_str = udata_check.get("gift_return_cooldown_until")
         if cooldown_str:
             try:
-                cooldown_until = datetime.fromisoformat(cooldown_str)
-                if datetime.now() < cooldown_until:
-                    remaining = cooldown_until - datetime.now()
+                cooldown_until = _parse_dt(cooldown_str)
+                if _utcnow() < cooldown_until:
+                    remaining = cooldown_until - _utcnow()
                     hours, rem = divmod(int(remaining.total_seconds()), 3600)
                     minutes = rem // 60
                     time_str = (f"{hours}h {minutes}p" if hours > 0 else f"{minutes} phút") if vi \
@@ -1214,8 +1224,8 @@ async def callback_return_gift_init(update: Update, context: ContextTypes.DEFAUL
 
     # Kiểm tra 24h
     try:
-        claimed_at = datetime.fromisoformat(gift["claimed_at"])
-        if datetime.now() - claimed_at > timedelta(hours=24):
+        claimed_at = _parse_dt(gift["claimed_at"])
+        if _utcnow() - claimed_at > timedelta(hours=24):
             await query.edit_message_text(
                 "⏰ Đã quá 24 giờ kể từ khi nhận quà. Không thể nhường lại nữa." if vi
                 else "⏰ It's been more than 24 hours since you claimed. Cannot return anymore.",
@@ -1272,8 +1282,8 @@ async def callback_return_gift_confirm(update: Update, context: ContextTypes.DEF
 
     # Kiểm tra lại 24h
     try:
-        claimed_at = datetime.fromisoformat(gift["claimed_at"])
-        if datetime.now() - claimed_at > timedelta(hours=24):
+        claimed_at = _parse_dt(gift["claimed_at"])
+        if _utcnow() - claimed_at > timedelta(hours=24):
             await query.edit_message_text(
                 "⏰ Đã quá 24 giờ, không thể nhường lại." if vi else "⏰ Time limit exceeded. Cannot return."
             )
@@ -1307,7 +1317,7 @@ async def callback_return_gift_confirm(update: Update, context: ContextTypes.DEF
     # Xoá thông tin quà khỏi user_data
     context.user_data.pop("last_gift", None)
 
-    cooldown_until = datetime.now() + timedelta(hours=1)
+    cooldown_until = _utcnow() + timedelta(hours=1)
     await query.edit_message_text(
         f"✅ <b>Đã nhường quà thành công!</b>\n\n"
         f"Cảm ơn bạn đã nhường lại để tránh lãng phí 💚\n\n"
@@ -1525,7 +1535,7 @@ async def handle_delivery_input(update: Update, context: ContextTypes.DEFAULT_TY
     first_reminder_at: str | None = None
     if reminder_cfg.get("enabled") and reminder_cfg.get("reminderMinutes"):
         first_min = reminder_cfg["reminderMinutes"][0]
-        first_reminder_at = (datetime.now() + timedelta(minutes=first_min)).isoformat()
+        first_reminder_at = (_utcnow() + timedelta(minutes=first_min)).isoformat()
 
     req_id = db.add_delivery_request(
         user_id=user.id,
