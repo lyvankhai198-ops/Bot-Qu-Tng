@@ -175,12 +175,14 @@ def pop_account():
             return acc
     return None
 
-def mark_account_distributed(email: str, user_id: int):
+def mark_account_distributed(email: str, user_id: int,
+                               username: str = "", first_name: str = ""):
     accounts = [_normalize_account(a) for a in load("accounts", [])]
     for acc in accounts:
         if acc.get("email") == email:
             acc["status"] = "distributed"
             acc["distributedTo"] = str(user_id)
+            acc["distributedToName"] = f"@{username}" if username else (first_name or str(user_id))
             acc["distributedAt"] = datetime.now(timezone.utc).isoformat()
     save("accounts", accounts)
 

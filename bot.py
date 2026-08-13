@@ -889,6 +889,7 @@ async def _claim_gift(user, context, L: str, settings: dict) -> None:
     now_str      = datetime.now(timezone.utc).isoformat()
 
     db.add_claim(round_id, user.id, user.username, user.first_name, email, now_str)
+    db.mark_account_distributed(email, user.id, user.username, user.first_name)
     db.add_log("CLAIM_GIFT", f"@{user.username} ({user.id})", "")
 
     # ── Build gift message ────────────────────────────────────────────────────

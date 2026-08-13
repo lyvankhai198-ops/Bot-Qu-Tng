@@ -321,12 +321,13 @@ export default function Accounts() {
                           {/* Đã phát — thời gian phát + ai nhận */}
                           {acc.status === "distributed" && (() => {
                             const t = smartDate(acc.distributedAt)
+                            const name = accAny.distributedToName || (acc.distributedTo ? `ID ${acc.distributedTo}` : null)
                             return (
                               <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
                                 <UserCheck className="h-3 w-3" />
                                 {t ? <span title={t.title}>Phát {t.label}</span> : "Đã phát"}
-                                {acc.distributedTo && (
-                                  <span className="text-muted-foreground">· ID {acc.distributedTo}</span>
+                                {name && (
+                                  <span className="text-muted-foreground">· {name}</span>
                                 )}
                               </span>
                             )
@@ -335,12 +336,13 @@ export default function Accounts() {
                           {/* Hoàn về — thời gian hoàn + từ ai */}
                           {acc.status === "returned" && (() => {
                             const t = smartDate(accAny.returnedAt || acc.distributedAt)
+                            const name = accAny.distributedToName || (acc.distributedTo ? `ID ${acc.distributedTo}` : null)
                             return (
                               <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
                                 <RotateCcw className="h-3 w-3" />
                                 {t ? <span title={t.title}>Hoàn {t.label}</span> : "Đã hoàn về kho"}
-                                {acc.distributedTo && (
-                                  <span className="text-muted-foreground">· từ ID {acc.distributedTo}</span>
+                                {name && (
+                                  <span className="text-muted-foreground">· từ {name}</span>
                                 )}
                               </span>
                             )
