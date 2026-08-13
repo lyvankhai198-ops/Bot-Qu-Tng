@@ -18,4 +18,6 @@ export interface BotSettings {
   maintenanceMode?: boolean;
   refundFormula?: string;
   refundCustomText?: string;
+  requireChannelCheck?: boolean;
+  requireStartChannelCheck?: boolean;
 }

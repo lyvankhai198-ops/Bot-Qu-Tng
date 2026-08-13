@@ -776,12 +776,36 @@ export default function Settings() {
         </p>
       </div>
 
-      {/* Global toggle */}
+      {/* Global toggle — start gate */}
       <Card>
         <CardContent className="p-4 md:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <Label className="text-base font-medium">Bật kiểm tra tham gia kênh</Label>
+              <Label className="text-base font-medium">Bắt buộc tham gia kênh khi /start</Label>
+              <p className="text-sm text-muted-foreground mt-1">
+                Khi bật, user phải tham gia kênh (danh sách bên dưới) ngay sau khi chọn ngôn ngữ ở /start.
+                Sau khi xác minh thành công, bot sẽ tự động hiện kênh bán hàng và menu chính.
+              </p>
+            </div>
+            <Switch
+              checked={!!form.requireStartChannelCheck}
+              onCheckedChange={v => setForm({ ...form, requireStartChannelCheck: v })}
+            />
+          </div>
+          {form.requireStartChannelCheck && channels.length === 0 && (
+            <p className="mt-3 text-sm text-amber-600 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 rounded-md">
+              ⚠️ Đã bật nhưng chưa có kênh nào. Thêm ít nhất 1 kênh bên dưới.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Global toggle — gift gate */}
+      <Card>
+        <CardContent className="p-4 md:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-base font-medium">Bật kiểm tra tham gia kênh trước khi nhận quà</Label>
               <p className="text-sm text-muted-foreground mt-1">Bot sẽ xác minh user đã join kênh trước khi cấp quà</p>
             </div>
             <Switch

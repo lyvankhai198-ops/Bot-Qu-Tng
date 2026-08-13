@@ -548,9 +548,145 @@ async def callback_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     db.set_user_lang(user.id, chosen)
     db.save_user(user.id, user.username, user.first_name)
     L = chosen
+    vi = L == "vi"
     welcome = t(L, "welcome_admin", name=user.first_name or "Admin") if is_admin(user.id) else t(L, "welcome", name=user.first_name or "User")
     await query.edit_message_text(f"{t(L, 'lang_chosen')}\n\n{welcome}", parse_mode=ParseMode.HTML)
+
+    # ── Cổng kênh cộng đồng khi /start (bỏ qua admin) ────────────────────
+    settings = db.get_settings()
+    if not is_admin(user.id) and settings.get("require_start_channel_check", False):
+        channels = db.get_required_channels()
+        enabled_channels = [c for c in channels if c.get("enabled", True)]
+        if enabled_channels:
+            not_joined, no_chat_id, api_errors = await _check_channels_membership(
+                context.bot, user.id, enabled_channels
+            )
+            logger.info(
+                f"[start] community_gate telegram_user_id={user.id} "
+                f"not_joined={len(not_joined)} no_chat_id={len(no_chat_id)} api_errors={len(api_errors)}"
+            )
+            if no_chat_id or api_errors:
+                await context.bot.send_message(
+                    user.id,
+                    "⚠️ Bot chưa được cấu hình đúng để xác minh kênh. Vui lòng liên hệ admin." if vi
+                    else "⚠️ Bot is not configured correctly to verify channels. Please contact admin.",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            if not_joined:
+                join_msg = (
+                    "🔐 <b>YÊU CẦU THAM GIA KÊNH CỘNG ĐỒNG</b>\n\n"
+                    "Để sử dụng bot, bạn cần tham gia kênh cộng đồng chính thức.\n\n"
+                    'Sau khi tham gia, hãy bấm "<b>✅ Tôi đã tham gia</b>" để xác minh.'
+                ) if vi else (
+                    "🔐 <b>COMMUNITY CHANNEL REQUIRED</b>\n\n"
+                    "To use this bot, please join our official community channel first.\n\n"
+                    'After joining, tap "<b>✅ I Joined</b>" to verify.'
+                )
+                await context.bot.send_message(
+                    user.id, join_msg, parse_mode=ParseMode.HTML,
+                    reply_markup=_build_community_join_markup(L, not_joined),
+                )
+                return
+
+    # Tất cả kênh OK (hoặc gate tắt) — hiện menu chính
     await context.bot.send_message(user.id, welcome, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
+
+
+def _build_community_join_markup(L: str, not_joined: list) -> InlineKeyboardMarkup:
+    """Inline keyboard cho cổng kênh cộng đồng ở /start."""
+    vi = L == "vi"
+    buttons = []
+    for ch in not_joined:
+        name = ch.get("name") or "Kênh cộng đồng"
+        url  = ch.get("url") or ch.get("username") or ""
+        if url and not url.startswith("http"):
+            url = f"https://t.me/{url.lstrip('@')}"
+        if url:
+            buttons.append([InlineKeyboardButton(
+                f"📢 Tham gia {name}" if vi else f"📢 Join {name}", url=url
+            )])
+    buttons.append([InlineKeyboardButton(
+        "✅ Tôi đã tham gia" if vi else "✅ I Joined",
+        callback_data="check_community_join",
+    )])
+    return InlineKeyboardMarkup(buttons)
+
+
+async def callback_check_community_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Xác minh lại kênh cộng đồng khi user bấm '✅ Tôi đã tham gia' từ cổng /start.
+    Nếu đã join đủ: đóng prompt → hiện kênh bán hàng → gửi menu chính.
+    """
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    L    = lang(user.id)
+    vi   = L == "vi"
+
+    channels         = db.get_required_channels()
+    enabled_channels = [c for c in channels if c.get("enabled", True)]
+
+    not_joined, no_chat_id, api_errors = await _check_channels_membership(
+        context.bot, user.id, enabled_channels
+    )
+    logger.info(
+        f"[start] check_community_join telegram_user_id={user.id} "
+        f"not_joined={len(not_joined)} no_chat_id={len(no_chat_id)} api_errors={len(api_errors)}"
+    )
+
+    if no_chat_id or api_errors:
+        await query.edit_message_text(
+            "⚠️ Bot chưa được cấu hình đúng. Vui lòng liên hệ admin." if vi
+            else "⚠️ Bot is misconfigured. Please contact admin.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if not_joined:
+        names = ", ".join(f"<b>{c.get('name') or c.get('username') or 'kênh'}</b>" for c in not_joined)
+        msg = (
+            f"❌ <b>Chưa xác minh được.</b>\n\n"
+            f"📢 Chưa tham gia: {names}\n\n"
+            "Vui lòng tham gia kênh rồi thử lại sau vài giây."
+        ) if vi else (
+            f"❌ <b>Could not verify membership.</b>\n\n"
+            f"📢 Not joined: {names}\n\n"
+            "Please join the channel and try again in a few seconds."
+        )
+        await query.edit_message_text(
+            msg, parse_mode=ParseMode.HTML,
+            reply_markup=_build_community_join_markup(L, not_joined),
+        )
+        return
+
+    # ── Tất cả kênh đã xác minh ──────────────────────────────────────────
+    logger.info(f"[start] community_gate_passed telegram_user_id={user.id}")
+
+    await query.edit_message_text(
+        "✅ <b>Xác minh thành công! Chào mừng bạn.</b>" if vi
+        else "✅ <b>Verified! Welcome.</b>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    # Hiện kênh bán hàng (nếu có)
+    shop_channels = get_active_shop_channels()
+    if shop_channels:
+        await context.bot.send_message(
+            user.id,
+            "🛍️ <b>Kênh bán hàng chính thức:</b>" if vi else "🛍️ <b>Official shop channels:</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=shop_channels_inline(L, shop_channels),
+        )
+
+    # Gửi menu chính
+    welcome = (
+        t(L, "welcome_admin", name=user.first_name or "Admin")
+        if is_admin(user.id)
+        else t(L, "welcome", name=user.first_name or "User")
+    )
+    await context.bot.send_message(
+        user.id, welcome, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id)
+    )
 
 async def cmd_myid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"🆔 Your ID: <code>{update.effective_user.id}</code>", parse_mode=ParseMode.HTML)
@@ -3344,8 +3480,9 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_warranty_ack,  pattern=r"^warranty_ack:"))
     app.add_handler(CallbackQueryHandler(callback_warranty_noop, pattern=r"^warranty_noop$"))
     app.add_handler(CallbackQueryHandler(callback_multi_warranty,  pattern=r"^mw:"))
-    app.add_handler(CallbackQueryHandler(callback_check_join,    pattern=r"^check_join$"))
-    app.add_handler(CallbackQueryHandler(callback_back_main,     pattern=r"^back_main$"))
+    app.add_handler(CallbackQueryHandler(callback_check_join,          pattern=r"^check_join$"))
+    app.add_handler(CallbackQueryHandler(callback_check_community_join, pattern=r"^check_community_join$"))
+    app.add_handler(CallbackQueryHandler(callback_back_main,           pattern=r"^back_main$"))
     app.add_handler(CallbackQueryHandler(callback_gift_box,      pattern=r"^gbox[_:]"))
     app.add_handler(CallbackQueryHandler(callback_checkin,          pattern=r"^checkin$"))
     app.add_handler(CallbackQueryHandler(callback_unlock_delivery,  pattern=r"^unlock_del:"))

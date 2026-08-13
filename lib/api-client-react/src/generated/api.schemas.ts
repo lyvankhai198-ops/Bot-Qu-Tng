@@ -53,6 +53,7 @@ export interface BotSettings {
   refundFormula?: string;
   refundCustomText?: string;
   requireChannelCheck?: boolean;
+  requireStartChannelCheck?: boolean;
 }
 
 export interface BotSettingsInput {
@@ -68,6 +69,7 @@ export interface BotSettingsInput {
   refundFormula?: string;
   refundCustomText?: string;
   requireChannelCheck?: boolean;
+  requireStartChannelCheck?: boolean;
 }
 
 export interface Account {
@@ -298,6 +300,14 @@ export interface IntroConfig {
 
 export type GetBotLogsParams = {
 limit?: number;
+};
+
+export type RespondWarrantyBody = {
+  message?: string;
+};
+
+export type RespondWarrantyAccountBody = {
+  message?: string;
 };
 
 export type GetBackup200 = { [key: string]: unknown };

@@ -60,7 +60,9 @@ export const GetBotSettingsResponse = zod.object({
   "introEnabled": zod.boolean().optional(),
   "maintenanceMode": zod.boolean().optional(),
   "refundFormula": zod.string().optional(),
-  "refundCustomText": zod.string().optional()
+  "refundCustomText": zod.string().optional(),
+  "requireChannelCheck": zod.boolean().optional(),
+  "requireStartChannelCheck": zod.boolean().optional()
 })
 
 
@@ -78,7 +80,9 @@ export const UpdateBotSettingsBody = zod.object({
   "introEnabled": zod.boolean().optional(),
   "maintenanceMode": zod.boolean().optional(),
   "refundFormula": zod.string().optional(),
-  "refundCustomText": zod.string().optional()
+  "refundCustomText": zod.string().optional(),
+  "requireChannelCheck": zod.boolean().optional(),
+  "requireStartChannelCheck": zod.boolean().optional()
 })
 
 export const UpdateBotSettingsResponse = zod.object({
@@ -92,7 +96,9 @@ export const UpdateBotSettingsResponse = zod.object({
   "introEnabled": zod.boolean().optional(),
   "maintenanceMode": zod.boolean().optional(),
   "refundFormula": zod.string().optional(),
-  "refundCustomText": zod.string().optional()
+  "refundCustomText": zod.string().optional(),
+  "requireChannelCheck": zod.boolean().optional(),
+  "requireStartChannelCheck": zod.boolean().optional()
 })
 
 
@@ -320,7 +326,9 @@ export const CreateOrderBody = zod.object({
   "warrantyExpiry": zod.string().nullish(),
   "expiryDate": zod.string().nullish(),
   "status": zod.string().optional(),
-  "notes": zod.string().nullish()
+  "notes": zod.string().nullish(),
+  "password": zod.string().nullish().describe('Mật khẩu đăng nhập tài khoản (dùng cho Health Check)'),
+  "twoFA": zod.string().nullish().describe('Mã 2FA \/ thông tin bổ sung')
 })
 
 export const CreateOrderResponse = zod.object({
@@ -417,7 +425,9 @@ export const UpdateOrderBody = zod.object({
   "warrantyExpiry": zod.string().nullish(),
   "expiryDate": zod.string().nullish(),
   "status": zod.string().optional(),
-  "notes": zod.string().nullish()
+  "notes": zod.string().nullish(),
+  "password": zod.string().nullish().describe('Mật khẩu đăng nhập tài khoản (dùng cho Health Check)'),
+  "twoFA": zod.string().nullish().describe('Mã 2FA \/ thông tin bổ sung')
 })
 
 export const UpdateOrderResponse = zod.object({
@@ -543,6 +553,41 @@ export const ResolveWarrantyRejectBody = zod.object({
 })
 
 export const ResolveWarrantyRejectResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Send a reply message to a warranty request customer
+ */
+export const RespondWarrantyParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const RespondWarrantyBody = zod.object({
+  "message": zod.string().optional()
+})
+
+export const RespondWarrantyResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Send a reply message for a sub-account in a group warranty request
+ */
+export const RespondWarrantyAccountParams = zod.object({
+  "id": zod.coerce.string(),
+  "accId": zod.coerce.string()
+})
+
+export const RespondWarrantyAccountBody = zod.object({
+  "message": zod.string().optional()
+})
+
+export const RespondWarrantyAccountResponse = zod.object({
   "ok": zod.boolean(),
   "message": zod.string()
 })
@@ -687,6 +732,8 @@ export const ResendWarrantyReplacementResponse = zod.object({
 export const GetIntroResponse = zod.object({
   "title": zod.string().optional(),
   "content": zod.string().optional(),
+  "titleEn": zod.string().optional(),
+  "contentEn": zod.string().optional(),
   "photoUrl": zod.string().optional(),
   "videoUrl": zod.string().optional(),
   "buttons": zod.array(zod.object({
@@ -702,6 +749,8 @@ export const GetIntroResponse = zod.object({
 export const UpdateIntroBody = zod.object({
   "title": zod.string().optional(),
   "content": zod.string().optional(),
+  "titleEn": zod.string().optional(),
+  "contentEn": zod.string().optional(),
   "photoUrl": zod.string().optional(),
   "videoUrl": zod.string().optional(),
   "buttons": zod.array(zod.object({

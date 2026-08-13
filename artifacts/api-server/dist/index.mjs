@@ -28317,7 +28317,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path5 = __require("path");
-        const outputDir = "/home/runner/workspace/artifacts/api-server/dist";
+        const outputDir = "/tmp/bot-project/artifacts/api-server/dist";
         return path5.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -55514,7 +55514,9 @@ var GetBotSettingsResponse = objectType({
   "introEnabled": booleanType().optional(),
   "maintenanceMode": booleanType().optional(),
   "refundFormula": stringType().optional(),
-  "refundCustomText": stringType().optional()
+  "refundCustomText": stringType().optional(),
+  "requireChannelCheck": booleanType().optional(),
+  "requireStartChannelCheck": booleanType().optional()
 });
 var UpdateBotSettingsBody = objectType({
   "shopLink": stringType().optional(),
@@ -55527,7 +55529,9 @@ var UpdateBotSettingsBody = objectType({
   "introEnabled": booleanType().optional(),
   "maintenanceMode": booleanType().optional(),
   "refundFormula": stringType().optional(),
-  "refundCustomText": stringType().optional()
+  "refundCustomText": stringType().optional(),
+  "requireChannelCheck": booleanType().optional(),
+  "requireStartChannelCheck": booleanType().optional()
 });
 var UpdateBotSettingsResponse = objectType({
   "shopLink": stringType().optional(),
@@ -55540,7 +55544,9 @@ var UpdateBotSettingsResponse = objectType({
   "introEnabled": booleanType().optional(),
   "maintenanceMode": booleanType().optional(),
   "refundFormula": stringType().optional(),
-  "refundCustomText": stringType().optional()
+  "refundCustomText": stringType().optional(),
+  "requireChannelCheck": booleanType().optional(),
+  "requireStartChannelCheck": booleanType().optional()
 });
 var ListAccountsResponseItem = objectType({
   "id": stringType().optional(),
@@ -55688,7 +55694,9 @@ var CreateOrderBody = objectType({
   "warrantyExpiry": stringType().nullish(),
   "expiryDate": stringType().nullish(),
   "status": stringType().optional(),
-  "notes": stringType().nullish()
+  "notes": stringType().nullish(),
+  "password": stringType().nullish().describe("M\u1EADt kh\u1EA9u \u0111\u0103ng nh\u1EADp t\xE0i kho\u1EA3n (d\xF9ng cho Health Check)"),
+  "twoFA": stringType().nullish().describe("M\xE3 2FA / th\xF4ng tin b\u1ED5 sung")
 });
 var CreateOrderResponse = objectType({
   "orderId": stringType(),
@@ -55766,7 +55774,9 @@ var UpdateOrderBody = objectType({
   "warrantyExpiry": stringType().nullish(),
   "expiryDate": stringType().nullish(),
   "status": stringType().optional(),
-  "notes": stringType().nullish()
+  "notes": stringType().nullish(),
+  "password": stringType().nullish().describe("M\u1EADt kh\u1EA9u \u0111\u0103ng nh\u1EADp t\xE0i kho\u1EA3n (d\xF9ng cho Health Check)"),
+  "twoFA": stringType().nullish().describe("M\xE3 2FA / th\xF4ng tin b\u1ED5 sung")
 });
 var UpdateOrderResponse = objectType({
   "ok": booleanType(),
@@ -55948,6 +55958,8 @@ var ResendWarrantyReplacementResponse = objectType({
 var GetIntroResponse = objectType({
   "title": stringType().optional(),
   "content": stringType().optional(),
+  "titleEn": stringType().optional(),
+  "contentEn": stringType().optional(),
   "photoUrl": stringType().optional(),
   "videoUrl": stringType().optional(),
   "buttons": arrayType(objectType({
@@ -55958,6 +55970,8 @@ var GetIntroResponse = objectType({
 var UpdateIntroBody = objectType({
   "title": stringType().optional(),
   "content": stringType().optional(),
+  "titleEn": stringType().optional(),
+  "contentEn": stringType().optional(),
   "photoUrl": stringType().optional(),
   "videoUrl": stringType().optional(),
   "buttons": arrayType(objectType({
@@ -56982,7 +56996,8 @@ function readSettings() {
     maintenance_mode: false,
     refund_formula: "remaining_days",
     refund_custom_text: "",
-    require_channel_check: false
+    require_channel_check: false,
+    require_start_channel_check: false
   };
   return { ...defaults, ...readJson("settings", {}) ?? {} };
 }
@@ -56999,7 +57014,8 @@ function settingsToApi(s) {
     maintenanceMode: s.maintenance_mode ?? false,
     refundFormula: s.refund_formula ?? "remaining_days",
     refundCustomText: s.refund_custom_text ?? "",
-    requireChannelCheck: s.require_channel_check ?? false
+    requireChannelCheck: s.require_channel_check ?? false,
+    requireStartChannelCheck: s.require_start_channel_check ?? false
   };
 }
 router2.post("/bot/auth", loginRateLimiter, async (req, res) => {
@@ -57100,7 +57116,8 @@ router2.put("/bot/settings", requireAuth, (req, res) => {
     maintenanceMode: "maintenance_mode",
     refundFormula: "refund_formula",
     refundCustomText: "refund_custom_text",
-    requireChannelCheck: "require_channel_check"
+    requireChannelCheck: "require_channel_check",
+    requireStartChannelCheck: "require_start_channel_check"
   };
   for (const [k, v] of Object.entries(map)) {
     if (b[k] !== void 0) s[v] = k === "cooldownHours" ? Number(b[k]) : b[k];

@@ -44,6 +44,8 @@ import type {
   NotificationSettings,
   Order,
   OrderInput,
+  RespondWarrantyAccountBody,
+  RespondWarrantyBody,
   WarrantyAccountReplacementInput,
   WarrantyRefundInput,
   WarrantyRejectInput,
@@ -2067,6 +2069,152 @@ export const useResolveWarrantyReject = <TError = ErrorType<unknown>,
       return useMutation(getResolveWarrantyRejectMutationOptions(options));
     }
 
+export const getRespondWarrantyUrl = (id: string,) => {
+
+
+
+
+  return `/api/bot/warranty/${id}/respond`
+}
+
+/**
+ * @summary Send a reply message to a warranty request customer
+ */
+export const respondWarranty = async (id: string,
+    respondWarrantyBody: RespondWarrantyBody, options?: RequestInit): Promise<ActionResult> => {
+
+  return customFetch<ActionResult>(getRespondWarrantyUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(respondWarrantyBody)
+  }
+);}
+
+
+
+
+
+export const getRespondWarrantyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof respondWarranty>>, TError,{id: string;data: BodyType<RespondWarrantyBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof respondWarranty>>, TError,{id: string;data: BodyType<RespondWarrantyBody>}, TContext> => {
+
+const mutationKey = ['respondWarranty'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof respondWarranty>>, {id: string;data: BodyType<RespondWarrantyBody>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  respondWarranty(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RespondWarrantyMutationResult = NonNullable<Awaited<ReturnType<typeof respondWarranty>>>
+    export type RespondWarrantyMutationBody = BodyType<RespondWarrantyBody>
+    export type RespondWarrantyMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Send a reply message to a warranty request customer
+ */
+export const useRespondWarranty = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof respondWarranty>>, TError,{id: string;data: BodyType<RespondWarrantyBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof respondWarranty>>,
+        TError,
+        {id: string;data: BodyType<RespondWarrantyBody>},
+        TContext
+      > => {
+      return useMutation(getRespondWarrantyMutationOptions(options));
+    }
+
+export const getRespondWarrantyAccountUrl = (id: string,
+    accId: string,) => {
+
+
+
+
+  return `/api/bot/warranty/${id}/accounts/${accId}/respond`
+}
+
+/**
+ * @summary Send a reply message for a sub-account in a group warranty request
+ */
+export const respondWarrantyAccount = async (id: string,
+    accId: string,
+    respondWarrantyAccountBody: RespondWarrantyAccountBody, options?: RequestInit): Promise<ActionResult> => {
+
+  return customFetch<ActionResult>(getRespondWarrantyAccountUrl(id,accId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(respondWarrantyAccountBody)
+  }
+);}
+
+
+
+
+
+export const getRespondWarrantyAccountMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof respondWarrantyAccount>>, TError,{id: string;accId: string;data: BodyType<RespondWarrantyAccountBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof respondWarrantyAccount>>, TError,{id: string;accId: string;data: BodyType<RespondWarrantyAccountBody>}, TContext> => {
+
+const mutationKey = ['respondWarrantyAccount'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof respondWarrantyAccount>>, {id: string;accId: string;data: BodyType<RespondWarrantyAccountBody>}> = (props) => {
+          const {id,accId,data} = props ?? {};
+
+          return  respondWarrantyAccount(id,accId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RespondWarrantyAccountMutationResult = NonNullable<Awaited<ReturnType<typeof respondWarrantyAccount>>>
+    export type RespondWarrantyAccountMutationBody = BodyType<RespondWarrantyAccountBody>
+    export type RespondWarrantyAccountMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Send a reply message for a sub-account in a group warranty request
+ */
+export const useRespondWarrantyAccount = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof respondWarrantyAccount>>, TError,{id: string;accId: string;data: BodyType<RespondWarrantyAccountBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof respondWarrantyAccount>>,
+        TError,
+        {id: string;accId: string;data: BodyType<RespondWarrantyAccountBody>},
+        TContext
+      > => {
+      return useMutation(getRespondWarrantyAccountMutationOptions(options));
+    }
+
 export const getGetNotificationSettingsUrl = () => {
 
 
@@ -2877,45 +3025,3 @@ export function useGetBackup<TData = Awaited<ReturnType<typeof getBackup>>, TErr
 
 
 
-
-// ── respondWarranty ────────────────────────────────────────────────────────────
-export const respondWarranty = async (id: string, body: { message: string }, options?: RequestInit): Promise<{ ok: boolean; message: string }> => {
-  return customFetch<{ ok: boolean; message: string }>(`/api/bot/warranty/${id}/respond`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    ...options,
-  });
-};
-
-export const useRespondWarranty = <TError = ErrorType<unknown>, TContext = unknown>(
-  options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof respondWarranty>>, TError, { id: string; data: { message: string } }, TContext> }
-) => {
-  const { mutation: mutationOptions } = options ?? {};
-  const mutationFn = (props: { id: string; data: { message: string } }) => {
-    const { id, data } = props;
-    return respondWarranty(id, data);
-  };
-  return useMutation<Awaited<ReturnType<typeof respondWarranty>>, TError, { id: string; data: { message: string } }, TContext>({ mutationFn, ...mutationOptions });
-};
-
-// ── respondWarrantyAccount ─────────────────────────────────────────────────────
-export const respondWarrantyAccount = async (id: string, accId: string, body: { message: string }, options?: RequestInit): Promise<{ ok: boolean; message: string }> => {
-  return customFetch<{ ok: boolean; message: string }>(`/api/bot/warranty/${id}/accounts/${accId}/respond`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    ...options,
-  });
-};
-
-export const useRespondWarrantyAccount = <TError = ErrorType<unknown>, TContext = unknown>(
-  options?: { mutation?: UseMutationOptions<Awaited<ReturnType<typeof respondWarrantyAccount>>, TError, { id: string; accId: string; data: { message: string } }, TContext> }
-) => {
-  const { mutation: mutationOptions } = options ?? {};
-  const mutationFn = (props: { id: string; accId: string; data: { message: string } }) => {
-    const { id, accId, data } = props;
-    return respondWarrantyAccount(id, accId, data);
-  };
-  return useMutation<Awaited<ReturnType<typeof respondWarrantyAccount>>, TError, { id: string; accId: string; data: { message: string } }, TContext>({ mutationFn, ...mutationOptions });
-};

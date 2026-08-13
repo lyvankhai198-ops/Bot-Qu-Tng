@@ -69,6 +69,7 @@ function readSettings(): any {
     gift_enabled: true, support_enabled: true, intro_enabled: true,
     maintenance_mode: false, refund_formula: "remaining_days", refund_custom_text: "",
     require_channel_check: false,
+    require_start_channel_check: false,
   };
   return { ...defaults, ...(readJson("settings", {}) ?? {}) };
 }
@@ -87,6 +88,7 @@ function settingsToApi(s: any) {
     refundFormula: s.refund_formula ?? "remaining_days",
     refundCustomText: s.refund_custom_text ?? "",
     requireChannelCheck: s.require_channel_check ?? false,
+    requireStartChannelCheck: s.require_start_channel_check ?? false,
   };
 }
 
@@ -205,6 +207,7 @@ router.put("/bot/settings", requireAuth, (req: any, res: any) => {
     giftEnabled: "gift_enabled", supportEnabled: "support_enabled", introEnabled: "intro_enabled",
     maintenanceMode: "maintenance_mode", refundFormula: "refund_formula", refundCustomText: "refund_custom_text",
     requireChannelCheck: "require_channel_check",
+    requireStartChannelCheck: "require_start_channel_check",
   };
   for (const [k, v] of Object.entries(map)) {
     if (b[k] !== undefined) s[v] = k === "cooldownHours" ? Number(b[k]) : b[k];
