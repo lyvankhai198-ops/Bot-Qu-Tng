@@ -1052,6 +1052,32 @@ async def handle_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             else:
                 logger.info(f"[gift] all_channels_cache_valid telegram_user_id={user.id} — skip_join_screen")
 
+    # ── Cooldown sau khi nhường quà ────────────────────────────────────────
+    udata_check = db.get_user(user.id)
+    if udata_check:
+        cooldown_str = udata_check.get("gift_return_cooldown_until")
+        if cooldown_str:
+            try:
+                cooldown_until = datetime.fromisoformat(cooldown_str)
+                if datetime.now() < cooldown_until:
+                    remaining = cooldown_until - datetime.now()
+                    hours, rem = divmod(int(remaining.total_seconds()), 3600)
+                    minutes = rem // 60
+                    time_str = (f"{hours}h {minutes}p" if hours > 0 else f"{minutes} phút") if vi \
+                               else (f"{hours}h {minutes}m" if hours > 0 else f"{minutes} min")
+                    await update.message.reply_text(
+                        f"⏳ <b>Bạn vừa nhường quà.</b>\n\n"
+                        f"Để tránh lạm dụng, bạn cần chờ <b>{time_str}</b> nữa trước khi nhận quà tiếp theo.\n"
+                        f"⏰ Mở lại lúc: <code>{cooldown_until.strftime('%H:%M ngày %d/%m/%Y')}</code>" if vi else
+                        f"⏳ <b>You recently returned a gift.</b>\n\n"
+                        f"To prevent abuse, please wait <b>{time_str}</b> before claiming again.\n"
+                        f"⏰ Available at: <code>{cooldown_until.strftime('%H:%M on %d/%m/%Y')}</code>",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    return
+            except Exception:
+                pass
+
     # ── Kiểm tra kho và phát quà ───────────────────────────────────────────
     logger.info(f"[gift] stock_check_started telegram_user_id={user.id}")
     stock = db.stock_count()
@@ -1281,14 +1307,17 @@ async def callback_return_gift_confirm(update: Update, context: ContextTypes.DEF
     # Xoá thông tin quà khỏi user_data
     context.user_data.pop("last_gift", None)
 
+    cooldown_until = datetime.now() + timedelta(hours=24)
     await query.edit_message_text(
-        "✅ <b>Đã nhường quà thành công!</b>\n\n"
-        "Cảm ơn bạn đã nhường lại để tránh lãng phí 💚\n"
-        "Bạn có thể nhận quà lại bình thường." if vi
+        f"✅ <b>Đã nhường quà thành công!</b>\n\n"
+        f"Cảm ơn bạn đã nhường lại để tránh lãng phí 💚\n\n"
+        f"⏰ Để tránh lạm dụng, bạn có thể nhận quà lại sau <b>24 giờ</b>.\n"
+        f"Mở lại lúc: <code>{cooldown_until.strftime('%H:%M ngày %d/%m/%Y')}</code>" if vi
         else
-        "✅ <b>Gift returned successfully!</b>\n\n"
-        "Thank you for giving it back 💚\n"
-        "You may claim a gift again normally.",
+        f"✅ <b>Gift returned successfully!</b>\n\n"
+        f"Thank you for giving it back 💚\n\n"
+        f"⏰ To prevent abuse, you may claim again after <b>24 hours</b>.\n"
+        f"Available at: <code>{cooldown_until.strftime('%H:%M on %d/%m/%Y')}</code>",
         parse_mode=ParseMode.HTML,
     )
     logger.info(f"[return_gift] user={user.id} returned account={email}")
