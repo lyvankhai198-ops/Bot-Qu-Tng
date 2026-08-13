@@ -1068,9 +1068,74 @@ router.post("/bot/warranty/:id/replacement", requireAuth, async (req: any, res: 
     resolvedBy: "web-admin",
   };
 
-  // Send via Telegram
-  const message = buildReplacementMessage(req_, email, password, twoFA, note);
-  const result = await sendTelegramMessage(req_.userId, message);
+  // ── Tạo delivery_request để theo dõi mở khoá ────────────────────────────
+  const deliveryId = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const deliveredAt = now();
+  const deliveryRequests: any[] = readJson("delivery_requests", []) ?? [];
+  deliveryRequests.push({
+    id: deliveryId,
+    orderId: req_.orderId || "N/A",
+    userId: req_.userId,
+    username: req_.username || String(req_.userId),
+    userLang: req_.userLang || "vi",
+    productName: req_.productName || "",
+    status: "pending_unlock",
+    submittedAt: deliveredAt,
+    sentAt: deliveredAt,
+    sentBy: "web-admin",
+    source: "warranty_replacement",
+    warrantyRequestId: id,
+    accountInfo: { account: email, password, twoFA: twoFA || null },
+  });
+  writeJson("delivery_requests", deliveryRequests);
+
+  // ── Lưu vào order_items với unlocked=false (để unlock tracking hoạt động) ─
+  const orders_wr: any = readJson("orders", {}) ?? {};
+  const orderItems_wr: any = readJson("order_items", {}) ?? {};
+  if (req_.orderId) {
+    const existingItems: any[] = orderItems_wr[req_.orderId] ?? [];
+    const existIdx = existingItems.findIndex(
+      (it: any) => (it.original_account || it.email || "").toLowerCase() === email.toLowerCase()
+    );
+    const itemEntry: any = {
+      itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
+      email, password: password || null, twoFA: twoFA || null,
+      unlocked: false, status: "delivered", item_status: "active",
+      productName: orders_wr[req_.orderId]?.productName || req_.productName || "",
+      original_account: email, current_account: email,
+      current_replacement_number: 0,
+      original_delivered_at: deliveredAt,
+      source: "warranty_replacement",
+      warranty_request_id: id,
+      createdAt: deliveredAt,
+    };
+    if (existIdx >= 0) existingItems[existIdx] = { ...existingItems[existIdx], ...itemEntry };
+    else existingItems.push(itemEntry);
+    orderItems_wr[req_.orderId] = existingItems;
+    writeJson("order_items", orderItems_wr);
+  }
+
+  // ── Gửi nút mở khoá cho khách (thay vì gửi thẳng account) ───────────────
+  const userLang_wr = req_.userLang ?? "vi";
+  const isEN_wr = userLang_wr === "en";
+  const unlockLines: string[] = isEN_wr ? [
+    `✅ <b>WARRANTY REQUEST RESOLVED</b>`,
+    `📦 Order: <code>${req_.orderId || "N/A"}</code>`,
+    req_.productName ? `🛍 Product: <b>${req_.productName}</b>` : "",
+    `\n🔑 Your replacement account is ready. Tap the button below to unlock it.`,
+    `\n<i>Only you can unlock this account.</i>`,
+  ] : [
+    `✅ <b>YÊU CẦU BẢO HÀNH ĐÃ ĐƯỢC GIẢI QUYẾT</b>`,
+    `📦 Mã đơn: <code>${req_.orderId || "N/A"}</code>`,
+    req_.productName ? `🛍 Sản phẩm: <b>${req_.productName}</b>` : "",
+    note ? `📝 Ghi chú: ${note}` : "",
+    `\n🔑 Tài khoản thay thế đã sẵn sàng. Nhấn nút bên dưới để mở khoá và nhận thông tin.`,
+    `\n<i>Chỉ bạn mới có thể mở khoá tài khoản này.</i>`,
+  ];
+  const unlockMsg = unlockLines.filter(Boolean).join("\n");
+  const btnText = isEN_wr ? "🔓 Unlock Replacement Account" : "🔓 Mở khoá nhận tài khoản thay thế";
+  const callbackData = `unlock_del:${req_.orderId || deliveryId}`;
+  const result = await sendTelegramWithCallbackButton(req_.userId, unlockMsg, btnText, callbackData);
 
   // Update order status regardless of send outcome
   const orders: any = readJson("orders", {}) ?? {};
@@ -1173,15 +1238,14 @@ router.post("/bot/warranty/:id/replacement", requireAuth, async (req: any, res: 
 
   const reminderOff = { reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   if (result.ok) {
-    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "resolved", resolution: `replacement:${email}`, sentStatus: "sent", sentAt: now(), sentError: null };
+    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "resolved", resolution: `replacement:${email}`, sentStatus: "pending_unlock", sentAt: now(), sentError: null, deliveryRequestId: deliveryId };
     writeJson("warranty_requests", requests);
-    addLog("WARRANTY_REPLACEMENT", `${id} → ${email} | sent OK`, "web-admin");
-    res.json({ ok: true, sentStatus: "sent", message: "Đã gửi tài khoản thay thế cho khách" });
+    addLog("WARRANTY_REPLACEMENT", `${id} → ${email} | unlock btn sent, deliveryId=${deliveryId}`, "web-admin");
+    res.json({ ok: true, sentStatus: "pending_unlock", message: "Đã gửi nút mở khoá cho khách — theo dõi ở mục Giao hàng" });
   } else {
-    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "send_failed", resolution: `replacement:${email}`, sentStatus: "failed", sentError: result.error, sentAt: null };
+    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "send_failed", resolution: `replacement:${email}`, sentStatus: "failed", sentError: result.error, sentAt: null, deliveryRequestId: deliveryId };
     writeJson("warranty_requests", requests);
     addLog("WARRANTY_REPLACEMENT_FAIL", `${id} → ${email} | ${result.error}`, "web-admin");
-    // Return 200 so admin panel shows the resend button instead of a generic error
     res.json({ ok: false, sentStatus: "failed", message: `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
   }
 });
@@ -1224,29 +1288,45 @@ router.post("/bot/warranty/:id/accounts/:accId/replacement", requireAuth, async 
   if (accIdx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy tài khoản con" }); return; }
   const acc = req_.accounts[accIdx];
 
+  // ── Tạo delivery_request để theo dõi mở khoá (group sub-account) ─────────
+  const grpDeliveryId = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const grpDeliveredAt = now();
+  const grpDeliveryRequests: any[] = readJson("delivery_requests", []) ?? [];
+  grpDeliveryRequests.push({
+    id: grpDeliveryId,
+    orderId: acc.orderId || req_.orderId || "N/A",
+    userId: req_.userId,
+    username: req_.username || String(req_.userId),
+    userLang: req_.userLang || "vi",
+    productName: req_.productName || acc.email || "",
+    status: "pending_unlock",
+    submittedAt: grpDeliveredAt, sentAt: grpDeliveredAt, sentBy: "web-admin",
+    source: "warranty_replacement",
+    warrantyRequestId: id, warrantyAccountId: accId,
+    accountInfo: { account: email, password, twoFA: twoFA || null },
+  });
+  writeJson("delivery_requests", grpDeliveryRequests);
+
+  // ── Gửi nút mở khoá ──────────────────────────────────────────────────────
   const userLang = req_.userLang ?? "vi";
   const isEN = userLang === "en";
-  const msgLines: string[] = [];
-  if (isEN) {
-    msgLines.push(`✅ <b>WARRANTY RESOLVED</b>\n`);
-    msgLines.push(`📧 Old account: <code>${acc.email}</code>`);
-    msgLines.push(`🔑 <b>Replacement account:</b>`);
-    msgLines.push(`📧 Email: <code>${email}</code>`);
-    msgLines.push(`🔒 Password: <code>${password}</code>`);
-    if (twoFA) msgLines.push(`🛡 2FA: <code>${twoFA}</code>`);
-    if (note) msgLines.push(`📝 Note: ${note}`);
-    msgLines.push(`\nPlease verify your account immediately after receiving.`);
-  } else {
-    msgLines.push(`✅ <b>ĐÃ GIẢI QUYẾT BẢO HÀNH</b>\n`);
-    msgLines.push(`📧 Tài khoản cũ: <code>${acc.email}</code>`);
-    msgLines.push(`🔑 <b>Tài khoản thay thế:</b>`);
-    msgLines.push(`📧 Email: <code>${email}</code>`);
-    msgLines.push(`🔒 Mật khẩu: <code>${password}</code>`);
-    if (twoFA) msgLines.push(`🛡 2FA: <code>${twoFA}</code>`);
-    if (note) msgLines.push(`📝 Ghi chú: ${note}`);
-    msgLines.push(`\nVui lòng kiểm tra tài khoản ngay sau khi nhận.`);
-  }
-  const result = await sendTelegramMessage(req_.userId, msgLines.join("\n"));
+  const grpUnlockLines: string[] = isEN ? [
+    `✅ <b>WARRANTY RESOLVED</b>`,
+    `📧 Old account: <code>${acc.email}</code>`,
+    note ? `📝 Note: ${note}` : "",
+    `\n🔑 Replacement account is ready. Tap below to unlock it.`,
+    `\n<i>Only you can unlock this account.</i>`,
+  ] : [
+    `✅ <b>ĐÃ GIẢI QUYẾT BẢO HÀNH</b>`,
+    `📧 Tài khoản cũ: <code>${acc.email}</code>`,
+    note ? `📝 Ghi chú: ${note}` : "",
+    `\n🔑 Tài khoản thay thế đã sẵn sàng. Nhấn nút bên dưới để mở khoá.`,
+    `\n<i>Chỉ bạn mới có thể mở khoá tài khoản này.</i>`,
+  ];
+  const grpUnlockMsg = grpUnlockLines.filter(Boolean).join("\n");
+  const grpBtnText = isEN ? "🔓 Unlock Replacement Account" : "🔓 Mở khoá nhận tài khoản thay thế";
+  const grpCallbackData = `unlock_del:${acc.orderId || req_.orderId || grpDeliveryId}`;
+  const result = await sendTelegramWithCallbackButton(req_.userId, grpUnlockMsg, grpBtnText, grpCallbackData);
 
   // ── Write replacement chain record (same logic as single replacement) ────────
   // acc.orderId is set when group requests are created from order:report_all / order:pick_items
@@ -1295,12 +1375,12 @@ router.post("/bot/warranty/:id/accounts/:accId/replacement", requireAuth, async 
     }
   }
 
-  const replacementData = { replacementEmail: email, replacementPassword: password, replacementTwoFA: twoFA || null, replacementNote: note || null, resolvedAt: now(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "sent" : "failed", sentAt: result.ok ? now() : null, sentError: result.ok ? null : result.error };
+  const replacementData = { replacementEmail: email, replacementPassword: password, replacementTwoFA: twoFA || null, replacementNote: note || null, resolvedAt: now(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "pending_unlock" : "failed", sentAt: result.ok ? now() : null, sentError: result.ok ? null : result.error, deliveryRequestId: grpDeliveryId };
   requests[idx].accounts[accIdx] = { ...acc, ...replacementData };
   _recomputeGroupStatus(requests[idx]);
   writeJson("warranty_requests", requests);
-  addLog("GROUP_REPLACEMENT", `${id}/${accId} → ${email}`, "web-admin");
-  res.json({ ok: result.ok, sentStatus: result.ok ? "sent" : "failed", message: result.ok ? "Đã gửi tài khoản thay thế cho khách" : `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
+  addLog("GROUP_REPLACEMENT", `${id}/${accId} → ${email} | deliveryId=${grpDeliveryId}`, "web-admin");
+  res.json({ ok: result.ok, sentStatus: result.ok ? "pending_unlock" : "failed", message: result.ok ? "Đã gửi nút mở khoá cho khách — theo dõi ở mục Giao hàng" : `Đã lưu nhưng gửi Telegram thất bại: ${result.error}` });
 });
 
 // ── POST /bot/warranty/:id/accounts/:accId/refund ────────────────────────────

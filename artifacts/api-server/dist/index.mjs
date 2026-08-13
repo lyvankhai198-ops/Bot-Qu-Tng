@@ -55557,7 +55557,8 @@ var ListAccountsResponseItem = objectType({
   "addedAt": stringType().optional(),
   "status": stringType().optional(),
   "distributedTo": stringType().nullish(),
-  "distributedAt": stringType().nullish()
+  "distributedAt": stringType().nullish(),
+  "returnedAt": stringType().nullish()
 });
 var ListAccountsResponse = arrayType(ListAccountsResponseItem);
 var AddAccountsBody = objectType({
@@ -55570,7 +55571,8 @@ var AddAccountsBody = objectType({
     "addedAt": stringType().optional(),
     "status": stringType().optional(),
     "distributedTo": stringType().nullish(),
-    "distributedAt": stringType().nullish()
+    "distributedAt": stringType().nullish(),
+    "returnedAt": stringType().nullish()
   }))
 });
 var AddAccountsResponse = objectType({
@@ -57977,8 +57979,78 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
     resolvedAt: now(),
     resolvedBy: "web-admin"
   };
-  const message = buildReplacementMessage(req_, email, password, twoFA, note);
-  const result = await sendTelegramMessage(req_.userId, message);
+  const deliveryId = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const deliveredAt = now();
+  const deliveryRequests = readJson("delivery_requests", []) ?? [];
+  deliveryRequests.push({
+    id: deliveryId,
+    orderId: req_.orderId || "N/A",
+    userId: req_.userId,
+    username: req_.username || String(req_.userId),
+    userLang: req_.userLang || "vi",
+    productName: req_.productName || "",
+    status: "pending_unlock",
+    submittedAt: deliveredAt,
+    sentAt: deliveredAt,
+    sentBy: "web-admin",
+    source: "warranty_replacement",
+    warrantyRequestId: id,
+    accountInfo: { account: email, password, twoFA: twoFA || null }
+  });
+  writeJson("delivery_requests", deliveryRequests);
+  const orders_wr = readJson("orders", {}) ?? {};
+  const orderItems_wr = readJson("order_items", {}) ?? {};
+  if (req_.orderId) {
+    const existingItems = orderItems_wr[req_.orderId] ?? [];
+    const existIdx = existingItems.findIndex(
+      (it) => (it.original_account || it.email || "").toLowerCase() === email.toLowerCase()
+    );
+    const itemEntry = {
+      itemId: existIdx >= 0 ? existingItems[existIdx].itemId : crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase(),
+      email,
+      password: password || null,
+      twoFA: twoFA || null,
+      unlocked: false,
+      status: "delivered",
+      item_status: "active",
+      productName: orders_wr[req_.orderId]?.productName || req_.productName || "",
+      original_account: email,
+      current_account: email,
+      current_replacement_number: 0,
+      original_delivered_at: deliveredAt,
+      source: "warranty_replacement",
+      warranty_request_id: id,
+      createdAt: deliveredAt
+    };
+    if (existIdx >= 0) existingItems[existIdx] = { ...existingItems[existIdx], ...itemEntry };
+    else existingItems.push(itemEntry);
+    orderItems_wr[req_.orderId] = existingItems;
+    writeJson("order_items", orderItems_wr);
+  }
+  const userLang_wr = req_.userLang ?? "vi";
+  const isEN_wr = userLang_wr === "en";
+  const unlockLines = isEN_wr ? [
+    `\u2705 <b>WARRANTY REQUEST RESOLVED</b>`,
+    `\u{1F4E6} Order: <code>${req_.orderId || "N/A"}</code>`,
+    req_.productName ? `\u{1F6CD} Product: <b>${req_.productName}</b>` : "",
+    `
+\u{1F511} Your replacement account is ready. Tap the button below to unlock it.`,
+    `
+<i>Only you can unlock this account.</i>`
+  ] : [
+    `\u2705 <b>Y\xCAU C\u1EA6U B\u1EA2O H\xC0NH \u0110\xC3 \u0110\u01AF\u1EE2C GI\u1EA2I QUY\u1EBET</b>`,
+    `\u{1F4E6} M\xE3 \u0111\u01A1n: <code>${req_.orderId || "N/A"}</code>`,
+    req_.productName ? `\u{1F6CD} S\u1EA3n ph\u1EA9m: <b>${req_.productName}</b>` : "",
+    note ? `\u{1F4DD} Ghi ch\xFA: ${note}` : "",
+    `
+\u{1F511} T\xE0i kho\u1EA3n thay th\u1EBF \u0111\xE3 s\u1EB5n s\xE0ng. Nh\u1EA5n n\xFAt b\xEAn d\u01B0\u1EDBi \u0111\u1EC3 m\u1EDF kho\xE1 v\xE0 nh\u1EADn th\xF4ng tin.`,
+    `
+<i>Ch\u1EC9 b\u1EA1n m\u1EDBi c\xF3 th\u1EC3 m\u1EDF kho\xE1 t\xE0i kho\u1EA3n n\xE0y.</i>`
+  ];
+  const unlockMsg = unlockLines.filter(Boolean).join("\n");
+  const btnText = isEN_wr ? "\u{1F513} Unlock Replacement Account" : "\u{1F513} M\u1EDF kho\xE1 nh\u1EADn t\xE0i kho\u1EA3n thay th\u1EBF";
+  const callbackData = `unlock_del:${req_.orderId || deliveryId}`;
+  const result = await sendTelegramWithCallbackButton(req_.userId, unlockMsg, btnText, callbackData);
   const orders = readJson("orders", {}) ?? {};
   if (req_.orderId && orders[req_.orderId]) {
     orders[req_.orderId].status = "warranted";
@@ -58070,12 +58142,12 @@ router2.post("/bot/warranty/:id/replacement", requireAuth, async (req, res) => {
   }
   const reminderOff = { reminderEnabled: false, nextReminderAt: null, reminderProcessing: false };
   if (result.ok) {
-    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "resolved", resolution: `replacement:${email}`, sentStatus: "sent", sentAt: now(), sentError: null };
+    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "resolved", resolution: `replacement:${email}`, sentStatus: "pending_unlock", sentAt: now(), sentError: null, deliveryRequestId: deliveryId };
     writeJson("warranty_requests", requests);
-    addLog("WARRANTY_REPLACEMENT", `${id} \u2192 ${email} | sent OK`, "web-admin");
-    res.json({ ok: true, sentStatus: "sent", message: "\u0110\xE3 g\u1EEDi t\xE0i kho\u1EA3n thay th\u1EBF cho kh\xE1ch" });
+    addLog("WARRANTY_REPLACEMENT", `${id} \u2192 ${email} | unlock btn sent, deliveryId=${deliveryId}`, "web-admin");
+    res.json({ ok: true, sentStatus: "pending_unlock", message: "\u0110\xE3 g\u1EEDi n\xFAt m\u1EDF kho\xE1 cho kh\xE1ch \u2014 theo d\xF5i \u1EDF m\u1EE5c Giao h\xE0ng" });
   } else {
-    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "send_failed", resolution: `replacement:${email}`, sentStatus: "failed", sentError: result.error, sentAt: null };
+    requests[idx] = { ...req_, ...replacementData, ...reminderOff, status: "send_failed", resolution: `replacement:${email}`, sentStatus: "failed", sentError: result.error, sentAt: null, deliveryRequestId: deliveryId };
     writeJson("warranty_requests", requests);
     addLog("WARRANTY_REPLACEMENT_FAIL", `${id} \u2192 ${email} | ${result.error}`, "web-admin");
     res.json({ ok: false, sentStatus: "failed", message: `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
@@ -58132,33 +58204,49 @@ router2.post("/bot/warranty/:id/accounts/:accId/replacement", requireAuth, async
     return;
   }
   const acc = req_.accounts[accIdx];
+  const grpDeliveryId = crypto.randomUUID().slice(0, 8).toUpperCase();
+  const grpDeliveredAt = now();
+  const grpDeliveryRequests = readJson("delivery_requests", []) ?? [];
+  grpDeliveryRequests.push({
+    id: grpDeliveryId,
+    orderId: acc.orderId || req_.orderId || "N/A",
+    userId: req_.userId,
+    username: req_.username || String(req_.userId),
+    userLang: req_.userLang || "vi",
+    productName: req_.productName || acc.email || "",
+    status: "pending_unlock",
+    submittedAt: grpDeliveredAt,
+    sentAt: grpDeliveredAt,
+    sentBy: "web-admin",
+    source: "warranty_replacement",
+    warrantyRequestId: id,
+    warrantyAccountId: accId,
+    accountInfo: { account: email, password, twoFA: twoFA || null }
+  });
+  writeJson("delivery_requests", grpDeliveryRequests);
   const userLang = req_.userLang ?? "vi";
   const isEN = userLang === "en";
-  const msgLines = [];
-  if (isEN) {
-    msgLines.push(`\u2705 <b>WARRANTY RESOLVED</b>
-`);
-    msgLines.push(`\u{1F4E7} Old account: <code>${acc.email}</code>`);
-    msgLines.push(`\u{1F511} <b>Replacement account:</b>`);
-    msgLines.push(`\u{1F4E7} Email: <code>${email}</code>`);
-    msgLines.push(`\u{1F512} Password: <code>${password}</code>`);
-    if (twoFA) msgLines.push(`\u{1F6E1} 2FA: <code>${twoFA}</code>`);
-    if (note) msgLines.push(`\u{1F4DD} Note: ${note}`);
-    msgLines.push(`
-Please verify your account immediately after receiving.`);
-  } else {
-    msgLines.push(`\u2705 <b>\u0110\xC3 GI\u1EA2I QUY\u1EBET B\u1EA2O H\xC0NH</b>
-`);
-    msgLines.push(`\u{1F4E7} T\xE0i kho\u1EA3n c\u0169: <code>${acc.email}</code>`);
-    msgLines.push(`\u{1F511} <b>T\xE0i kho\u1EA3n thay th\u1EBF:</b>`);
-    msgLines.push(`\u{1F4E7} Email: <code>${email}</code>`);
-    msgLines.push(`\u{1F512} M\u1EADt kh\u1EA9u: <code>${password}</code>`);
-    if (twoFA) msgLines.push(`\u{1F6E1} 2FA: <code>${twoFA}</code>`);
-    if (note) msgLines.push(`\u{1F4DD} Ghi ch\xFA: ${note}`);
-    msgLines.push(`
-Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
-  }
-  const result = await sendTelegramMessage(req_.userId, msgLines.join("\n"));
+  const grpUnlockLines = isEN ? [
+    `\u2705 <b>WARRANTY RESOLVED</b>`,
+    `\u{1F4E7} Old account: <code>${acc.email}</code>`,
+    note ? `\u{1F4DD} Note: ${note}` : "",
+    `
+\u{1F511} Replacement account is ready. Tap below to unlock it.`,
+    `
+<i>Only you can unlock this account.</i>`
+  ] : [
+    `\u2705 <b>\u0110\xC3 GI\u1EA2I QUY\u1EBET B\u1EA2O H\xC0NH</b>`,
+    `\u{1F4E7} T\xE0i kho\u1EA3n c\u0169: <code>${acc.email}</code>`,
+    note ? `\u{1F4DD} Ghi ch\xFA: ${note}` : "",
+    `
+\u{1F511} T\xE0i kho\u1EA3n thay th\u1EBF \u0111\xE3 s\u1EB5n s\xE0ng. Nh\u1EA5n n\xFAt b\xEAn d\u01B0\u1EDBi \u0111\u1EC3 m\u1EDF kho\xE1.`,
+    `
+<i>Ch\u1EC9 b\u1EA1n m\u1EDBi c\xF3 th\u1EC3 m\u1EDF kho\xE1 t\xE0i kho\u1EA3n n\xE0y.</i>`
+  ];
+  const grpUnlockMsg = grpUnlockLines.filter(Boolean).join("\n");
+  const grpBtnText = isEN ? "\u{1F513} Unlock Replacement Account" : "\u{1F513} M\u1EDF kho\xE1 nh\u1EADn t\xE0i kho\u1EA3n thay th\u1EBF";
+  const grpCallbackData = `unlock_del:${acc.orderId || req_.orderId || grpDeliveryId}`;
+  const result = await sendTelegramWithCallbackButton(req_.userId, grpUnlockMsg, grpBtnText, grpCallbackData);
   const accOrderId = acc.orderId || req_.orderId || "";
   const accEmail = (acc.email || "").toLowerCase();
   if (accOrderId && accEmail) {
@@ -58202,12 +58290,12 @@ Vui l\xF2ng ki\u1EC3m tra t\xE0i kho\u1EA3n ngay sau khi nh\u1EADn.`);
       writeJson("order_items", orderItems);
     }
   }
-  const replacementData = { replacementEmail: email, replacementPassword: password, replacementTwoFA: twoFA || null, replacementNote: note || null, resolvedAt: now(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "sent" : "failed", sentAt: result.ok ? now() : null, sentError: result.ok ? null : result.error };
+  const replacementData = { replacementEmail: email, replacementPassword: password, replacementTwoFA: twoFA || null, replacementNote: note || null, resolvedAt: now(), resolvedBy: "web-admin", status: "resolved", resolution: `replacement:${email}`, sentStatus: result.ok ? "pending_unlock" : "failed", sentAt: result.ok ? now() : null, sentError: result.ok ? null : result.error, deliveryRequestId: grpDeliveryId };
   requests[idx].accounts[accIdx] = { ...acc, ...replacementData };
   _recomputeGroupStatus(requests[idx]);
   writeJson("warranty_requests", requests);
-  addLog("GROUP_REPLACEMENT", `${id}/${accId} \u2192 ${email}`, "web-admin");
-  res.json({ ok: result.ok, sentStatus: result.ok ? "sent" : "failed", message: result.ok ? "\u0110\xE3 g\u1EEDi t\xE0i kho\u1EA3n thay th\u1EBF cho kh\xE1ch" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
+  addLog("GROUP_REPLACEMENT", `${id}/${accId} \u2192 ${email} | deliveryId=${grpDeliveryId}`, "web-admin");
+  res.json({ ok: result.ok, sentStatus: result.ok ? "pending_unlock" : "failed", message: result.ok ? "\u0110\xE3 g\u1EEDi n\xFAt m\u1EDF kho\xE1 cho kh\xE1ch \u2014 theo d\xF5i \u1EDF m\u1EE5c Giao h\xE0ng" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
 });
 router2.post("/bot/warranty/:id/accounts/:accId/refund", requireAuth, async (req, res) => {
   const { id, accId } = req.params;
@@ -58656,7 +58744,7 @@ L\xFD do: ${reason}`;
 });
 router2.post("/bot/warranty/:id/done", requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { note } = req.body ?? {};
+  const { note, notify = true } = req.body ?? {};
   const requests = readJson("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id);
   if (idx === -1) {
@@ -58677,6 +58765,11 @@ router2.post("/bot/warranty/:id/done", requireAuth, async (req, res) => {
     reminderProcessing: false
   };
   writeJson("warranty_requests", requests);
+  addLog("WARRANTY_DONE", id, "web-admin");
+  if (notify === false) {
+    res.json({ ok: true, notified: false, message: "\u0110\xE3 \u0111\xE1nh d\u1EA5u ho\xE0n th\xE0nh (kh\xF4ng g\u1EEDi th\xF4ng b\xE1o)" });
+    return;
+  }
   let msg = isEN ? `\u2705 <b>Your warranty request has been processed.</b>
 
 If the issue persists, you can submit a new warranty request.` : `\u2705 <b>Y\xEAu c\u1EA7u b\u1EA3o h\xE0nh c\u1EE7a b\u1EA1n \u0111\xE3 \u0111\u01B0\u1EE3c x\u1EED l\xFD xong.</b>
@@ -58688,12 +58781,11 @@ N\u1EBFu v\u1EA5n \u0111\u1EC1 v\u1EABn c\xF2n t\u1ED3n t\u1EA1i, b\u1EA1n c\xF3
 
 \u{1F4DD} Ghi ch\xFA: ${note}`;
   const result = await sendTelegramMessage(req_.userId, msg);
-  addLog("WARRANTY_DONE", id, "web-admin");
-  res.json({ ok: result.ok, message: result.ok ? "\u0110\xE3 \u0111\xE1nh d\u1EA5u ho\xE0n th\xE0nh" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
+  res.json({ ok: result.ok, notified: result.ok, message: result.ok ? "\u0110\xE3 \u0111\xE1nh d\u1EA5u ho\xE0n th\xE0nh" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
 });
 router2.post("/bot/warranty/:id/accounts/:accId/done", requireAuth, async (req, res) => {
   const { id, accId } = req.params;
-  const { note } = req.body ?? {};
+  const { note, notify = true } = req.body ?? {};
   const requests = readJson("warranty_requests", []) ?? [];
   const idx = requests.findIndex((r) => r.id === id && r.type === "group");
   if (idx === -1) {
@@ -58710,6 +58802,11 @@ router2.post("/bot/warranty/:id/accounts/:accId/done", requireAuth, async (req, 
   requests[idx].accounts[accIdx] = { ...acc, status: "done", resolution: `done:${note || ""}`, resolvedAt: now(), resolvedBy: "web-admin" };
   _recomputeGroupStatus(requests[idx]);
   writeJson("warranty_requests", requests);
+  addLog("GROUP_DONE", `${id}/${accId}`, "web-admin");
+  if (notify === false) {
+    res.json({ ok: true, notified: false, message: "\u0110\xE3 \u0111\xE1nh d\u1EA5u ho\xE0n th\xE0nh (kh\xF4ng g\u1EEDi th\xF4ng b\xE1o)" });
+    return;
+  }
   const userLang = req_.userLang ?? readJson("user_states", {})?.[req_.userId]?.lang ?? "vi";
   const isEN = userLang === "en";
   let msg = isEN ? `\u2705 <b>Account <code>${acc.email}</code> warranty request has been processed.</b>
@@ -58723,8 +58820,7 @@ N\u1EBFu v\u1EA5n \u0111\u1EC1 v\u1EABn c\xF2n t\u1ED3n t\u1EA1i, b\u1EA1n c\xF3
 
 \u{1F4DD} Ghi ch\xFA: ${note}`;
   const result = await sendTelegramMessage(req_.userId, msg);
-  addLog("GROUP_DONE", `${id}/${accId}`, "web-admin");
-  res.json({ ok: result.ok, message: result.ok ? "\u0110\xE3 \u0111\xE1nh d\u1EA5u ho\xE0n th\xE0nh" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
+  res.json({ ok: result.ok, notified: result.ok, message: result.ok ? "\u0110\xE3 \u0111\xE1nh d\u1EA5u ho\xE0n th\xE0nh" : `\u0110\xE3 l\u01B0u nh\u01B0ng g\u1EEDi Telegram th\u1EA5t b\u1EA1i: ${result.error}` });
 });
 router2.post("/bot/warranty/:id/respond", requireAuth, async (req, res) => {
   const { id } = req.params;

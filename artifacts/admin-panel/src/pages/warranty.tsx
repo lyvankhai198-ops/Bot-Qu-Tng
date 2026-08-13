@@ -25,8 +25,9 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import type { WarrantyRequest, WarrantyAccount } from "@workspace/api-client-react"
 import { format } from "date-fns"
-import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle, Clock, Users, ChevronDown, ChevronUp, MessageSquareReply, Bell as BellIcon } from "lucide-react"
+import { ShieldAlert, RefreshCcw, DollarSign, XCircle, CheckCircle2, SendHorizonal, AlertTriangle, Clock, Users, ChevronDown, ChevronUp, MessageSquareReply, Bell as BellIcon, Search, ClipboardPaste, Pencil } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 // Parse ?id=xxx from URL hash (e.g. #/warranty?id=abc123)
 function getUrlTargetId(): string | null {
@@ -81,6 +82,11 @@ export default function Warranty() {
   const [rejReason,  setRejReason]  = useState("")
   const [respondMsg, setRespondMsg] = useState("")
   const [doneNote,   setDoneNote]   = useState("")
+  // Search
+  const [searchQuery, setSearchQuery] = useState("")
+  // Replace dialog — format
+  const [replaceMode, setReplaceMode] = useState<"manual"|"paste">("manual")
+  const [pasteInput,  setPasteInput]  = useState("")
   const [doneNotify, setDoneNotify] = useState(true)
   const [doneLoading, setDoneLoading] = useState(false)
 
@@ -99,12 +105,41 @@ export default function Warranty() {
     }
   }, [targetId, warranties])
 
+  // Parse "dán nhanh" — hỗ trợ các định dạng phổ biến:
+  //   email|password|2fa   email:password:2fa   email password 2fa   (tab-separated)
+  const parsePasteInput = (raw: string): { email: string; password: string; twoFA: string } => {
+    const line = raw.trim().split(/\r?\n/)[0] ?? ""
+    // thử tách theo | hoặc : hoặc tab hoặc khoảng trắng nhiều
+    const seps = ["|", "\t"]
+    for (const sep of seps) {
+      if (line.includes(sep)) {
+        const parts = line.split(sep).map(s => s.trim())
+        return { email: parts[0] ?? "", password: parts[1] ?? "", twoFA: parts[2] ?? "" }
+      }
+    }
+    // tách theo dấu : nhưng giữ nguyên nếu chỉ có 1 phần (email thường có @)
+    if ((line.match(/:/g) ?? []).length >= 1) {
+      const parts = line.split(":").map(s => s.trim())
+      return { email: parts[0] ?? "", password: parts[1] ?? "", twoFA: parts[2] ?? "" }
+    }
+    // fallback: khoảng trắng
+    const parts = line.split(/\s+/)
+    return { email: parts[0] ?? "", password: parts[1] ?? "", twoFA: parts[2] ?? "" }
+  }
+
+  const applyPaste = () => {
+    const { email, password, twoFA } = parsePasteInput(pasteInput)
+    setREmail(email); setRPassword(password); setRTwoFA(twoFA)
+    setReplaceMode("manual")
+  }
+
   const openModal = (req: WarrantyRequest, type: ModalType, acc?: WarrantyAccount) => {
     setActiveReq(req)
     setActiveAcc(acc ?? null)
     setModalType(type)
     setREmail(""); setRPassword(""); setRTwoFA(""); setRNote("")
     setRefAmount(""); setRefNote(""); setRejReason(""); setRespondMsg("")
+    setReplaceMode("manual"); setPasteInput("")
   }
 
   const isGroupMode = activeAcc !== null
@@ -126,14 +161,14 @@ export default function Warranty() {
           if ((result as any)?.ok === false) {
             toast({ title: "Lưu OK nhưng gửi thất bại", description: (result as any).message, variant: "destructive" })
           } else {
-            toast({ title: "✅ Đã gửi thành công", description: `Khách nhận được TK thay thế cho ${activeAcc.email}` })
+            toast({ title: "⏳ Đã giao — chờ khách mở khoá", description: `Theo dõi tại mục Giao hàng • TK ${activeAcc.email}` })
           }
         } else {
           const result = await replaceM.mutateAsync({ id, data: { email: rEmail, password: rPassword, twoFA: rTwoFA || undefined, note: rNote || undefined } })
           if ((result as any)?.ok === false) {
             toast({ title: "Lưu thành công nhưng gửi thất bại", description: (result as any).message, variant: "destructive" })
           } else {
-            toast({ title: "✅ Đã gửi thành công", description: "Khách hàng đã nhận được tài khoản mới" })
+            toast({ title: "⏳ Đã giao — chờ khách mở khoá", description: "Theo dõi trạng thái tại mục Giao hàng" })
           }
         }
       } else if (modalType === "refund") {
@@ -230,28 +265,51 @@ export default function Warranty() {
     }
   }
 
+  // Search filter helper
+  const matchSearch = (w: any) => {
+    if (!searchQuery.trim()) return true
+    const q = searchQuery.toLowerCase()
+    return (
+      (w.email      || "").toLowerCase().includes(q) ||
+      (w.orderId    || "").toLowerCase().includes(q) ||
+      (w.username   || "").toLowerCase().includes(q) ||
+      (w.userId     || "").toString().includes(q) ||
+      (w.productName|| "").toLowerCase().includes(q) ||
+      // group: also match inside accounts
+      ((w.accounts ?? []) as any[]).some((a: any) =>
+        (a.email || "").toLowerCase().includes(q)
+      )
+    )
+  }
+
   // Separate single vs group
-  const singleWarranties = warranties?.filter((w: any) => !w.type || w.type !== "group") || []
-  const groupWarranties  = warranties?.filter((w: any) => w.type === "group") || []
+  const singleWarranties = (warranties?.filter((w: any) => !w.type || w.type !== "group") || []).filter(matchSearch)
+  const groupWarranties  = (warranties?.filter((w: any) => w.type === "group") || []).filter(matchSearch)
 
   const pendingSingle    = singleWarranties.filter(w => w.status === "pending")
   const processingSingle = singleWarranties.filter(w => w.status === "processing")
-  const resolvedSingle   = singleWarranties.filter(w => !["pending", "processing"].includes(w.status))
+  const resolvedSingle   = singleWarranties
+    .filter(w => !["pending", "processing"].includes(w.status))
+    .sort((a, b) => ((b as any).resolvedAt ?? "").localeCompare((a as any).resolvedAt ?? ""))
 
   const pendingGroup    = groupWarranties.filter(w => w.status === "pending")
   const processingGroup = groupWarranties.filter(w => w.status === "processing")
-  const resolvedGroup   = groupWarranties.filter(w => !["pending", "processing"].includes(w.status))
+  const resolvedGroup   = groupWarranties
+    .filter(w => !["pending", "processing"].includes(w.status))
+    .sort((a, b) => ((b as any).resolvedAt ?? "").localeCompare((a as any).resolvedAt ?? ""))
 
   const totalPending    = pendingSingle.length    + pendingGroup.length
   const totalProcessing = processingSingle.length + processingGroup.length
   const totalResolved   = resolvedSingle.length   + resolvedGroup.length
 
   const sentStatusBadge = (req: WarrantyRequest) => {
-    if (req.status === "rejected")            return <Badge variant="destructive">Từ chối</Badge>
-    if (req.status === "done")                return <Badge className="bg-emerald-600 text-white">✅ Đã xong</Badge>
-    if (req.status === "processing")          return <Badge className="bg-blue-600 text-white">Đang xử lý</Badge>
-    if ((req as any).sentStatus === "sent")   return <Badge className="bg-green-600 text-white">Đã gửi cho khách</Badge>
-    if ((req as any).sentStatus === "failed") return <Badge variant="destructive">Gửi thất bại</Badge>
+    if (req.status === "rejected")                     return <Badge variant="destructive">Từ chối</Badge>
+    if (req.status === "done")                         return <Badge className="bg-emerald-600 text-white">✅ Đã xong</Badge>
+    if (req.status === "processing")                   return <Badge className="bg-blue-600 text-white">Đang xử lý</Badge>
+    if ((req as any).sentStatus === "pending_unlock")  return <Badge className="bg-amber-500 text-white">⏳ Chờ mở khoá</Badge>
+    if ((req as any).sentStatus === "unlocked")        return <Badge className="bg-green-600 text-white">🔓 Đã mở khoá</Badge>
+    if ((req as any).sentStatus === "sent")            return <Badge className="bg-green-600 text-white">Đã gửi cho khách</Badge>
+    if ((req as any).sentStatus === "failed")          return <Badge variant="destructive">Gửi thất bại</Badge>
     return <Badge variant="secondary">Đã xử lý</Badge>
   }
 
@@ -432,6 +490,16 @@ export default function Warranty() {
       <div>
         <h1 className="text-xl md:text-2xl font-bold tracking-tight">Bảo hành</h1>
         <p className="text-muted-foreground mt-1 text-sm">Xử lý yêu cầu bảo hành từ khách hàng</p>
+        {/* Search box */}
+        <div className="relative mt-3">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Tìm theo email, mã đơn, username, sản phẩm..."
+            className="pl-9 h-10"
+          />
+        </div>
       </div>
 
       <div className="grid gap-4 md:gap-6">
@@ -662,32 +730,69 @@ export default function Warranty() {
       <Dialog open={modalType === "replace"} onOpenChange={open => !open && (setModalType(null), setActiveAcc(null))}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[480px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Gửi tài khoản thay thế{activeAcc ? ` — ${activeAcc.email}` : ""}</DialogTitle>
-            <DialogDescription>Điền đầy đủ thông tin — bot sẽ gửi ngay cho khách</DialogDescription>
+            <DialogTitle>Giao tài khoản thay thế{activeAcc ? ` — ${activeAcc.email}` : ""}</DialogTitle>
+            <DialogDescription>
+              Khách sẽ nhận nút 🔓 mở khoá để lấy tài khoản — có thể theo dõi ở mục Giao hàng.
+            </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label>Email / Tài khoản <span className="text-destructive">*</span></Label>
-              <Input value={rEmail} onChange={e => setREmail(e.target.value)} placeholder="email@example.com" className="min-h-[44px]" />
-            </div>
-            <div className="grid gap-2">
-              <Label>Mật khẩu <span className="text-destructive">*</span></Label>
-              <Input value={rPassword} onChange={e => setRPassword(e.target.value)} placeholder="password123" className="min-h-[44px]" />
-            </div>
-            <div className="grid gap-2">
-              <Label>2FA / Thông tin bổ sung <span className="text-muted-foreground text-xs">(nếu có)</span></Label>
-              <Input value={rTwoFA} onChange={e => setRTwoFA(e.target.value)} placeholder="Mã 2FA hoặc backup code..." className="min-h-[44px]" />
-            </div>
+
+          {/* Mode toggle */}
+          <Tabs value={replaceMode} onValueChange={v => setReplaceMode(v as "manual"|"paste")} className="w-full">
+            <TabsList className="w-full">
+              <TabsTrigger value="manual" className="flex-1 gap-1.5"><Pencil className="w-3.5 h-3.5" /> Nhập tay</TabsTrigger>
+              <TabsTrigger value="paste" className="flex-1 gap-1.5"><ClipboardPaste className="w-3.5 h-3.5" /> Dán nhanh</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          <div className="grid gap-4 py-2">
+            {replaceMode === "paste" ? (
+              <div className="grid gap-2">
+                <Label>Dán thông tin tài khoản</Label>
+                <Textarea
+                  value={pasteInput}
+                  onChange={e => setPasteInput(e.target.value)}
+                  placeholder={"Hỗ trợ định dạng:\nemail|password|2fa\nemail:password:2fa\nemail password 2fa"}
+                  rows={4}
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">Phân cách bằng <code>|</code>, <code>:</code> hoặc khoảng trắng. 2FA là tùy chọn.</p>
+                <Button variant="secondary" className="w-full" onClick={applyPaste} disabled={!pasteInput.trim()}>
+                  <ClipboardPaste className="w-4 h-4 mr-2" /> Phân tích và điền vào form
+                </Button>
+                {(rEmail || rPassword) && (
+                  <div className="rounded-lg bg-muted px-3 py-2 text-xs space-y-0.5">
+                    <div>📧 <b>TK:</b> {rEmail}</div>
+                    <div>🔒 <b>MK:</b> {rPassword}</div>
+                    {rTwoFA && <div>🛡 <b>2FA:</b> {rTwoFA}</div>}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-2">
+                  <Label>Email / Tài khoản <span className="text-destructive">*</span></Label>
+                  <Input value={rEmail} onChange={e => setREmail(e.target.value)} placeholder="email@example.com" className="min-h-[44px]" />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Mật khẩu <span className="text-destructive">*</span></Label>
+                  <Input value={rPassword} onChange={e => setRPassword(e.target.value)} placeholder="password123" className="min-h-[44px]" />
+                </div>
+                <div className="grid gap-2">
+                  <Label>2FA / Thông tin bổ sung <span className="text-muted-foreground text-xs">(nếu có)</span></Label>
+                  <Input value={rTwoFA} onChange={e => setRTwoFA(e.target.value)} placeholder="Mã 2FA hoặc backup code..." className="min-h-[44px]" />
+                </div>
+              </>
+            )}
             <div className="grid gap-2">
               <Label>Ghi chú <span className="text-muted-foreground text-xs">(nếu có)</span></Label>
-              <Textarea value={rNote} onChange={e => setRNote(e.target.value)} placeholder="Thông tin thêm gửi kèm cho khách..." />
+              <Textarea value={rNote} onChange={e => setRNote(e.target.value)} placeholder="Thông tin thêm gửi kèm cho khách..." rows={2} />
             </div>
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" className="w-full sm:w-auto" onClick={() => { setModalType(null); setActiveAcc(null) }}>Hủy</Button>
-            <Button className="w-full sm:w-auto min-h-[44px] bg-blue-600 hover:bg-blue-700" onClick={handleResolve} disabled={isBusy}>
+            <Button className="w-full sm:w-auto min-h-[44px] bg-blue-600 hover:bg-blue-700" onClick={handleResolve} disabled={isBusy || !rEmail || !rPassword}>
               <SendHorizonal className="w-4 h-4 mr-2" />
-              {isBusy ? "Đang gửi..." : "Xác nhận và gửi cho khách"}
+              {isBusy ? "Đang gửi..." : "Xác nhận và giao cho khách"}
             </Button>
           </DialogFooter>
         </DialogContent>
