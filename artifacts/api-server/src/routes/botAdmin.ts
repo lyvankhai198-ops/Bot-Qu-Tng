@@ -348,6 +348,22 @@ router.post("/bot/users/:userId/unban", requireAuth, (req: any, res: any) => {
   res.json({ ok: true, message: `Đã bỏ chặn ${uid}` });
 });
 
+// ── POST /bot/users/reset-all-gifts ─────────────────────────────────────────
+router.post("/bot/users/reset-all-gifts", requireAuth, (_req: any, res: any) => {
+  const users: any = readJson("users", {}) ?? {};
+  let count = 0;
+  for (const uid of Object.keys(users)) {
+    if (users[uid].has_received_gift) {
+      users[uid].has_received_gift = false;
+      users[uid].gift_received = null;
+      count++;
+    }
+  }
+  writeJson("users", users);
+  addLog("RESET_ALL_GIFTS", "all", "web-admin");
+  res.json({ ok: true, message: `Đã reset quà cho ${count} người dùng` });
+});
+
 // ── POST /bot/users/:userId/reset-gift ──────────────────────────────────────
 router.post("/bot/users/:userId/reset-gift", requireAuth, (req: any, res: any) => {
   const uid = req.params.userId;

@@ -1,25 +1,30 @@
 import { useState, useMemo } from "react"
-import { useListUsers, useBanUser, useUnbanUser, useResetUserGift, getListUsersQueryKey } from "@workspace/api-client-react"
+import { useListUsers, useBanUser, useUnbanUser, useResetUserGift, useResetAllGifts, getListUsersQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Card, CardContent } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Search, Ban, Unlock, RotateCcw, MoreHorizontal, User } from "lucide-react"
+import { Search, Ban, Unlock, RotateCcw, MoreHorizontal, User, Users, RefreshCw } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { formatDistanceToNow } from "date-fns"
 import { vi } from "date-fns/locale"
 
-export default function Users() {
+export default function UsersPage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  
+
   const { data: users, isLoading } = useListUsers({ query: { queryKey: getListUsersQueryKey() } })
   const banUser = useBanUser()
   const unbanUser = useUnbanUser()
   const resetGift = useResetUserGift()
+  const resetAll = useResetAllGifts()
 
   const [search, setSearch] = useState("")
 
@@ -37,6 +42,9 @@ export default function Users() {
         return tb - ta
       })
   }, [users, search])
+
+  const totalUsers = users?.length ?? 0
+  const receivedCount = users?.filter(u => u.hasReceivedGift).length ?? 0
 
   const handleAction = async (action: 'ban' | 'unban' | 'reset', userId: string) => {
     try {
@@ -56,13 +64,85 @@ export default function Users() {
     }
   }
 
+  const handleResetAll = async () => {
+    try {
+      await resetAll.mutateAsync()
+      toast({ title: "Thành công", description: "Đã reset quà cho tất cả người dùng" })
+      queryClient.invalidateQueries({ queryKey: getListUsersQueryKey() })
+    } catch (e) {
+      toast({ title: "Lỗi", description: "Không thể reset", variant: "destructive" })
+    }
+  }
+
   return (
     <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div>
-        <h1 className="text-xl md:text-2xl font-bold tracking-tight">Người dùng</h1>
-        <p className="text-muted-foreground mt-1 text-sm">Quản lý người dùng bot Telegram</p>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Người dùng</h1>
+          <p className="text-muted-foreground mt-1 text-sm">Quản lý người dùng bot Telegram</p>
+        </div>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" size="sm" className="shrink-0 gap-2 text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive">
+              <RefreshCw className="h-4 w-4" />
+              <span className="hidden sm:inline">Reset tất cả quà</span>
+              <span className="sm:hidden">Reset</span>
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Reset quà toàn bộ người dùng?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Thao tác này sẽ xoá trạng thái đã nhận quà của <strong>tất cả {totalUsers} người dùng</strong>.
+                Họ sẽ có thể nhận quà lại từ đầu. Hành động này không thể hoàn tác.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Huỷ</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={handleResetAll}
+                disabled={resetAll.isPending}
+              >
+                {resetAll.isPending ? "Đang reset..." : "Reset tất cả"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
+      {/* Stats bar */}
+      <div className="grid grid-cols-2 gap-3">
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+              <Users className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Tổng người dùng</p>
+              <p className="text-xl font-bold tabular-nums">
+                {isLoading ? <span className="inline-block h-5 w-10 bg-muted animate-pulse rounded" /> : totalUsers.toLocaleString()}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-green-500/10 flex items-center justify-center shrink-0">
+              <RotateCcw className="h-5 w-5 text-green-600" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Đã nhận quà</p>
+              <p className="text-xl font-bold tabular-nums">
+                {isLoading ? <span className="inline-block h-5 w-10 bg-muted animate-pulse rounded" /> : receivedCount.toLocaleString()}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* User list */}
       <Card>
         <CardContent className="p-0">
           <div className="p-4 border-b border-border/50 bg-muted/20">
@@ -75,6 +155,11 @@ export default function Users() {
                 className="pl-9 bg-background min-h-[44px]"
               />
             </div>
+            {search && (
+              <p className="text-xs text-muted-foreground mt-2">
+                {filteredUsers.length} / {totalUsers} người dùng
+              </p>
+            )}
           </div>
 
           {/* Mobile card view */}

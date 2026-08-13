@@ -219,6 +219,15 @@ export const UnbanUserResponse = zod.object({
 
 
 /**
+ * @summary Reset gift claim for all users
+ */
+export const ResetAllGiftsResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
  * @summary Reset a user gift claim so they can receive again
  */
 export const ResetUserGiftParams = zod.object({

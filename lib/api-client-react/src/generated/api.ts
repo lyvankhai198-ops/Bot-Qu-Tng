@@ -963,6 +963,77 @@ export const useUnbanUser = <TError = ErrorType<unknown>,
       return useMutation(getUnbanUserMutationOptions(options));
     }
 
+export const getResetAllGiftsUrl = () => {
+
+
+
+
+  return `/api/bot/users/reset-all-gifts`
+}
+
+/**
+ * @summary Reset gift claim for all users
+ */
+export const resetAllGifts = async ( options?: RequestInit): Promise<ActionResult> => {
+
+  return customFetch<ActionResult>(getResetAllGiftsUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getResetAllGiftsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetAllGifts>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resetAllGifts>>, TError,void, TContext> => {
+
+const mutationKey = ['resetAllGifts'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetAllGifts>>, void> = () => {
+
+
+          return  resetAllGifts(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResetAllGiftsMutationResult = NonNullable<Awaited<ReturnType<typeof resetAllGifts>>>
+
+    export type ResetAllGiftsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Reset gift claim for all users
+ */
+export const useResetAllGifts = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetAllGifts>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resetAllGifts>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getResetAllGiftsMutationOptions(options));
+    }
+
 export const getResetUserGiftUrl = (userId: string,) => {
 
 

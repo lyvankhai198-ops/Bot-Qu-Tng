@@ -238,6 +238,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/ActionResult"
 
+  /bot/users/reset-all-gifts:
+    post:
+      operationId: resetAllGifts
+      tags: [bot]
+      summary: Reset gift claim for all users
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Reset all
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
   /bot/users/{userId}/reset-gift:
     post:
       operationId: resetUserGift
