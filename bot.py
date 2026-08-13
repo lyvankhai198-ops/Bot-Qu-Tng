@@ -566,6 +566,8 @@ async def callback_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
             # Chỉ hiện "Đã chọn ngôn ngữ" — không hiện welcome text
             await query.edit_message_text(t(L, "lang_chosen"), parse_mode=ParseMode.HTML)
+            # Lưu message_id để xoá sau khi xác minh
+            context.user_data["start_gate_lang_msg_id"] = query.message.message_id
             if no_chat_id or api_errors:
                 await context.bot.send_message(
                     user.id,
@@ -580,13 +582,13 @@ async def callback_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ) if vi else (
                     "🔐 <b>Please join the channel below to use this bot:</b>"
                 )
-                # Gửi join prompt + ẩn reply keyboard (ReplyKeyboardRemove)
-                await context.bot.send_message(
+                sent = await context.bot.send_message(
                     user.id, join_msg, parse_mode=ParseMode.HTML,
                     reply_markup=_build_community_join_markup(L, not_joined),
                 )
+                context.user_data["start_gate_join_msg_id"] = sent.message_id
                 return
-            # Đã join hết — ẩn reply keyboard cũ rồi hiện menu
+            # Đã join hết ngay từ đầu — hiện menu (không có tin nhắn cũ cần xoá)
             await _show_welcome_and_menu(context.bot, user, L)
             return
 
@@ -596,16 +598,8 @@ async def callback_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def _show_welcome_and_menu(bot, user, L: str) -> None:
-    """Gửi kênh bán hàng (nếu có) + welcome + main keyboard cho user sau khi pass gate."""
+    """Gửi welcome + main keyboard → rồi mới hiện kênh bán hàng (nếu có)."""
     vi = L == "vi"
-    shop_channels = get_active_shop_channels()
-    if shop_channels:
-        await bot.send_message(
-            user.id,
-            "🛍️ <b>Kênh bán hàng chính thức:</b>" if vi else "🛍️ <b>Official shop channels:</b>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=shop_channels_inline(L, shop_channels),
-        )
     welcome = (
         t(L, "welcome_admin", name=user.first_name or "Admin")
         if is_admin(user.id)
@@ -614,6 +608,14 @@ async def _show_welcome_and_menu(bot, user, L: str) -> None:
     await bot.send_message(
         user.id, welcome, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id)
     )
+    shop_channels = get_active_shop_channels()
+    if shop_channels:
+        await bot.send_message(
+            user.id,
+            "🛍️ <b>Kênh bán hàng chính thức:</b>" if vi else "🛍️ <b>Official shop channels:</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=shop_channels_inline(L, shop_channels),
+        )
 
 
 def _build_community_join_markup(L: str, not_joined: list) -> InlineKeyboardMarkup:
@@ -685,13 +687,22 @@ async def callback_check_community_join(update: Update, context: ContextTypes.DE
     # ── Tất cả kênh đã xác minh ──────────────────────────────────────────
     logger.info(f"[start] community_gate_passed telegram_user_id={user.id}")
 
-    # Ẩn hoàn toàn các nút inline (xoá reply_markup khỏi message cũ)
+    # Xoá các tin nhắn gate cũ (tin "Đã chọn ngôn ngữ" + tin join prompt)
+    chat_id = query.message.chat_id
+    for key in ("start_gate_lang_msg_id", "start_gate_join_msg_id"):
+        msg_id = context.user_data.pop(key, None)
+        if msg_id:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+    # Xoá luôn chính message inline hiện tại (nếu chưa bị xoá ở trên)
     try:
-        await query.edit_message_reply_markup(reply_markup=None)
+        await context.bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
     except Exception:
         pass
 
-    # Hiện kênh bán hàng + menu chính
+    # Hiện welcome → kênh bán hàng
     await _show_welcome_and_menu(context.bot, user, L)
 
 async def cmd_myid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
