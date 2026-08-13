@@ -16,4 +16,5 @@ export interface Account {
   status?: string;
   distributedTo?: string | null;
   distributedAt?: string | null;
+  returnedAt?: string | null;
 }

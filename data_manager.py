@@ -153,10 +153,11 @@ def add_accounts(accounts_list: list):
     save("accounts", accounts)
 
 def pop_account():
-    """Get and mark-as-distributed the next available account."""
+    """Get and mark-as-distributed the next available account.
+    Treats both 'available' and 'returned' as eligible."""
     accounts = [_normalize_account(a) for a in load("accounts", [])]
     for i, acc in enumerate(accounts):
-        if acc.get("status", "available") == "available":
+        if acc.get("status", "available") in ("available", "returned"):
             accounts[i]["status"] = "distributed"
             accounts[i]["distributedAt"] = datetime.now().isoformat()
             save("accounts", accounts)
@@ -184,7 +185,8 @@ def update_account(email: str, fields: dict):
     save("accounts", accounts)
 
 def stock_count() -> int:
-    return sum(1 for a in load("accounts", []) if isinstance(a, dict) and a.get("status", "available") == "available")
+    return sum(1 for a in load("accounts", [])
+               if isinstance(a, dict) and a.get("status", "available") in ("available", "returned"))
 
 # ─── Claims ────────────────────────────────────────────────────────────────
 
@@ -1267,14 +1269,14 @@ def update_return_entry(entry_id: str, **kwargs) -> dict | None:
     return None
 
 def return_account_to_pool(account_email: str) -> bool:
-    """Restore an account to available status so the next person can claim it."""
+    """Restore an account to 'returned' status so the next person can claim it.
+    Keeps distributedTo/At as history; adds returnedAt timestamp."""
     accounts = [_normalize_account(a) for a in load("accounts", [])]
     found = False
     for i, acc in enumerate(accounts):
         if acc.get("email") == account_email:
-            accounts[i]["status"] = "available"
-            accounts[i]["distributedTo"] = None
-            accounts[i]["distributedAt"] = None
+            accounts[i]["status"] = "returned"
+            accounts[i]["returnedAt"] = datetime.now().isoformat()
             found = True
     if found:
         save("accounts", accounts)

@@ -1106,6 +1106,9 @@ components:
         distributedAt:
           type: string
           nullable: true
+        returnedAt:
+          type: string
+          nullable: true
 
     AccountsInput:
       type: object

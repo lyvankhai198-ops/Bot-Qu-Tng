@@ -114,7 +114,8 @@ export const ListAccountsResponseItem = zod.object({
   "addedAt": zod.string().optional(),
   "status": zod.string().optional(),
   "distributedTo": zod.string().nullish(),
-  "distributedAt": zod.string().nullish()
+  "distributedAt": zod.string().nullish(),
+  "returnedAt": zod.string().nullish()
 })
 export const ListAccountsResponse = zod.array(ListAccountsResponseItem)
 
@@ -132,7 +133,8 @@ export const AddAccountsBody = zod.object({
   "addedAt": zod.string().optional(),
   "status": zod.string().optional(),
   "distributedTo": zod.string().nullish(),
-  "distributedAt": zod.string().nullish()
+  "distributedAt": zod.string().nullish(),
+  "returnedAt": zod.string().nullish()
 }))
 })
 
