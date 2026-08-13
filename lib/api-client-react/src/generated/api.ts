@@ -46,6 +46,7 @@ import type {
   OrderInput,
   RespondWarrantyAccountBody,
   RespondWarrantyBody,
+  ReturnQueueEntry,
   WarrantyAccountReplacementInput,
   WarrantyRefundInput,
   WarrantyRejectInput,
@@ -1188,6 +1189,225 @@ export function useGetBotLogs<TData = Awaited<ReturnType<typeof getBotLogs>>, TE
 
 
 
+
+export const getGetReturnQueueUrl = () => {
+
+
+
+
+  return `/api/bot/return-queue`
+}
+
+/**
+ * @summary Get gift return queue (pending admin approval for notification)
+ */
+export const getReturnQueue = async ( options?: RequestInit): Promise<ReturnQueueEntry[]> => {
+
+  return customFetch<ReturnQueueEntry[]>(getGetReturnQueueUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetReturnQueueQueryKey = () => {
+    return [
+    `/api/bot/return-queue`
+    ] as const;
+    }
+
+
+export const getGetReturnQueueQueryOptions = <TData = Awaited<ReturnType<typeof getReturnQueue>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReturnQueue>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetReturnQueueQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getReturnQueue>>> = ({ signal }) => getReturnQueue({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getReturnQueue>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetReturnQueueQueryResult = NonNullable<Awaited<ReturnType<typeof getReturnQueue>>>
+export type GetReturnQueueQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get gift return queue (pending admin approval for notification)
+ */
+
+export function useGetReturnQueue<TData = Awaited<ReturnType<typeof getReturnQueue>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReturnQueue>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetReturnQueueQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getApproveReturnEntryUrl = (id: string,) => {
+
+
+
+
+  return `/api/bot/return-queue/${id}/approve`
+}
+
+/**
+ * @summary Approve a return entry (queues broadcast to users without gift)
+ */
+export const approveReturnEntry = async (id: string, options?: RequestInit): Promise<ActionResult> => {
+
+  return customFetch<ActionResult>(getApproveReturnEntryUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getApproveReturnEntryMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveReturnEntry>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof approveReturnEntry>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['approveReturnEntry'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveReturnEntry>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  approveReturnEntry(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApproveReturnEntryMutationResult = NonNullable<Awaited<ReturnType<typeof approveReturnEntry>>>
+
+    export type ApproveReturnEntryMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Approve a return entry (queues broadcast to users without gift)
+ */
+export const useApproveReturnEntry = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveReturnEntry>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof approveReturnEntry>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getApproveReturnEntryMutationOptions(options));
+    }
+
+export const getRejectReturnEntryUrl = (id: string,) => {
+
+
+
+
+  return `/api/bot/return-queue/${id}/reject`
+}
+
+/**
+ * @summary Reject a return entry (no broadcast sent)
+ */
+export const rejectReturnEntry = async (id: string, options?: RequestInit): Promise<ActionResult> => {
+
+  return customFetch<ActionResult>(getRejectReturnEntryUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRejectReturnEntryMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectReturnEntry>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectReturnEntry>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['rejectReturnEntry'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectReturnEntry>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  rejectReturnEntry(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RejectReturnEntryMutationResult = NonNullable<Awaited<ReturnType<typeof rejectReturnEntry>>>
+
+    export type RejectReturnEntryMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Reject a return entry (no broadcast sent)
+ */
+export const useRejectReturnEntry = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectReturnEntry>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof rejectReturnEntry>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getRejectReturnEntryMutationOptions(options));
+    }
 
 export const getGetReceiversUrl = () => {
 

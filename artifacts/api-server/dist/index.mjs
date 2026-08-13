@@ -55623,6 +55623,10 @@ var UnbanUserResponse = objectType({
   "ok": booleanType(),
   "message": stringType()
 });
+var ResetAllGiftsResponse = objectType({
+  "ok": booleanType(),
+  "message": stringType()
+});
 var ResetUserGiftParams = objectType({
   "userId": coerce.string()
 });
@@ -55640,6 +55644,34 @@ var GetBotLogsResponseItem = objectType({
   "admin": stringType().optional()
 });
 var GetBotLogsResponse = arrayType(GetBotLogsResponseItem);
+var GetReturnQueueResponseItem = objectType({
+  "id": stringType(),
+  "userId": stringType(),
+  "username": stringType(),
+  "firstName": stringType(),
+  "accountEmail": stringType(),
+  "accountPassword": stringType().optional(),
+  "returnedAt": stringType(),
+  "claimTime": stringType().optional(),
+  "notifyStatus": enumType(["pending", "approved", "rejected"]),
+  "approvedAt": stringType().nullish(),
+  "rejectedAt": stringType().nullish()
+});
+var GetReturnQueueResponse = arrayType(GetReturnQueueResponseItem);
+var ApproveReturnEntryParams = objectType({
+  "id": coerce.string()
+});
+var ApproveReturnEntryResponse = objectType({
+  "ok": booleanType(),
+  "message": stringType()
+});
+var RejectReturnEntryParams = objectType({
+  "id": coerce.string()
+});
+var RejectReturnEntryResponse = objectType({
+  "ok": booleanType(),
+  "message": stringType()
+});
 var GetReceiversResponseItem = objectType({
   "userId": stringType(),
   "username": stringType(),
@@ -55869,6 +55901,27 @@ var ResolveWarrantyRejectBody = objectType({
   "reason": stringType()
 });
 var ResolveWarrantyRejectResponse = objectType({
+  "ok": booleanType(),
+  "message": stringType()
+});
+var RespondWarrantyParams = objectType({
+  "id": coerce.string()
+});
+var RespondWarrantyBody = objectType({
+  "message": stringType().optional()
+});
+var RespondWarrantyResponse = objectType({
+  "ok": booleanType(),
+  "message": stringType()
+});
+var RespondWarrantyAccountParams = objectType({
+  "id": coerce.string(),
+  "accId": coerce.string()
+});
+var RespondWarrantyAccountBody = objectType({
+  "message": stringType().optional()
+});
+var RespondWarrantyAccountResponse = objectType({
   "ok": booleanType(),
   "message": stringType()
 });
@@ -57049,10 +57102,12 @@ router2.get("/bot/pending-counts", requireAuth, (_req, res) => {
   const warranty = readJson("warranty_requests", []) ?? [];
   const delivery = readJson("delivery_requests", []) ?? [];
   const syncStatus = readJson("sync_robot_status", {}) ?? {};
+  const returnQueue = readJson("return_queue", []) ?? [];
   const deliveryPending = delivery.filter((r) => r.status === "pending").length;
   const warrantyPending = warranty.filter((w) => ["pending", "processing"].includes(w.status)).length;
+  const returnPending = returnQueue.filter((r) => r.notifyStatus === "pending").length;
   const syncErrors = Number(syncStatus?.last_run?.errors ?? 0);
-  res.json({ delivery: deliveryPending, warranty: warrantyPending, syncRobot: syncErrors });
+  res.json({ delivery: deliveryPending, warranty: warrantyPending, syncRobot: syncErrors, returnQueue: returnPending });
 });
 router2.get("/bot/stats", requireAuth, (_req, res) => {
   const s = readSettings();
@@ -57246,6 +57301,20 @@ router2.post("/bot/users/:userId/unban", requireAuth, (req, res) => {
   addLog("UNBAN", uid, "web-admin");
   res.json({ ok: true, message: `\u0110\xE3 b\u1ECF ch\u1EB7n ${uid}` });
 });
+router2.post("/bot/users/reset-all-gifts", requireAuth, (_req, res) => {
+  const users = readJson("users", {}) ?? {};
+  let count = 0;
+  for (const uid of Object.keys(users)) {
+    if (users[uid].has_received_gift) {
+      users[uid].has_received_gift = false;
+      users[uid].gift_received = null;
+      count++;
+    }
+  }
+  writeJson("users", users);
+  addLog("RESET_ALL_GIFTS", "all", "web-admin");
+  res.json({ ok: true, message: `\u0110\xE3 reset qu\xE0 cho ${count} ng\u01B0\u1EDDi d\xF9ng` });
+});
 router2.post("/bot/users/:userId/reset-gift", requireAuth, (req, res) => {
   const uid = req.params.userId;
   const users = readJson("users", {}) ?? {};
@@ -57277,6 +57346,43 @@ router2.get("/bot/receivers", requireAuth, (_req, res) => {
     roundId: r.round_id ?? s.round_id
   }));
   res.json(result);
+});
+router2.get("/bot/return-queue", requireAuth, (_req, res) => {
+  const queue = readJson("return_queue", []) ?? [];
+  res.json(queue.slice().reverse());
+});
+router2.post("/bot/return-queue/:id/approve", requireAuth, (req, res) => {
+  const { id } = req.params;
+  const queue = readJson("return_queue", []) ?? [];
+  const idx = queue.findIndex((e) => e.id === id);
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
+    return;
+  }
+  queue[idx].notifyStatus = "approved";
+  queue[idx].approvedAt = now();
+  writeJson("return_queue", queue);
+  const ns = readJson("stock_notify_settings", {}) ?? {};
+  const message = ns.message || "\u{1F381} Kho qu\xE0 v\u1EEBa \u0111\u01B0\u1EE3c b\u1ED5 sung!\n\nTruy c\u1EADp bot \u0111\u1EC3 nh\u1EADn qu\xE0 ngay nh\xE9!";
+  const pending = readJson("pending_broadcasts", []) ?? [];
+  pending.push({ id: `return_${Date.now()}`, message, target: "no_received", createdAt: now() });
+  writeJson("pending_broadcasts", pending);
+  addLog("RETURN_QUEUE_APPROVE", id, "web-admin");
+  res.json({ ok: true, message: "\u0110\xE3 duy\u1EC7t v\xE0 x\u1EBFp h\xE0ng th\xF4ng b\xE1o" });
+});
+router2.post("/bot/return-queue/:id/reject", requireAuth, (req, res) => {
+  const { id } = req.params;
+  const queue = readJson("return_queue", []) ?? [];
+  const idx = queue.findIndex((e) => e.id === id);
+  if (idx === -1) {
+    res.status(404).json({ ok: false, message: "Kh\xF4ng t\xECm th\u1EA5y" });
+    return;
+  }
+  queue[idx].notifyStatus = "rejected";
+  queue[idx].rejectedAt = now();
+  writeJson("return_queue", queue);
+  addLog("RETURN_QUEUE_REJECT", id, "web-admin");
+  res.json({ ok: true, message: "\u0110\xE3 t\u1EEB ch\u1ED1i th\xF4ng b\xE1o" });
 });
 router2.post("/bot/broadcast", requireAuth, (req, res) => {
   const { message, target = "all" } = req.body ?? {};
@@ -60186,6 +60292,7 @@ router2.post("/bot/reset-data", requireAuth, (_req, res) => {
       { name: "warranty_requests", empty: [] },
       { name: "delivery_requests", empty: [] },
       { name: "pending_broadcasts", empty: [] },
+      { name: "return_queue", empty: [] },
       { name: "account_replacements", empty: [] },
       { name: "claimed_users", empty: {} },
       { name: "banned_users", empty: [] },

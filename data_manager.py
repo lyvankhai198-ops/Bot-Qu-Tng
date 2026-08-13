@@ -1231,6 +1231,66 @@ def is_membership_cache_valid(user_id: int, channel_key: str,
     except Exception:
         return False
 
+# ─── Return Queue (Nhường quà) ─────────────────────────────────────────────
+
+def get_return_queue() -> list:
+    return load("return_queue", [])
+
+def add_return_entry(user_id: int, username: str, first_name: str,
+                      account_email: str, account_password: str = "",
+                      claim_time: str = "") -> dict:
+    queue = get_return_queue()
+    entry = {
+        "id": str(uuid.uuid4())[:8],
+        "userId": str(user_id),
+        "username": username or "",
+        "firstName": first_name or "",
+        "accountEmail": account_email,
+        "accountPassword": account_password,
+        "returnedAt": datetime.now().isoformat(),
+        "claimTime": claim_time,
+        "notifyStatus": "pending",   # pending | approved | rejected
+        "approvedAt": None,
+        "rejectedAt": None,
+    }
+    queue.append(entry)
+    save("return_queue", queue)
+    return entry
+
+def update_return_entry(entry_id: str, **kwargs) -> dict | None:
+    queue = get_return_queue()
+    for i, entry in enumerate(queue):
+        if entry.get("id") == entry_id:
+            queue[i].update(kwargs)
+            save("return_queue", queue)
+            return queue[i]
+    return None
+
+def return_account_to_pool(account_email: str) -> bool:
+    """Restore an account to available status so the next person can claim it."""
+    accounts = [_normalize_account(a) for a in load("accounts", [])]
+    found = False
+    for i, acc in enumerate(accounts):
+        if acc.get("email") == account_email:
+            accounts[i]["status"] = "available"
+            accounts[i]["distributedTo"] = None
+            accounts[i]["distributedAt"] = None
+            found = True
+    if found:
+        save("accounts", accounts)
+    return found
+
+def reset_user_gift_status(user_id: int) -> bool:
+    """Reset user's gift flag so they can receive again after returning."""
+    users = load("users", {})
+    uid = str(user_id)
+    if uid in users:
+        users[uid]["has_received_gift"] = False
+        users[uid]["gift_received"] = None
+        save("users", users)
+        return True
+    return False
+
 # ─── Logs ──────────────────────────────────────────────────────────────────
 
 def add_log(action: str, user: str = "", admin: str = ""):

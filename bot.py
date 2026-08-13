@@ -931,6 +931,26 @@ async def _claim_gift(user, context, L: str, settings: dict) -> None:
         reply_markup=keyboard,
     )
 
+    # Lưu thông tin quà vào user_data để dùng khi nhường
+    context.user_data["last_gift"] = {
+        "email": email,
+        "password": password,
+        "claimed_at": now_str,
+    }
+    # Gửi nút nhường quà riêng (trong 24h)
+    settings_current = db.get_settings()
+    if settings_current.get("allow_gift_return", True):
+        return_label = "↩️ Nhường lại quà (trong 24 giờ)" if vi else "↩️ Return Gift (within 24h)"
+        await context.bot.send_message(
+            user.id,
+            "💡 <i>Không dùng tới? Bạn có thể nhường lại cho người khác trong vòng 24 giờ.</i>" if vi
+            else "💡 <i>Don't need it? You can return this gift to the pool within 24 hours.</i>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(return_label, callback_data="return_gift_init")
+            ]]),
+        )
+
     if ADMIN_ID:
         try:
             await context.bot.send_message(
@@ -1138,6 +1158,152 @@ async def callback_check_join(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     logger.info(f"[gift] gift_delivered telegram_user_id={user.id}")
     await _claim_gift(user, context, L, settings)
+
+async def callback_return_gift_init(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hiện xác nhận khi user bấm 'Nhường lại quà'."""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    L  = lang(user.id)
+    vi = L == "vi"
+
+    gift = context.user_data.get("last_gift")
+    if not gift:
+        # Thử lấy từ claimed_users
+        settings = db.get_settings()
+        claimed  = db.get_claimed(settings["round_id"])
+        uid      = str(user.id)
+        if uid in claimed:
+            gift = {
+                "email":      claimed[uid].get("account_email", ""),
+                "password":   "",
+                "claimed_at": claimed[uid].get("claim_time", ""),
+            }
+    if not gift or not gift.get("email"):
+        await query.edit_message_text(
+            "❌ Không tìm thấy thông tin quà để nhường." if vi
+            else "❌ Could not find gift info to return.",
+        )
+        return
+
+    # Kiểm tra 24h
+    try:
+        claimed_at = datetime.fromisoformat(gift["claimed_at"])
+        if datetime.now() - claimed_at > timedelta(hours=24):
+            await query.edit_message_text(
+                "⏰ Đã quá 24 giờ kể từ khi nhận quà. Không thể nhường lại nữa." if vi
+                else "⏰ It's been more than 24 hours since you claimed. Cannot return anymore.",
+            )
+            return
+    except Exception:
+        pass
+
+    email_preview = gift["email"][:30] + "..." if len(gift["email"]) > 30 else gift["email"]
+    confirm_text = (
+        f"↩️ <b>Xác nhận nhường lại quà?</b>\n\n"
+        f"📦 Tài khoản: <code>{email_preview}</code>\n\n"
+        "• Tài khoản sẽ được trả về kho để người khác nhận.\n"
+        "• Bạn sẽ được reset và có thể nhận quà lại.\n"
+        "• Hành động này <b>không thể hoàn tác</b>."
+    ) if vi else (
+        f"↩️ <b>Confirm returning the gift?</b>\n\n"
+        f"📦 Account: <code>{email_preview}</code>\n\n"
+        "• The account will be returned to the pool for others.\n"
+        "• Your gift status will be reset so you can claim again.\n"
+        "• This action <b>cannot be undone</b>."
+    )
+    await query.edit_message_text(
+        confirm_text, parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Xác nhận nhường" if vi else "✅ Confirm Return", callback_data="return_gift_confirm"),
+            InlineKeyboardButton("❌ Huỷ" if vi else "❌ Cancel", callback_data="return_gift_cancel"),
+        ]]),
+    )
+
+
+async def callback_return_gift_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Xử lý nhường quà — trả tài khoản về kho, reset user, ghi queue để admin duyệt."""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    L  = lang(user.id)
+    vi = L == "vi"
+
+    gift = context.user_data.get("last_gift")
+    if not gift:
+        settings = db.get_settings()
+        claimed  = db.get_claimed(settings["round_id"])
+        uid      = str(user.id)
+        if uid in claimed:
+            gift = {
+                "email":      claimed[uid].get("account_email", ""),
+                "password":   "",
+                "claimed_at": claimed[uid].get("claim_time", ""),
+            }
+    if not gift or not gift.get("email"):
+        await query.edit_message_text("❌ Không tìm thấy thông tin quà." if vi else "❌ Gift info not found.")
+        return
+
+    # Kiểm tra lại 24h
+    try:
+        claimed_at = datetime.fromisoformat(gift["claimed_at"])
+        if datetime.now() - claimed_at > timedelta(hours=24):
+            await query.edit_message_text(
+                "⏰ Đã quá 24 giờ, không thể nhường lại." if vi else "⏰ Time limit exceeded. Cannot return."
+            )
+            return
+    except Exception:
+        pass
+
+    email = gift["email"]
+
+    # 1. Trả tài khoản về kho
+    db.return_account_to_pool(email)
+    # 2. Reset claimed_users cho round này
+    settings = db.get_settings()
+    round_id = settings["round_id"]
+    claimed_all = db.load("claimed_users", {})
+    if round_id in claimed_all and str(user.id) in claimed_all[round_id]:
+        del claimed_all[round_id][str(user.id)]
+        db.save("claimed_users", claimed_all)
+    # 3. Reset user gift status
+    db.reset_user_gift_status(user.id)
+    # 4. Ghi vào return_queue để admin duyệt thông báo
+    db.add_return_entry(
+        user_id=user.id,
+        username=user.username or "",
+        first_name=user.first_name or "",
+        account_email=email,
+        account_password=gift.get("password", ""),
+        claim_time=gift.get("claimed_at", ""),
+    )
+    db.add_log("RETURN_GIFT", f"@{user.username or user.id} ({user.id}) returned {email}", "")
+    # Xoá thông tin quà khỏi user_data
+    context.user_data.pop("last_gift", None)
+
+    await query.edit_message_text(
+        "✅ <b>Đã nhường quà thành công!</b>\n\n"
+        "Cảm ơn bạn đã nhường lại để tránh lãng phí 💚\n"
+        "Bạn có thể nhận quà lại bình thường." if vi
+        else
+        "✅ <b>Gift returned successfully!</b>\n\n"
+        "Thank you for giving it back 💚\n"
+        "You may claim a gift again normally.",
+        parse_mode=ParseMode.HTML,
+    )
+    logger.info(f"[return_gift] user={user.id} returned account={email}")
+
+
+async def callback_return_gift_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Huỷ nhường quà."""
+    query = update.callback_query
+    await query.answer()
+    L  = lang(query.from_user.id)
+    vi = L == "vi"
+    await query.edit_message_text(
+        "👌 Đã huỷ. Tài khoản vẫn là của bạn." if vi else "👌 Cancelled. The account is still yours.",
+    )
+
 
 async def callback_back_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Called when user taps '⬅️ Quay lại' from channel join screen."""
@@ -3503,6 +3669,9 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_gift_box,      pattern=r"^gbox[_:]"))
     app.add_handler(CallbackQueryHandler(callback_checkin,          pattern=r"^checkin$"))
     app.add_handler(CallbackQueryHandler(callback_unlock_delivery,  pattern=r"^unlock_del:"))
+    app.add_handler(CallbackQueryHandler(callback_return_gift_init,    pattern=r"^return_gift_init$"))
+    app.add_handler(CallbackQueryHandler(callback_return_gift_confirm, pattern=r"^return_gift_confirm$"))
+    app.add_handler(CallbackQueryHandler(callback_return_gift_cancel,  pattern=r"^return_gift_cancel$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 

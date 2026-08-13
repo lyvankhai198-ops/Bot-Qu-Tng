@@ -35,6 +35,8 @@ export * from './order';
 export * from './orderInput';
 export * from './respondWarrantyAccountBody';
 export * from './respondWarrantyBody';
+export * from './returnQueueEntry';
+export * from './returnQueueEntryNotifyStatus';
 export * from './warrantyAccount';
 export * from './warrantyAccountReplacementInput';
 export * from './warrantyRefundInput';

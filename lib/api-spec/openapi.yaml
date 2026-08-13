@@ -297,6 +297,65 @@ paths:
                 items:
                   $ref: "#/components/schemas/LogEntry"
 
+  /bot/return-queue:
+    get:
+      operationId: getReturnQueue
+      tags: [bot]
+      summary: Get gift return queue (pending admin approval for notification)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Return queue entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReturnQueueEntry"
+
+  /bot/return-queue/{id}/approve:
+    post:
+      operationId: approveReturnEntry
+      tags: [bot]
+      summary: Approve a return entry (queues broadcast to users without gift)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
+  /bot/return-queue/{id}/reject:
+    post:
+      operationId: rejectReturnEntry
+      tags: [bot]
+      summary: Reject a return entry (no broadcast sent)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+
   /bot/receivers:
     get:
       operationId: getReceivers
@@ -1148,6 +1207,36 @@ components:
       properties:
         roundId:
           type: string
+
+    ReturnQueueEntry:
+      type: object
+      required: [id, userId, username, firstName, accountEmail, returnedAt, notifyStatus]
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        username:
+          type: string
+        firstName:
+          type: string
+        accountEmail:
+          type: string
+        accountPassword:
+          type: string
+        returnedAt:
+          type: string
+        claimTime:
+          type: string
+        notifyStatus:
+          type: string
+          enum: [pending, approved, rejected]
+        approvedAt:
+          type: string
+          nullable: true
+        rejectedAt:
+          type: string
+          nullable: true
 
     ActionResult:
       type: object

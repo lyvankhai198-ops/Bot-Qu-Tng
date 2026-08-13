@@ -131,12 +131,15 @@ router.get("/bot/pending-counts", requireAuth, (_req: any, res: any) => {
   const delivery:  any[] = readJson("delivery_requests", []) ?? [];
   const syncStatus: any  = readJson("sync_robot_status", {}) ?? {};
 
+  const returnQueue: any[] = readJson("return_queue", []) ?? [];
+
   const deliveryPending  = delivery.filter((r: any) => r.status === "pending").length;
   const warrantyPending  = warranty.filter((w: any) => ["pending", "processing"].includes(w.status)).length;
+  const returnPending    = returnQueue.filter((r: any) => r.notifyStatus === "pending").length;
   // Sync-robot badge: errors reported in last run (errors > 0)
   const syncErrors       = Number(syncStatus?.last_run?.errors ?? 0);
 
-  res.json({ delivery: deliveryPending, warranty: warrantyPending, syncRobot: syncErrors });
+  res.json({ delivery: deliveryPending, warranty: warrantyPending, syncRobot: syncErrors, returnQueue: returnPending });
 });
 
 // ── GET /bot/stats ──────────────────────────────────────────────────────────
@@ -397,6 +400,44 @@ router.get("/bot/receivers", requireAuth, (_req: any, res: any) => {
     roundId: r.round_id ?? s.round_id,
   }));
   res.json(result);
+});
+
+// ── GET /bot/return-queue ───────────────────────────────────────────────────
+router.get("/bot/return-queue", requireAuth, (_req: any, res: any) => {
+  const queue: any[] = readJson("return_queue", []) ?? [];
+  res.json(queue.slice().reverse()); // newest first
+});
+
+// ── POST /bot/return-queue/:id/approve ─────────────────────────────────────
+router.post("/bot/return-queue/:id/approve", requireAuth, (req: any, res: any) => {
+  const { id } = req.params;
+  const queue: any[] = readJson("return_queue", []) ?? [];
+  const idx = queue.findIndex((e: any) => e.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  queue[idx].notifyStatus = "approved";
+  queue[idx].approvedAt = now();
+  writeJson("return_queue", queue);
+  // Queue a broadcast to users who haven't received gift
+  const ns: any = readJson("stock_notify_settings", {}) ?? {};
+  const message = ns.message || "🎁 Kho quà vừa được bổ sung!\n\nTruy cập bot để nhận quà ngay nhé!";
+  const pending: any[] = readJson("pending_broadcasts", []) ?? [];
+  pending.push({ id: `return_${Date.now()}`, message, target: "no_received", createdAt: now() });
+  writeJson("pending_broadcasts", pending);
+  addLog("RETURN_QUEUE_APPROVE", id, "web-admin");
+  res.json({ ok: true, message: "Đã duyệt và xếp hàng thông báo" });
+});
+
+// ── POST /bot/return-queue/:id/reject ──────────────────────────────────────
+router.post("/bot/return-queue/:id/reject", requireAuth, (req: any, res: any) => {
+  const { id } = req.params;
+  const queue: any[] = readJson("return_queue", []) ?? [];
+  const idx = queue.findIndex((e: any) => e.id === id);
+  if (idx === -1) { res.status(404).json({ ok: false, message: "Không tìm thấy" }); return; }
+  queue[idx].notifyStatus = "rejected";
+  queue[idx].rejectedAt = now();
+  writeJson("return_queue", queue);
+  addLog("RETURN_QUEUE_REJECT", id, "web-admin");
+  res.json({ ok: true, message: "Đã từ chối thông báo" });
 });
 
 // ── POST /bot/broadcast ─────────────────────────────────────────────────────
@@ -3481,6 +3522,7 @@ router.post("/bot/reset-data", requireAuth, (_req: any, res: any) => {
       { name: "warranty_requests",        empty: [] },
       { name: "delivery_requests",        empty: [] },
       { name: "pending_broadcasts",       empty: [] },
+      { name: "return_queue",             empty: [] },
       { name: "account_replacements",     empty: [] },
       { name: "claimed_users",            empty: {} },
       { name: "banned_users",             empty: [] },

@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Users, Package, ShoppingCart, Store, Truck,
   ShieldCheck, Search, Calculator, WalletCards, RefreshCw,
   TableProperties, Activity, Send, FileText, CalendarCheck,
-  Gift, PackageOpen, Target, Settings as SettingsIcon,
+  Gift, PackageOpen, Target, Settings as SettingsIcon, ArrowLeftRight,
   LogOut, Bot, Menu, X, ChevronDown, ChevronRight,
   PanelLeftClose, PanelLeftOpen,
 } from "lucide-react"
@@ -19,7 +19,7 @@ import {
 
 // ─────────────────────────── types ────────────────────────────────────────────
 
-type BadgeKey = "warranty" | "delivery" | "syncRobot"
+type BadgeKey = "warranty" | "delivery" | "syncRobot" | "returnQueue"
 
 interface NavItem {
   href:      string
@@ -82,6 +82,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/checkin",      label: "Điểm danh",     icon: CalendarCheck },
       { href: "/receivers",    label: "Đã nhận quà",   icon: Gift },
+      { href: "/return-queue", label: "Nhường quà",    icon: ArrowLeftRight, badgeKey: "returnQueue" },
       { href: "/gift-boxes",   label: "Ô Quà Bí Mật",  icon: PackageOpen },
       { href: "/secret-codes", label: "Săn mã bí mật", icon: Target },
     ],
@@ -119,10 +120,10 @@ function lsGetObj(key: string, fallback: Record<string, boolean>): Record<string
 
 // ─────────────────────────── pending counts hook ──────────────────────────────
 
-interface PendingCounts { delivery: number; warranty: number; syncRobot: number }
+interface PendingCounts { delivery: number; warranty: number; syncRobot: number; returnQueue: number }
 
 function usePendingCounts(): PendingCounts {
-  const [counts, setCounts] = React.useState<PendingCounts>({ delivery: 0, warranty: 0, syncRobot: 0 })
+  const [counts, setCounts] = React.useState<PendingCounts>({ delivery: 0, warranty: 0, syncRobot: 0, returnQueue: 0 })
   const fetch_ = React.useCallback(async () => {
     const token = localStorage.getItem("admin_token")
     if (!token) return

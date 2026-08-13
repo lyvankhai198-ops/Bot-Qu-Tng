@@ -257,6 +257,51 @@ export const GetBotLogsResponse = zod.array(GetBotLogsResponseItem)
 
 
 /**
+ * @summary Get gift return queue (pending admin approval for notification)
+ */
+export const GetReturnQueueResponseItem = zod.object({
+  "id": zod.string(),
+  "userId": zod.string(),
+  "username": zod.string(),
+  "firstName": zod.string(),
+  "accountEmail": zod.string(),
+  "accountPassword": zod.string().optional(),
+  "returnedAt": zod.string(),
+  "claimTime": zod.string().optional(),
+  "notifyStatus": zod.enum(['pending', 'approved', 'rejected']),
+  "approvedAt": zod.string().nullish(),
+  "rejectedAt": zod.string().nullish()
+})
+export const GetReturnQueueResponse = zod.array(GetReturnQueueResponseItem)
+
+
+/**
+ * @summary Approve a return entry (queues broadcast to users without gift)
+ */
+export const ApproveReturnEntryParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const ApproveReturnEntryResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Reject a return entry (no broadcast sent)
+ */
+export const RejectReturnEntryParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const RejectReturnEntryResponse = zod.object({
+  "ok": zod.boolean(),
+  "message": zod.string()
+})
+
+
+/**
  * @summary Get users who claimed gift this round
  */
 export const GetReceiversResponseItem = zod.object({

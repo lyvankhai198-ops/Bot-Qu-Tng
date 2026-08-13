@@ -138,6 +138,29 @@ export interface NewRoundInput {
   roundId: string;
 }
 
+export type ReturnQueueEntryNotifyStatus = typeof ReturnQueueEntryNotifyStatus[keyof typeof ReturnQueueEntryNotifyStatus];
+
+
+export const ReturnQueueEntryNotifyStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export interface ReturnQueueEntry {
+  id: string;
+  userId: string;
+  username: string;
+  firstName: string;
+  accountEmail: string;
+  accountPassword?: string;
+  returnedAt: string;
+  claimTime?: string;
+  notifyStatus: ReturnQueueEntryNotifyStatus;
+  approvedAt?: string | null;
+  rejectedAt?: string | null;
+}
+
 export interface ActionResult {
   ok: boolean;
   message: string;
