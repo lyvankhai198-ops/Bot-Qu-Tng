@@ -31,7 +31,8 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters,
+    ChatMemberHandler, TypeHandler,
+    ContextTypes, filters, ApplicationHandlerStop,
 )
 from telegram.constants import ParseMode
 
@@ -778,7 +779,12 @@ async def maintenance_reply(update: Update, L: str) -> bool:
 # ─── 🎁 Nhận Quà ─────────────────────────────────────────────────────────────
 
 _JOINED_STATUSES = {"member", "administrator", "creator"}
-MEMBERSHIP_CACHE_TTL_HOURS = db.MEMBERSHIP_CACHE_TTL_HOURS  # 6h default
+MEMBERSHIP_CACHE_TTL_HOURS = db.MEMBERSHIP_CACHE_TTL_HOURS  # 6h default (gift gate)
+GLOBAL_GATE_CACHE_TTL_HOURS = 1  # 1h cache cho global gate (phát hiện rời kênh nhanh hơn)
+
+# Callbacks/commands được miễn global gate (không chặn user)
+_GATE_EXEMPT_CALLBACKS = {"check_join", "check_community_join", "back_main", "warranty_noop"}
+_GATE_EXEMPT_COMMANDS  = {"start", "myid"}
 
 def _channel_cache_key(ch: dict) -> str:
     """Stable cache key for a channel — mirrors data_manager.channel_cache_key."""
@@ -857,6 +863,154 @@ def _build_join_markup(L: str, not_joined: list) -> InlineKeyboardMarkup:
         "⬅️ Quay lại" if vi else "⬅️ Back", callback_data="back_main"
     )])
     return InlineKeyboardMarkup(buttons)
+
+async def _enforce_channel_gate(update: Update, context: ContextTypes.DEFAULT_TYPE, L: str) -> bool:
+    """Kiểm tra user có đang ở trong các kênh bắt buộc không.
+    Returns True nếu user bị chặn (caller nên return).
+    Hoạt động với cả message và callback_query update.
+    """
+    user = update.effective_user
+    settings = db.get_settings()
+    if not settings.get("require_channel_check", False):
+        return False
+
+    channels = db.get_required_channels()
+    enabled_channels = [c for c in channels if c.get("enabled", True)]
+    if not enabled_channels:
+        return False
+
+    vi = L == "vi"
+
+    # Kiểm tra cache (TTL ngắn 1h để phát hiện rời kênh nhanh)
+    need_check = []
+    for ch in enabled_channels:
+        key = _channel_cache_key(ch)
+        if key and db.is_membership_cache_valid(user.id, key, GLOBAL_GATE_CACHE_TTL_HOURS):
+            pass  # Cache còn hạn → ok
+        else:
+            need_check.append(ch)
+
+    if not need_check:
+        return False  # Tất cả kênh đều hợp lệ trong cache
+
+    # Gọi getChatMember live cho các kênh chưa cache
+    not_joined, no_chat_id, api_errors = await _check_channels_membership(
+        context.bot, user.id, need_check
+    )
+
+    # Lỗi cấu hình → không chặn để tránh lock-out toàn bộ user
+    if no_chat_id or api_errors:
+        logger.warning(
+            f"[gate] config_error telegram_user_id={user.id} "
+            f"no_chat_id={len(no_chat_id)} api_errors={len(api_errors)}"
+        )
+        return False
+
+    if not not_joined:
+        return False  # Tất cả đã xác minh OK
+
+    # Gửi prompt tham gia kênh
+    msg = (
+        "🔐 <b>Bạn cần tham gia kênh để sử dụng bot.</b>\n\n"
+        "Vui lòng tham gia kênh bên dưới, sau đó bấm ✅ để xác minh và tiếp tục."
+    ) if vi else (
+        "🔐 <b>You need to join the channel to use this bot.</b>\n\n"
+        "Please join the channel below, then tap ✅ to verify and continue."
+    )
+    markup = _build_join_markup(L, not_joined)
+
+    if update.callback_query:
+        try:
+            await update.callback_query.answer()
+        except Exception:
+            pass
+        try:
+            await update.callback_query.message.reply_text(
+                msg, parse_mode=ParseMode.HTML, reply_markup=markup,
+            )
+        except Exception:
+            await context.bot.send_message(
+                user.id, msg, parse_mode=ParseMode.HTML, reply_markup=markup,
+            )
+    else:
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    logger.info(
+        f"[gate] user_blocked telegram_user_id={user.id} "
+        f"missing_channels={len(not_joined)}"
+    )
+    return True
+
+
+async def channel_gate_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pre-handler chạy trước MỌI handler (group=-1).
+    Chặn user đã rời kênh bắt buộc, raise ApplicationHandlerStop để dừng xử lý tiếp.
+    Miễn trừ: admin, /start, /myid, callback tham gia kênh, chọn ngôn ngữ.
+    """
+    user = update.effective_user
+    if not user or is_admin(user.id):
+        return
+
+    # Miễn trừ callback cụ thể (check_join, lang selector, v.v.)
+    if update.callback_query:
+        data = (update.callback_query.data or "")
+        if data in _GATE_EXEMPT_CALLBACKS or data.startswith("lang:"):
+            return
+
+    # Miễn trừ /start và /myid
+    if update.message and update.message.text:
+        txt = update.message.text.strip()
+        if txt.startswith("/"):
+            cmd = txt.lstrip("/").split("@")[0].split()[0].lower()
+            if cmd in _GATE_EXEMPT_COMMANDS:
+                return
+
+    L = lang(user.id)
+    if await _enforce_channel_gate(update, context, L):
+        raise ApplicationHandlerStop
+
+
+async def handle_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Nhận ChatMemberUpdated từ Telegram khi user thay đổi trạng thái trong kênh bắt buộc.
+    Cập nhật cache ngay lập tức → user rời kênh sẽ bị gate chặn ở lần tương tác tiếp theo.
+    Bot phải là admin của kênh để nhận update này.
+    """
+    cmu = update.chat_member
+    if not cmu:
+        return
+
+    new_member = cmu.new_chat_member
+    user = new_member.user
+    new_status = new_member.status
+    chat = cmu.chat
+
+    channels = db.get_required_channels()
+    chat_id_str = str(chat.id).lower()
+    chat_username_lower = (f"@{chat.username}".lower()) if chat.username else ""
+
+    for ch in channels:
+        ch_id = (ch.get("chatId") or "").strip().lower()
+        ch_user = (ch.get("username") or "").strip().lstrip("@").lower()
+        ch_user_at = f"@{ch_user}" if ch_user else ""
+
+        if ch_id and (ch_id == chat_id_str or ch_id == chat_username_lower or ch_user_at == chat_username_lower):
+            key = _channel_cache_key(ch)
+            if not key:
+                break
+            if new_status in ("left", "kicked", "banned", "restricted"):
+                db.set_membership_left(user.id, key, new_status)
+                logger.info(
+                    f"[chat_member] user_left_required_channel "
+                    f"user={user.id}(@{user.username}) channel={chat.id} status={new_status}"
+                )
+            elif new_status in _JOINED_STATUSES:
+                db.set_membership_verified(user.id, key, new_status)
+                logger.info(
+                    f"[chat_member] user_joined_required_channel "
+                    f"user={user.id}(@{user.username}) channel={chat.id} status={new_status}"
+                )
+            break
+
 
 async def _claim_gift(user, context, L: str, settings: dict) -> None:
     """Core gift claim — sends via context.bot so it works from both message and callback."""
@@ -3690,6 +3844,12 @@ def main():
 
     app = Application.builder().token(TOKEN).post_init(_set_commands).build()
 
+    # ── Global channel gate — chạy trước MỌI handler ─────────────────────────
+    app.add_handler(TypeHandler(Update, channel_gate_middleware), group=-1)
+
+    # ── Real-time: nhận update khi user rời/vào kênh bắt buộc ─────────────────
+    app.add_handler(ChatMemberHandler(handle_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
+
     # ── Register handlers ─────────────────────────────────────────────────────
     app.add_handler(CommandHandler("start",   cmd_start))
     app.add_handler(CommandHandler("myid",    cmd_myid))
@@ -3716,7 +3876,10 @@ def main():
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
     logger.info("Bot is polling...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query", "chat_member", "my_chat_member"],
+    )
 
 if __name__ == "__main__":
     main()
