@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch"
 import { Search, Plus, Edit2, Trash2, Package, Bell, BellOff, Users, ArrowDownUp, UserCheck, RotateCcw, Warehouse } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { formatDistanceToNow } from "date-fns"
+import { formatDistanceToNow, format, differenceInDays } from "date-fns"
 import { vi as viLocale } from "date-fns/locale"
 import type { Account } from "@workspace/api-client-react"
 
@@ -32,16 +32,18 @@ function StatusBadge({ status }: { status?: string }) {
   return <Badge className="bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-300 shrink-0">Chưa nhận</Badge>
 }
 
-function relativeTime(iso?: string | null) {
+/** Hiển thị thống nhất: nếu < 7 ngày → "X phút/giờ/ngày trước", nếu cũ hơn → "dd/MM/yyyy HH:mm" */
+function smartDate(iso?: string | null): { label: string; title: string } | null {
   if (!iso) return null
-  try { return formatDistanceToNow(new Date(iso), { addSuffix: true, locale: viLocale }) }
-  catch { return null }
-}
-
-function shortDate(iso?: string | null) {
-  if (!iso) return null
-  try { return new Date(iso).toLocaleDateString("vi-VN") }
-  catch { return null }
+  try {
+    const d = new Date(iso)
+    const title = format(d, "HH:mm dd/MM/yyyy")
+    const daysDiff = differenceInDays(new Date(), d)
+    const label = daysDiff < 7
+      ? formatDistanceToNow(d, { addSuffix: true, locale: viLocale })
+      : format(d, "dd/MM/yyyy")
+    return { label, title }
+  } catch { return null }
 }
 
 export default function Accounts() {
@@ -120,12 +122,13 @@ export default function Accounts() {
                           (filterStatus === "available" && (!acc.status || acc.status === "available"))
       return matchSearch && matchStatus
     })
-    // Sort: newest activity first
-    return [...filtered].sort((a, b) => {
-      const dateA = (a as any).returnedAt || a.distributedAt || a.addedAt || ""
-      const dateB = (b as any).returnedAt || b.distributedAt || b.addedAt || ""
-      return dateB.localeCompare(dateA)
-    })
+    // Sort: dùng mốc thời gian phù hợp nhất với từng trạng thái
+    const primaryDate = (a: any) => {
+      if (a.status === "returned")    return (a.returnedAt    || a.addedAt || "")
+      if (a.status === "distributed") return (a.distributedAt || a.addedAt || "")
+      return (a.addedAt || "")
+    }
+    return [...filtered].sort((a, b) => primaryDate(b).localeCompare(primaryDate(a)))
   }, [accounts, search, filterStatus])
 
   const openEdit = (acc: Account) => {
@@ -301,42 +304,44 @@ export default function Accounts() {
 
                         {/* Detail row */}
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-                          {/* Thêm vào */}
-                          {acc.addedAt && (
-                            <span title={acc.addedAt}>
-                              📦 Thêm {shortDate(acc.addedAt)}
-                            </span>
-                          )}
 
-                          {/* Ai nhận */}
-                          {acc.status === "distributed" && acc.distributedTo && (
-                            <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
-                              <UserCheck className="h-3 w-3" />
-                              ID {acc.distributedTo}
-                              {acc.distributedAt && (
-                                <span className="text-muted-foreground">
-                                  · {relativeTime(acc.distributedAt)}
-                                </span>
-                              )}
-                            </span>
-                          )}
+                          {/* Thêm vào — chỉ hiện khi chưa nhận (available) */}
+                          {(!acc.status || acc.status === "available") && (() => {
+                            const t = smartDate(acc.addedAt)
+                            return t ? <span title={t.title}>📦 Thêm {t.label}</span> : null
+                          })()}
 
-                          {/* Hoàn về */}
-                          {acc.status === "returned" && (
-                            <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                              <RotateCcw className="h-3 w-3" />
-                              {accAny.returnedAt
-                                ? `Hoàn ${relativeTime(accAny.returnedAt)}`
-                                : "Đã hoàn về kho"}
-                              {acc.distributedTo && (
-                                <span className="text-muted-foreground">· từ ID {acc.distributedTo}</span>
-                              )}
-                            </span>
-                          )}
+                          {/* Đã phát — thời gian phát + ai nhận */}
+                          {acc.status === "distributed" && (() => {
+                            const t = smartDate(acc.distributedAt)
+                            return (
+                              <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                                <UserCheck className="h-3 w-3" />
+                                {t ? <span title={t.title}>Phát {t.label}</span> : "Đã phát"}
+                                {acc.distributedTo && (
+                                  <span className="text-muted-foreground">· ID {acc.distributedTo}</span>
+                                )}
+                              </span>
+                            )
+                          })()}
+
+                          {/* Hoàn về — thời gian hoàn + từ ai */}
+                          {acc.status === "returned" && (() => {
+                            const t = smartDate(accAny.returnedAt || acc.distributedAt)
+                            return (
+                              <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                                <RotateCcw className="h-3 w-3" />
+                                {t ? <span title={t.title}>Hoàn {t.label}</span> : "Đã hoàn về kho"}
+                                {acc.distributedTo && (
+                                  <span className="text-muted-foreground">· từ ID {acc.distributedTo}</span>
+                                )}
+                              </span>
+                            )
+                          })()}
 
                           {/* Note */}
                           {acc.note && (
-                            <span className="italic text-muted-foreground">"{acc.note}"</span>
+                            <span className="italic">"{acc.note}"</span>
                           )}
                         </div>
                       </div>
