@@ -8,3 +8,4 @@
 - [Admin panel fetch pattern](admin-panel-fetch-pattern.md) — pages dùng raw fetch() + authHeader(), KHÔNG dùng apiClient.get/put/post
 - [Sync robot login & nav](sync-robot-login.md) — canboso.com SPA fixes: sec-ch-ua override, goto-root session check, wait_for_url after submit, no hamburger needed
 - [Warranty scan feature](warranty-scan.md) — warranty_scan.py + warrantySheets.ts + warranty-scan.tsx; Google Sheets 403 unresolved (SA permission issue)
+- [Start channel gate](start-channel-gate.md) — require_start_channel_check setting; callback_check_community_join callback; reuses required_channels.json; shows shop_channels after pass
