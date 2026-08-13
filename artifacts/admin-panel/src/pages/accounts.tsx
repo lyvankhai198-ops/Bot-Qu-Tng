@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Search, Plus, Edit2, Trash2, Package, Bell, BellOff } from "lucide-react"
+import { Search, Plus, Edit2, Trash2, Package, Bell, BellOff, Users } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Account } from "@workspace/api-client-react"
@@ -40,6 +40,7 @@ export default function Accounts() {
 
   // ── Notify state ──────────────────────────────────────────────────────────
   const [notifyEnabled, setNotifyEnabled]     = useState(true)
+  const [notifyTarget, setNotifyTarget]       = useState<"all" | "no_received">("no_received")
   const [notifyMessage, setNotifyMessage]     = useState(DEFAULT_NOTIFY_MSG)
   const [showMsgEditor, setShowMsgEditor]     = useState(false)
   const [notifySettingsSaving, setNotifySettingsSaving] = useState(false)
@@ -51,18 +52,19 @@ export default function Accounts() {
         if (!d) return
         setNotifyEnabled(d.enabled !== false)
         setNotifyMessage(d.message || DEFAULT_NOTIFY_MSG)
+        setNotifyTarget(d.target === "all" ? "all" : "no_received")
       })
       .catch(() => {})
   }, [])
 
   // ── Save default notify settings ─────────────────────────────────────────
-  const saveNotifySettings = async (enabled: boolean, message: string) => {
+  const saveNotifySettings = async (enabled: boolean, message: string, target: string) => {
     setNotifySettingsSaving(true)
     try {
       await fetch("/api/bot/stock-notify-settings", {
         method: "PUT",
         headers: { ...authHeader(), "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled, message }),
+        body: JSON.stringify({ enabled, message, target }),
       })
     } catch { /* ignore */ } finally { setNotifySettingsSaving(false) }
   }
@@ -91,23 +93,22 @@ export default function Accounts() {
     setEditStatus(acc.status || "available")
   }
 
+  // Parse: mỗi dòng không rỗng = 1 tài khoản (không cần định dạng cố định)
   const handleAddSubmit = async () => {
     if (!addText.trim()) return
-    const lines = addText.split("\n").filter(l => l.trim().includes(":"))
-    const parsedAccounts = lines.map(line => {
-      const [email, ...rest] = line.split(":")
-      return {
-        email: email.trim(),
-        password: rest.join(":").trim(),
-        type: addType || undefined,
-        note: addNote || undefined,
-      }
-    })
+    const lines = addText.split("\n").map(l => l.trim()).filter(l => l.length > 0)
 
-    if (parsedAccounts.length === 0) {
-      toast({ title: "Lỗi", description: "Định dạng không hợp lệ. Vui lòng dùng định dạng email:password", variant: "destructive" })
+    if (lines.length === 0) {
+      toast({ title: "Lỗi", description: "Vui lòng nhập ít nhất một dòng nội dung", variant: "destructive" })
       return
     }
+
+    const parsedAccounts = lines.map(line => ({
+      email: line,
+      password: "",
+      type: addType || undefined,
+      note: addNote || undefined,
+    }))
 
     try {
       const result: any = await addAccounts.mutateAsync({
@@ -115,16 +116,18 @@ export default function Accounts() {
           accounts: parsedAccounts,
           notify: notifyEnabled,
           notifyMessage: notifyMessage.trim() || DEFAULT_NOTIFY_MSG,
+          notifyTarget,
         } as any,
       })
       const added = result?.added ?? parsedAccounts.length
       if (notifyEnabled && added > 0) {
+        const targetLabel = notifyTarget === "all" ? "tất cả người dùng" : "người chưa nhận quà"
         toast({
           title: "✅ Đã thêm & xếp hàng thông báo",
-          description: `Thêm ${added} tài khoản. Đang gửi thông báo tới người chưa nhận quà.`,
+          description: `Thêm ${added} mục. Đang gửi thông báo tới ${targetLabel}.`,
         })
       } else {
-        toast({ title: "Thành công", description: `Đã thêm ${added} tài khoản` })
+        toast({ title: "Thành công", description: `Đã thêm ${added} mục` })
       }
       setAddDialogOpen(false)
       setAddText("")
@@ -157,6 +160,9 @@ export default function Accounts() {
     }
   }
 
+  // Count lines in textarea
+  const lineCount = addText.split("\n").filter(l => l.trim().length > 0).length
+
   return (
     <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -176,7 +182,7 @@ export default function Accounts() {
             <div className="relative w-full">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Tìm kiếm email hoặc ghi chú..."
+                placeholder="Tìm kiếm nội dung hoặc ghi chú..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="pl-9 bg-background min-h-[44px]"
@@ -244,7 +250,7 @@ export default function Accounts() {
               <TableHeader className="bg-muted/50">
                 <TableRow>
                   <TableHead className="w-12"><Package className="w-4 h-4" /></TableHead>
-                  <TableHead>Email</TableHead>
+                  <TableHead>Nội dung</TableHead>
                   <TableHead>Loại</TableHead>
                   <TableHead>Ghi chú</TableHead>
                   <TableHead>Trạng thái</TableHead>
@@ -265,7 +271,7 @@ export default function Accounts() {
                   filteredAccounts.map(acc => (
                     <TableRow key={acc.email}>
                       <TableCell></TableCell>
-                      <TableCell className="font-medium font-mono text-xs">{acc.email}</TableCell>
+                      <TableCell className="font-medium font-mono text-xs max-w-[300px] break-all">{acc.email}</TableCell>
                       <TableCell>{acc.type || "-"}</TableCell>
                       <TableCell className="text-muted-foreground text-sm max-w-[200px] truncate" title={acc.note}>{acc.note || "-"}</TableCell>
                       <TableCell>
@@ -307,17 +313,22 @@ export default function Accounts() {
           <DialogHeader>
             <DialogTitle>Thêm tài khoản mới</DialogTitle>
             <DialogDescription>
-              Nhập danh sách tài khoản theo định dạng email:password, mỗi tài khoản một dòng.
+              Mỗi dòng là một mục — có thể là email:pass, link, hoặc bất kỳ nội dung nào.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 py-2">
             {/* Accounts textarea */}
             <div className="grid gap-2">
-              <Label htmlFor="accounts">Danh sách tài khoản</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="accounts">Danh sách nội dung</Label>
+                {lineCount > 0 && (
+                  <span className="text-xs text-muted-foreground">{lineCount} mục</span>
+                )}
+              </div>
               <Textarea
                 id="accounts"
-                placeholder={"user1@email.com:pass123\nuser2@email.com:pass456"}
+                placeholder={"email@example.com:pass123\nhttps://t.me/example\nBất kỳ nội dung nào..."}
                 className="h-32 font-mono text-sm"
                 value={addText}
                 onChange={e => setAddText(e.target.value)}
@@ -347,7 +358,7 @@ export default function Accounts() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium leading-none">Thông báo người dùng</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Gửi tin nhắn đến người chưa nhận quà
+                      Gửi tin nhắn sau khi thêm vào kho
                     </p>
                   </div>
                 </div>
@@ -355,40 +366,76 @@ export default function Accounts() {
                   checked={notifyEnabled}
                   onCheckedChange={v => {
                     setNotifyEnabled(v)
-                    saveNotifySettings(v, notifyMessage)
+                    saveNotifySettings(v, notifyMessage, notifyTarget)
                   }}
                   className="shrink-0"
                 />
               </div>
 
               {notifyEnabled && (
-                <div className="p-3 border-t border-border space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground">Nội dung tin nhắn</Label>
+                <div className="p-3 border-t border-border space-y-3">
+                  {/* Target selector */}
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      className="text-xs text-primary underline-offset-2 hover:underline"
-                      onClick={() => setShowMsgEditor(v => !v)}
+                      onClick={() => {
+                        setNotifyTarget("no_received")
+                        saveNotifySettings(notifyEnabled, notifyMessage, "no_received")
+                      }}
+                      className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors ${
+                        notifyTarget === "no_received"
+                          ? "border-primary bg-primary/5 text-primary"
+                          : "border-border text-muted-foreground hover:bg-muted/40"
+                      }`}
                     >
-                      {showMsgEditor ? "Ẩn" : "Chỉnh sửa"}
+                      <Users className="h-3.5 w-3.5 shrink-0" />
+                      Chưa nhận quà
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNotifyTarget("all")
+                        saveNotifySettings(notifyEnabled, notifyMessage, "all")
+                      }}
+                      className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors ${
+                        notifyTarget === "all"
+                          ? "border-primary bg-primary/5 text-primary"
+                          : "border-border text-muted-foreground hover:bg-muted/40"
+                      }`}
+                    >
+                      <Users className="h-3.5 w-3.5 shrink-0" />
+                      Tất cả người dùng
                     </button>
                   </div>
 
-                  {showMsgEditor ? (
-                    <Textarea
-                      className="text-sm min-h-[80px]"
-                      value={notifyMessage}
-                      onChange={e => setNotifyMessage(e.target.value)}
-                      onBlur={() => saveNotifySettings(notifyEnabled, notifyMessage)}
-                    />
-                  ) : (
-                    <div className="bg-background border border-border/60 rounded p-2 text-xs whitespace-pre-wrap text-foreground/80 font-mono">
-                      {notifyMessage || DEFAULT_NOTIFY_MSG}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground">Nội dung tin nhắn</Label>
+                      <button
+                        type="button"
+                        className="text-xs text-primary underline-offset-2 hover:underline"
+                        onClick={() => setShowMsgEditor(v => !v)}
+                      >
+                        {showMsgEditor ? "Ẩn" : "Chỉnh sửa"}
+                      </button>
                     </div>
-                  )}
-                  {notifySettingsSaving && (
-                    <p className="text-xs text-muted-foreground">Đang lưu...</p>
-                  )}
+
+                    {showMsgEditor ? (
+                      <Textarea
+                        className="text-sm min-h-[80px]"
+                        value={notifyMessage}
+                        onChange={e => setNotifyMessage(e.target.value)}
+                        onBlur={() => saveNotifySettings(notifyEnabled, notifyMessage, notifyTarget)}
+                      />
+                    ) : (
+                      <div className="bg-background border border-border/60 rounded p-2 text-xs whitespace-pre-wrap text-foreground/80 font-mono">
+                        {notifyMessage || DEFAULT_NOTIFY_MSG}
+                      </div>
+                    )}
+                    {notifySettingsSaving && (
+                      <p className="text-xs text-muted-foreground">Đang lưu...</p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -410,7 +457,7 @@ export default function Accounts() {
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[425px] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Chỉnh sửa tài khoản</DialogTitle>
-            <DialogDescription>{editAccount?.email}</DialogDescription>
+            <DialogDescription className="break-all">{editAccount?.email}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -447,14 +494,14 @@ export default function Accounts() {
           <DialogHeader>
             <DialogTitle>Xác nhận xóa</DialogTitle>
             <DialogDescription>
-              Bạn có chắc chắn muốn xóa tài khoản{" "}
+              Bạn có chắc chắn muốn xóa mục{" "}
               <span className="font-bold text-foreground break-all">{deleteAccountEmail}</span>? Hành động này không thể hoàn tác.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4 flex-col sm:flex-row gap-2">
             <Button variant="outline" className="w-full sm:w-auto" onClick={() => setDeleteAccountEmail(null)}>Hủy</Button>
             <Button variant="destructive" className="w-full sm:w-auto" onClick={handleDeleteSubmit} disabled={deleteAccount.isPending}>
-              {deleteAccount.isPending ? "Đang xóa..." : "Xóa tài khoản"}
+              {deleteAccount.isPending ? "Đang xóa..." : "Xóa"}
             </Button>
           </DialogFooter>
         </DialogContent>

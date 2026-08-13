@@ -62,7 +62,7 @@ function parseAccountLines(raw: string): Array<{ account: string; password: stri
     .map(l => l.trim())
     .filter(l => l.length > 0)
     .map(parseAccountLine)
-    .filter(p => p.account && p.password)
+    .filter(p => p.account) // chỉ cần account không rỗng
 }
 
 export default function Delivery() {
@@ -128,16 +128,16 @@ export default function Delivery() {
     if (useRaw) {
       accounts = parseAccountLines(rawLine).map(p => ({ account: p.account, password: p.password, twoFA: p.twoFA || undefined }))
       if (accounts.length === 0) {
-        toast({ title: "Thiếu thông tin", description: "Vui lòng nhập ít nhất một dòng account|password", variant: "destructive" })
+        toast({ title: "Thiếu thông tin", description: "Vui lòng nhập ít nhất một dòng nội dung", variant: "destructive" })
         return
       }
     } else {
       const acc = account.trim(), pwd = password.trim(), tfa = twoFA.trim()
-      if (!acc || !pwd) {
-        toast({ title: "Thiếu thông tin", description: "Vui lòng nhập tài khoản và mật khẩu", variant: "destructive" })
+      if (!acc) {
+        toast({ title: "Thiếu thông tin", description: "Vui lòng nhập tài khoản / nội dung cần giao", variant: "destructive" })
         return
       }
-      accounts = [{ account: acc, password: pwd, twoFA: tfa || undefined }]
+      accounts = [{ account: acc, password: pwd || undefined, twoFA: tfa || undefined }]
     }
     setSending(true)
     try {
@@ -389,7 +389,7 @@ export default function Delivery() {
                 Nhập riêng từng ô
               </Button>
               <Button size="sm" variant={useRaw ? "default" : "outline"} onClick={() => setUseRaw(true)} className="flex-1">
-                Định dạng email|pass|2FA
+                Nhập nhiều dòng
               </Button>
             </div>
 
