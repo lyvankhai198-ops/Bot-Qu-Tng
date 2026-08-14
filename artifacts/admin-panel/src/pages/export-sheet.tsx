@@ -29,13 +29,15 @@ interface ExportRule {
 }
 
 interface PreviewRow {
-  email:   string
-  password: string
-  twofa:   string
-  date:    string
-  price:   string | number
-  seller:  string
-  product: string
+  seller:    string
+  email:     string
+  password:  string
+  twofa:     string
+  price:     number        // giá mua sau -3%
+  date:      string        // ngày mua DD/MM/YYYY
+  expiry:    string        // hết hạn BH DD/MM/YYYY
+  remaining: number        // ngày còn lại
+  refund:    number        // tiền hoàn
 }
 
 // ── Auth helpers ───────────────────────────────────────────────────────────────
@@ -377,18 +379,24 @@ export default function ExportSheet() {
               <thead className="bg-muted sticky top-0 z-10">
                 <tr>
                   <th className="px-2 py-1.5 text-left font-semibold">#</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Seller</th>
                   <th className="px-2 py-1.5 text-left font-semibold">Email</th>
                   <th className="px-2 py-1.5 text-left font-semibold">Mật khẩu</th>
                   <th className="px-2 py-1.5 text-left font-semibold">2FA</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Giá mua</th>
                   <th className="px-2 py-1.5 text-left font-semibold">Ngày mua</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Giá (VNĐ)</th>
-                  <th className="px-2 py-1.5 text-left font-semibold">Người bán</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Hết hạn BH</th>
+                  <th className="px-2 py-1.5 text-center font-semibold">Còn lại</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Tiền hoàn</th>
                 </tr>
               </thead>
               <tbody>
                 {preview?.rows.map((row, i) => (
                   <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-muted/30"}>
                     <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
+                    <td className="px-2 py-1 text-[11px] truncate max-w-[100px]" title={row.seller}>
+                      {row.seller || <span className="text-muted-foreground italic">—</span>}
+                    </td>
                     <td className="px-2 py-1 font-mono max-w-[180px] truncate" title={row.email}>
                       {row.email || <span className="text-muted-foreground italic">—</span>}
                     </td>
@@ -396,12 +404,22 @@ export default function ExportSheet() {
                     <td className="px-2 py-1 font-mono max-w-[120px] truncate text-muted-foreground" title={row.twofa}>
                       {row.twofa ? maskPass(row.twofa) : <span className="italic">—</span>}
                     </td>
-                    <td className="px-2 py-1 whitespace-nowrap">{row.date || "—"}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">
-                      {row.price ? Number(row.price).toLocaleString("vi-VN") : "—"}
+                    <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
+                      {row.price ? row.price.toLocaleString("vi-VN") : "—"}
                     </td>
-                    <td className="px-2 py-1 text-muted-foreground text-[11px] truncate max-w-[110px]" title={row.seller}>
-                      {row.seller}
+                    <td className="px-2 py-1 whitespace-nowrap">{row.date || "—"}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{row.expiry || "—"}</td>
+                    <td className="px-2 py-1 text-center">
+                      <span className={
+                        row.remaining <= 0 ? "text-red-500 font-semibold" :
+                        row.remaining <= 7 ? "text-orange-500 font-semibold" :
+                        "text-emerald-600"
+                      }>
+                        {row.remaining}n
+                      </span>
+                    </td>
+                    <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap font-semibold text-emerald-700">
+                      {row.refund ? row.refund.toLocaleString("vi-VN") : "—"}
                     </td>
                   </tr>
                 ))}

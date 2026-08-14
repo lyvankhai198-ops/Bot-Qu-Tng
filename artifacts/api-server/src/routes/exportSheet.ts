@@ -1,9 +1,10 @@
 /**
  * exportSheet.ts — Xuất file .xlsx từ đơn hàng chợ theo rule lọc
  *
- * GET  /bot/export-sheet/config          — đọc danh sách rule
- * PUT  /bot/export-sheet/config          — lưu danh sách rule
- * POST /bot/export-sheet/download/:ruleId — tạo và trả file .xlsx
+ * GET  /bot/export-sheet/config    — đọc danh sách rule
+ * PUT  /bot/export-sheet/config    — lưu danh sách rule
+ * POST /bot/export-sheet/preview   — xem trước (JSON)
+ * POST /bot/export-sheet/download  — tải file .xlsx
  */
 import { Router }      from "express";
 import fs              from "fs";
@@ -24,32 +25,19 @@ function writeJson(name: string, data: unknown) {
   fs.writeFileSync(dataFile(name), JSON.stringify(data, null, 2), "utf-8");
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// ── Helpers: lọc ──────────────────────────────────────────────────────────────
 
-/** Chuẩn hoá tên sản phẩm để so khớp keyword */
 function normName(s: string): string {
   return (s ?? "").toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
 }
-
-/** Kiểm tra seller của đơn có nằm trong danh sách không */
 function sellerMatches(orderSeller: string, sellers: string[]): boolean {
   if (!sellers.length) return true;
   const norm = (orderSeller ?? "").toLowerCase().replace(/^@/, "");
   return sellers.some(s => norm.includes(s.toLowerCase().replace(/^@/, "")));
 }
-
-/** Kiểm tra tên sản phẩm khớp rule include/exclude
- *
- * Matching theo từng token (tách bởi khoảng trắng):
- *   keyword "chatgpt plus" → tokens ["chatgpt", "plus"]
- *   → tất cả token phải xuất hiện trong tên sản phẩm (thứ tự không quan trọng)
- *   → "ChatGPT 4 Plus", "ChatGPT Plus Pro" đều khớp
- */
 function kwTokenMatch(productNorm: string, keyword: string): boolean {
-  const tokens = keyword.toLowerCase().split(/\s+/).filter(Boolean);
-  return tokens.every(token => productNorm.includes(token));
+  return keyword.toLowerCase().split(/\s+/).filter(Boolean).every(t => productNorm.includes(t));
 }
-
 function productMatches(productName: string, include: string[], exclude: string[]): boolean {
   const norm = normName(productName);
   if (exclude.some(kw => kwTokenMatch(norm, kw))) return false;
@@ -57,219 +45,318 @@ function productMatches(productName: string, include: string[], exclude: string[
   return include.some(kw => kwTokenMatch(norm, kw));
 }
 
-/** Kiểm tra đơn còn trong thời hạn bảo hành */
-function withinWarranty(order: any, warrantyDays: number): boolean {
-  if (!warrantyDays || warrantyDays <= 0) return true;
-  const raw = order.completed_at || order.delivered_at || order.payment_at
-            || order.created_at_raw || order.created_at;
-  if (!raw) return true;
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return true;
-  const elapsedDays = (Date.now() - d.getTime()) / 86_400_000;
-  return elapsedDays <= warrantyDays;
+// ── Helpers: giá và ngày ──────────────────────────────────────────────────────
+
+/** Parse "110.000đ" hoặc 110000 → number */
+function parsePrice(raw: string | number): number {
+  if (typeof raw === "number") return raw;
+  const s = String(raw ?? "").replace(/[^\d]/g, "");
+  return parseInt(s, 10) || 0;
+}
+
+/** Giá mua sau khi trừ 3% */
+function adjustPrice(raw: string | number): number {
+  return Math.round(parsePrice(raw) * 0.97);
 }
 
 /**
- * Parse content string → mảng các account { email, password, twofa }
- *
- * Format thực tế từ bot Telegram:
- *   email / password | Verify: 2FA_CODE | Giao: timestamp
- * Nhiều account cách nhau bằng \n
- *
- * Fallback: email|pass|2fa hoặc email:pass:2fa
+ * Parse ngày mua từ order.
+ * Ưu tiên completed_at / delivered_at / payment_at (format VN: "HH:MM:SS DD/MM/YYYY")
+ * Fallback: created_at (ISO).
  */
-function parseContent(content: string): { email: string; password: string; twofa: string }[] {
-  const s = (content ?? "").trim();
-  if (!s) return [];
-
-  // Chuẩn thực tế: mỗi dòng là "email / pass | Verify: 2FA | Giao: time"
-  const lines = s.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-
-  const results: { email: string; password: string; twofa: string }[] = [];
-
-  for (const line of lines) {
-    // Tách theo " | "
-    const segments = line.split(" | ").map(p => p.trim());
-
-    // Segment 0: "email / password"
-    const accountSeg = segments[0] ?? "";
-    const slashIdx   = accountSeg.lastIndexOf(" / ");
-    let email = "", password = "";
-    if (slashIdx !== -1) {
-      email    = accountSeg.slice(0, slashIdx).trim();
-      password = accountSeg.slice(slashIdx + 3).trim();
-    } else {
-      email = accountSeg;
-    }
-
-    // Segment 1+: tìm "Verify: XXX"
-    let twofa = "";
-    for (let i = 1; i < segments.length; i++) {
-      if (segments[i].startsWith("Verify: ")) {
-        twofa = segments[i].slice(8).trim();
-        break;
-      }
-    }
-
-    if (email) results.push({ email, password, twofa });
+function parsePurchaseDate(order: any): Date | null {
+  const raw = order.completed_at || order.delivered_at || order.payment_at
+            || order.created_at_raw || order.created_at;
+  if (!raw) return null;
+  const s = String(raw);
+  // Format VN: "21:24:09 30/07/2026" hoặc chỉ "30/07/2026"
+  const vnMatch = s.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
+  if (vnMatch) {
+    const [, dd, mm, yyyy] = vnMatch;
+    return new Date(parseInt(yyyy), parseInt(mm) - 1, parseInt(dd));
   }
-
-  if (results.length) return results;
-
-  // Fallback: pipe-separated email|pass|2fa (1 account)
-  const pipe = s.split("|").map(p => p.trim());
-  if (pipe.length >= 2 && pipe[0].includes("@")) {
-    return [{ email: pipe[0], password: pipe[1] ?? "", twofa: pipe[2] ?? "" }];
-  }
-
-  // Fallback: colon-separated
-  const colon = s.split(":").map(p => p.trim());
-  if (colon.length >= 2) {
-    return [{ email: colon[0], password: colon[1] ?? "", twofa: colon[2] ?? "" }];
-  }
-
-  return [{ email: s, password: "", twofa: "" }];
+  // ISO
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
 }
 
-/** Format ngày từ ISO string → dd/mm/yyyy */
-function fmtDate(raw: string): string {
-  if (!raw) return "";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
+/** Date → DD/MM/YYYY */
+function fmtDate(d: Date | null): string {
+  if (!d || isNaN(d.getTime())) return "";
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
-// ── POST /bot/export-sheet/preview ─────────────────────────────────────────────
-router.post("/bot/export-sheet/preview", requireAuth, (req: any, res: any) => {
-  const rule = req.body as {
-    sellers:      string[];
-    include:      string[];
-    exclude:      string[];
-    warranty_days: number;
-  };
+/** Số ngày còn lại tính từ hôm nay */
+function calcRemaining(purchaseDate: Date, warrantyDays: number): number {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const p = new Date(purchaseDate); p.setHours(0, 0, 0, 0);
+  const used = Math.floor((today.getTime() - p.getTime()) / 86_400_000);
+  return Math.max(0, warrantyDays - used);
+}
 
+/** Tiền hoàn = giá mua (sau -3%) × ngày còn lại / warrantyDays */
+function calcRefund(adjPrice: number, remaining: number, warrantyDays: number): number {
+  if (warrantyDays <= 0) return 0;
+  return Math.round(adjPrice * remaining / warrantyDays);
+}
+
+/** Parse content → mảng {email, password, twofa} */
+function parseContent(content: string): { email: string; password: string; twofa: string }[] {
+  const s = (content ?? "").trim();
+  if (!s) return [];
+  const lines = s.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const results: { email: string; password: string; twofa: string }[] = [];
+  for (const line of lines) {
+    const segs = line.split(" | ").map(p => p.trim());
+    const acct  = segs[0] ?? "";
+    const slash = acct.lastIndexOf(" / ");
+    let email = "", password = "";
+    if (slash !== -1) { email = acct.slice(0, slash).trim(); password = acct.slice(slash + 3).trim(); }
+    else { email = acct; }
+    let twofa = "";
+    for (let i = 1; i < segs.length; i++) {
+      if (segs[i].startsWith("Verify: ")) { twofa = segs[i].slice(8).trim(); break; }
+    }
+    if (email) results.push({ email, password, twofa });
+  }
+  if (results.length) return results;
+  const pipe = s.split("|").map(p => p.trim());
+  if (pipe.length >= 2 && pipe[0].includes("@")) return [{ email: pipe[0], password: pipe[1] ?? "", twofa: pipe[2] ?? "" }];
+  const colon = s.split(":").map(p => p.trim());
+  if (colon.length >= 2) return [{ email: colon[0], password: colon[1] ?? "", twofa: colon[2] ?? "" }];
+  return [{ email: s, password: "", twofa: "" }];
+}
+
+// ── Kiểu dữ liệu row nội bộ ───────────────────────────────────────────────────
+
+interface RowData {
+  seller:        string;
+  email:         string;
+  password:      string;
+  twofa:         string;
+  purchaseDate:  Date | null;
+  expiryDate:    Date | null;
+  adjPrice:      number;
+  remaining:     number;
+  refund:        number;
+}
+
+// ── Lọc + build rows ──────────────────────────────────────────────────────────
+
+function filterAndBuild(rule: {
+  sellers?: string[]; include?: string[]; exclude?: string[]; warranty_days?: number;
+}): RowData[] {
+  const warrantyDays = (rule.warranty_days && rule.warranty_days > 0) ? rule.warranty_days : 30;
   const allOrders: Record<string, any> = readJson("market_orders", {}) ?? {};
 
   const matched = Object.values(allOrders).filter((o: any) => {
     if (!sellerMatches(o.seller ?? "", rule.sellers ?? [])) return false;
     if (!productMatches(o.product_name ?? "", rule.include ?? [], rule.exclude ?? [])) return false;
-    if (!withinWarranty(o, rule.warranty_days ?? 0)) return false;
+    if (warrantyDays > 0) {
+      const pd = parsePurchaseDate(o);
+      if (pd) {
+        const elapsed = (Date.now() - pd.getTime()) / 86_400_000;
+        if (elapsed > warrantyDays) return false;
+      }
+    }
     return true;
   });
 
-  const rows: any[] = [];
+  // Sắp xếp: seller → ngày mua
+  matched.sort((a: any, b: any) => {
+    const sa = (a.seller ?? "").toLowerCase();
+    const sb = (b.seller ?? "").toLowerCase();
+    if (sa !== sb) return sa.localeCompare(sb);
+    const da = parsePurchaseDate(a), db = parsePurchaseDate(b);
+    if (!da || !db) return 0;
+    return da.getTime() - db.getTime();
+  });
+
+  const rows: RowData[] = [];
   for (const o of matched) {
-    const accounts = parseContent(o.content ?? "");
-    const dateRaw  = o.completed_at || o.delivered_at || o.payment_at
-                   || o.created_at_raw || o.created_at || "";
-    const date     = fmtDate(dateRaw);
-    const price    = o.sell_price ?? o.price ?? "";
-    const seller   = o.seller ?? "";
-    const product  = o.product_name ?? "";
+    const accounts     = parseContent(o.content ?? "");
+    const purchaseDate = parsePurchaseDate(o);
+    const adjPrice     = adjustPrice(o.price ?? "");
+    const remaining    = purchaseDate ? calcRemaining(purchaseDate, warrantyDays) : 0;
+    const expiryDate   = purchaseDate
+      ? new Date(purchaseDate.getTime() + warrantyDays * 86_400_000)
+      : null;
+    const refund = calcRefund(adjPrice, remaining, warrantyDays);
+    const seller = o.seller ?? "";
+
     if (!accounts.length) {
-      rows.push({ email: "", password: "", twofa: "", date, price, seller, product });
+      rows.push({ seller, email: "", password: "", twofa: "", purchaseDate, expiryDate, adjPrice, remaining, refund });
     } else {
-      for (const acc of accounts) {
-        rows.push({ ...acc, date, price, seller, product });
+      for (const { email, password, twofa } of accounts) {
+        rows.push({ seller, email, password, twofa, purchaseDate, expiryDate, adjPrice, remaining, refund });
+      }
+    }
+  }
+  return rows;
+}
+
+// ── Build XLSX buffer ─────────────────────────────────────────────────────────
+
+function buildXlsx(rows: RowData[]): Buffer {
+  const DATA_START = 2; // row 0 = header, row 1 = blank spacer
+
+  // Gộp dữ liệu: header + blank + data
+  const wsData: any[][] = [
+    ["Tên seller", "Email", "Mật khẩu", "2FA", "Giá mua", "Ngày mua", "Hết hạn BH", "Tiền hoàn"],
+    ["", "", "", "", "", "", "", ""],
+  ];
+
+  // Theo dõi nhóm seller để merge cells
+  interface SellerGroup { start: number; end: number }
+  const sellerGroups: SellerGroup[] = [];
+  let curSeller = "\0"; // sentinel
+  let curStart  = DATA_START;
+
+  rows.forEach((r, i) => {
+    const rowIdx = DATA_START + i;
+    if (r.seller !== curSeller) {
+      if (i > 0) sellerGroups.push({ start: curStart, end: rowIdx - 1 });
+      curSeller = r.seller;
+      curStart  = rowIdx;
+    }
+    wsData.push([
+      r.seller,
+      r.email,
+      r.password,
+      r.twofa,
+      r.adjPrice,
+      fmtDate(r.purchaseDate),
+      fmtDate(r.expiryDate),
+      r.refund,
+    ]);
+  });
+  if (rows.length > 0) sellerGroups.push({ start: curStart, end: DATA_START + rows.length - 1 });
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // ── Độ rộng cột ─────────────────────────────────────────────────────────────
+  ws["!cols"] = [
+    { wch: 22 }, // Tên seller
+    { wch: 36 }, // Email
+    { wch: 22 }, // Mật khẩu
+    { wch: 36 }, // 2FA
+    { wch: 14 }, // Giá mua
+    { wch: 14 }, // Ngày mua
+    { wch: 14 }, // Hết hạn BH
+    { wch: 14 }, // Tiền hoàn
+  ];
+
+  // ── Chiều cao dòng header ─────────────────────────────────────────────────
+  ws["!rows"] = [{ hpt: 24 }, { hpt: 6 }]; // header + spacer
+
+  // ── Merge seller cells ───────────────────────────────────────────────────────
+  const merges: XLSX.Range[] = [];
+  for (const g of sellerGroups) {
+    if (g.end > g.start) {
+      merges.push({ s: { r: g.start, c: 0 }, e: { r: g.end, c: 0 } });
+    }
+  }
+  ws["!merges"] = merges;
+
+  // ── Styles ───────────────────────────────────────────────────────────────────
+  const GREEN  = "92D050";
+  const THIN   = (rgb = "AAAAAA") => ({ style: "thin" as const, color: { rgb } });
+  const BORDER = { top: THIN(), bottom: THIN(), left: THIN(), right: THIN() };
+
+  const totalCols = 8;
+  const totalRows = wsData.length;
+
+  for (let r = 0; r < totalRows; r++) {
+    for (let c = 0; c < totalCols; c++) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      if (!ws[addr]) ws[addr] = { t: "s", v: "" };
+      const cell = ws[addr];
+
+      if (r === 0) {
+        // Header: nền xanh lá, chữ đen đậm, căn giữa
+        cell.s = {
+          font:      { bold: true, sz: 11, color: { rgb: "000000" } },
+          fill:      { patternType: "solid", fgColor: { rgb: GREEN } },
+          alignment: { horizontal: "center", vertical: "center" },
+          border:    BORDER,
+        };
+      } else if (r === 1) {
+        // Dòng trống spacer
+        cell.s = { fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } } };
+      } else {
+        // Dòng dữ liệu: xen kẽ màu trắng / xám nhạt
+        const bg  = (r - DATA_START) % 2 === 0 ? "FFFFFF" : "F5F5F5";
+        const isNum = c === 4 || c === 7; // Giá mua, Tiền hoàn
+
+        cell.s = {
+          font:      { sz: 10 },
+          fill:      { patternType: "solid", fgColor: { rgb: bg } },
+          alignment: {
+            horizontal: isNum ? "right" : c === 0 ? "center" : "left",
+            vertical:   "center",
+            wrapText:   c === 0,
+          },
+          border: BORDER,
+          ...(isNum ? { numFmt: "#,##0" } : {}),
+        };
       }
     }
   }
 
-  res.json({ total: rows.length, rows });
-});
+  XLSX.utils.book_append_sheet(wb, ws, "Danh sách");
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
 
-// ── GET /bot/export-sheet/config ───────────────────────────────────────────────
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+// GET /bot/export-sheet/config
 router.get("/bot/export-sheet/config", requireAuth, (_req: any, res: any) => {
-  const cfg = readJson("export_sheet_config", { rules: [] });
-  res.json(cfg);
+  res.json(readJson("export_sheet_config", { rules: [] }));
 });
 
-// ── PUT /bot/export-sheet/config ───────────────────────────────────────────────
+// PUT /bot/export-sheet/config
 router.put("/bot/export-sheet/config", requireAuth, (req: any, res: any) => {
   const body = req.body ?? {};
-  if (!Array.isArray(body.rules)) {
-    return res.status(400).json({ error: "rules phải là mảng" });
-  }
+  if (!Array.isArray(body.rules)) return res.status(400).json({ error: "rules phải là mảng" });
   writeJson("export_sheet_config", { rules: body.rules });
   res.json({ ok: true });
 });
 
-// ── POST /bot/export-sheet/download ────────────────────────────────────────────
-router.post("/bot/export-sheet/download", requireAuth, (req: any, res: any) => {
-  const rule = req.body as {
-    name:         string;
-    sellers:      string[];
-    include:      string[];
-    exclude:      string[];
-    warranty_days: number;
-  };
+// POST /bot/export-sheet/preview
+router.post("/bot/export-sheet/preview", requireAuth, (req: any, res: any) => {
+  const rule = req.body ?? {};
+  const rows  = filterAndBuild(rule);
+  res.json({
+    total: rows.length,
+    rows: rows.map(r => ({
+      seller:    r.seller,
+      email:     r.email,
+      password:  r.password,
+      twofa:     r.twofa,
+      price:     r.adjPrice,
+      date:      fmtDate(r.purchaseDate),
+      expiry:    fmtDate(r.expiryDate),
+      remaining: r.remaining,
+      refund:    r.refund,
+    })),
+  });
+});
 
+// POST /bot/export-sheet/download
+router.post("/bot/export-sheet/download", requireAuth, (req: any, res: any) => {
+  const rule = req.body ?? {};
   if (!rule) return res.status(400).json({ error: "Thiếu thông tin rule" });
 
-  const allOrders: Record<string, any> = readJson("market_orders", {}) ?? {};
-
-  // ── Lọc đơn theo rule ──────────────────────────────────────────────────────
-  const matched = Object.values(allOrders).filter((o: any) => {
-    if (!sellerMatches(o.seller ?? "", rule.sellers ?? [])) return false;
-    if (!productMatches(o.product_name ?? "", rule.include ?? [], rule.exclude ?? [])) return false;
-    if (!withinWarranty(o, rule.warranty_days ?? 0)) return false;
-    return true;
-  });
-
-  if (!matched.length) {
+  const rows = filterAndBuild(rule);
+  if (!rows.length) {
     return res.status(200).json({ ok: false, message: "Không có đơn nào khớp với rule này." });
   }
 
-  // ── Xây dữ liệu rows ────────────────────────────────────────────────────────
-  const rows: (string | number)[][] = [];
+  const buf = buildXlsx(rows);
 
-  // Header
-  rows.push(["Email", "Mật khẩu", "2FA", "Ngày mua", "Giá mua (VNĐ)"]);
-
-  for (const order of matched) {
-    const accounts = parseContent(order.content ?? "");
-    const dateRaw  = order.completed_at || order.delivered_at
-                   || order.payment_at  || order.created_at_raw || order.created_at || "";
-    const date  = fmtDate(dateRaw);
-    const price = order.sell_price ?? order.price ?? "";
-    if (!accounts.length) {
-      rows.push(["", "", "", date, price]);
-    } else {
-      for (const { email, password, twofa } of accounts) {
-        rows.push([email, password, twofa, date, price]);
-      }
-    }
-  }
-
-  // ── Tạo workbook xlsx ────────────────────────────────────────────────────────
-  const wb  = XLSX.utils.book_new();
-  const ws  = XLSX.utils.aoa_to_sheet(rows);
-
-  // Style header (bold) — SheetJS Community edition hỗ trợ cơ bản
-  const headerRange = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
-  for (let c = headerRange.s.c; c <= headerRange.e.c; c++) {
-    const cell = ws[XLSX.utils.encode_cell({ r: 0, c })];
-    if (cell) {
-      cell.s = { font: { bold: true }, fill: { fgColor: { rgb: "4472C4" } } };
-    }
-  }
-
-  // Độ rộng cột tự động
-  ws["!cols"] = [
-    { wch: 36 }, // Email
-    { wch: 24 }, // Mật khẩu
-    { wch: 36 }, // 2FA
-    { wch: 14 }, // Ngày mua
-    { wch: 16 }, // Giá mua
-  ];
-
-  XLSX.utils.book_append_sheet(wb, ws, "Danh sách");
-
-  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-
-  // Tên file: <tên rule>_<ngày>.xlsx
   const today    = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const safeName = (rule.name || "export").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_");
   const filename = `${safeName}_${today}.xlsx`;
