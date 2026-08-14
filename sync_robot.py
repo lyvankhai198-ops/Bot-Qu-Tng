@@ -523,16 +523,43 @@ def parse_xlsx_to_rows(xlsx_path: str, known_products: list, existing_order_ids:
     return parsed_rows
 
 # ── Internal API caller ────────────────────────────────────────────────────────
+_jwt_cache = {"token": "", "expires_at": 0}
+
 def get_admin_token(config: dict) -> str:
-    return (
-        os.environ.get("ADMIN_API_TOKEN", "")
+    import time as _t
+    global _jwt_cache
+    if _jwt_cache["token"] and _jwt_cache["expires_at"] > _t.time() + 60:
+        return _jwt_cache["token"]
+    password = (
+        os.environ.get("ADMIN_PASSWORD", "")
+        or os.environ.get("SESSION_SECRET", "")
         or config.get("admin_token", "")
         or (load_json(DATA_DIR / "settings.json", {}) or {}).get("sessionSecret", "")
-        or os.environ.get("SESSION_SECRET", "")
     )
-
+    if not password:
+        logger.warning("[AUTH] Khong tim thay password de lay JWT")
+        return ""
+    api_base = os.environ.get("API_BASE_URL", "http://localhost:8081")
+    url = f"{api_base}/api/bot/auth"
+    try:
+        data = json.dumps({"password": password}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body_resp = json.loads(resp.read().decode("utf-8"))
+        token = body_resp.get("token", "")
+        if token:
+            _jwt_cache["token"] = token
+            _jwt_cache["expires_at"] = _t.time() + 7 * 3600
+            logger.info("[AUTH] Da lay JWT moi thanh cong")
+            return token
+        logger.error(f"[AUTH] Login khong tra ve token: {body_resp}")
+        return ""
+    except Exception as ex:
+        logger.error(f"[AUTH] Login that bai: {ex}")
+        return ""
 def call_api(method: str, path: str, body=None, token: str = "") -> dict:
-    api_base = os.environ.get("API_BASE_URL", "http://localhost:8080")
+    api_base = os.environ.get("API_BASE_URL", "http://localhost:8081")
     url = f"{api_base}/api{path}"
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
