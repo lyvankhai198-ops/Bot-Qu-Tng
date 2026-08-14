@@ -312,32 +312,52 @@ function buildXlsx(rows: RowData[]): Buffer {
 
 // ── Keyword extraction ────────────────────────────────────────────────────────
 
-/** Danh sách prefix không có ý nghĩa, bỏ qua khi extract keyword */
+/** Prefix vô nghĩa ở đầu tên sản phẩm */
 const SKIP_PREFIX_RE = /^(cdk|api|admin|slot|code|mã|key|tk|redeem|add|hot|vip|best seller|best|top)\s+/i;
 
 /**
+ * Token bảo hành / mô tả tài khoản — loại bỏ hoàn toàn khi extract keyword.
+ * Ví dụ: "ChatGPT Plus 30D BHF acc cấp Apple Pay Gmail" → token sạch = ["chatgpt","plus"]
+ *
+ * Bao gồm:
+ *   - bhf, bh, bv, bvh                  (bảo hành)
+ *   - \d+d, \d+day, \d+days             (30D, 30day)
+ *   - \d+m                              (1m, 3m = 1 tháng, 3 tháng)
+ *   - \d+ngay, \d+thang                 (30ngay)
+ *   - acc, cấp, cap, slot, ngày, ngan   (loại tài khoản)
+ *   - apple, pay, gmail, icloud, phone  (chi tiết phụ)
+ *   - via                               (via gmail...)
+ */
+const NOISE_TOKEN_RE = /^(bhf|bvh?|bh|via|acc|c[aấ]p|slot|ngày|ngay|ngan|thang|apple|pay|gmail|icloud|phone|\d+(m|d|day|days|ngay|thang))$/i;
+
+/**
  * Extract keyword ngắn gọn từ tên sản phẩm để dùng trong rule include.
- * Ví dụ: "ChatGPT Plus Apple Pay BHF acc cấp 30DAY Gmail" → "chatgpt plus"
+ * "ChatGPT 1m Acc cấp BHF"         → "chatgpt plus" (nếu có Plus ở các đơn khác)
+ * "ChatGPT Plus Apple Pay BHF 30D" → "chatgpt plus"
+ * "CHATGPT PLUS 30D BHF"           → "chatgpt plus"
+ * "Grok supper 30D BHF"            → "grok supper"
  */
 function extractKeyword(productName: string): string {
   let s = productName
-    // Xoá emoji và ký tự đặc biệt (giữ lại chữ Latin + tiếng Việt)
     .replace(/[^\w\s\u00C0-\u024F\u1E00-\u1EFF]/g, " ")
-    // Xoá nội dung trong ngoặc
     .replace(/\[.*?\]/g, " ").replace(/\(.*?\)/g, " ")
     .replace(/\s+/g, " ").trim();
 
-  // Bỏ các prefix vô nghĩa (lặp tối đa 3 lần)
+  // Bỏ prefix vô nghĩa ở đầu (lặp tối đa 3 lần)
   for (let i = 0; i < 3; i++) {
     const before = s;
     s = s.replace(SKIP_PREFIX_RE, "").trim();
     if (s === before) break;
   }
 
-  // Lấy 2 từ đầu có ý nghĩa (≥ 2 ký tự, không phải số thuần)
+  // Lọc từng token — bỏ noise, giữ lại từ có ý nghĩa (≥ 2 ký tự, không phải số thuần)
   const words = s.toLowerCase()
     .split(/\s+/)
-    .filter(w => w.length >= 2 && !/^\d+$/.test(w));
+    .filter(w =>
+      w.length >= 2 &&
+      !/^\d+$/.test(w) &&
+      !NOISE_TOKEN_RE.test(w)
+    );
 
   return words.slice(0, 2).join(" ").trim() || productName.slice(0, 20).toLowerCase();
 }
