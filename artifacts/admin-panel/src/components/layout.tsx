@@ -7,7 +7,7 @@ import { useLocation, Link } from "wouter"
 import {
   LayoutDashboard, Users, Package, ShoppingCart, Store, Truck,
   ShieldCheck, Search, Calculator, WalletCards, RefreshCw,
-  TableProperties, Activity, Send, FileText, CalendarCheck,
+  Activity, Send, FileText, CalendarCheck,
   Gift, PackageOpen, Target, Settings as SettingsIcon, ArrowLeftRight,
   LogOut, Bot, Menu, X, ChevronDown, ChevronRight,
   PanelLeftClose, PanelLeftOpen,
@@ -66,7 +66,6 @@ const NAV_GROUPS: NavGroup[] = [
     key: "dong-bo", label: "ĐỒNG BỘ",
     items: [
       { href: "/sync-robot",  label: "Robot đồng bộ",        icon: RefreshCw, badgeKey: "syncRobot" },
-      { href: "/sheets-sync", label: "Đồng bộ Google Sheets", icon: TableProperties },
       { href: "/logs",        label: "Lịch sử hệ thống",     icon: Activity },
     ],
   },

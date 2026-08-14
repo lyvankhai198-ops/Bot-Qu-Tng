@@ -25,7 +25,6 @@ import SecretCodes from "@/pages/secret-codes";
 import Delivery from "@/pages/delivery";
 import RefundCalc from "@/pages/refund-calc";
 import MarketOrders from "@/pages/market-orders";
-import SheetsSync from "@/pages/sheets-sync";
 import WarrantyScan from "@/pages/warranty-scan";
 import ReturnQueue from "@/pages/return-queue";
 import NotFound from "@/pages/not-found";
@@ -90,7 +89,6 @@ function Router() {
       <Route path="/delivery"><ProtectedRoute component={Delivery} /></Route>
       <Route path="/refund-calc"><ProtectedRoute component={RefundCalc} /></Route>
       <Route path="/market-orders"><ProtectedRoute component={MarketOrders} /></Route>
-      <Route path="/sheets-sync"><ProtectedRoute component={SheetsSync} /></Route>
       <Route path="/warranty-scan"><ProtectedRoute component={WarrantyScan} /></Route>
       <Route path="/return-queue"><ProtectedRoute component={ReturnQueue} /></Route>
       <Route component={NotFound} />
