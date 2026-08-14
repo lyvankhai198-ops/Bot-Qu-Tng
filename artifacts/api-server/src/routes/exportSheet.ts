@@ -58,43 +58,66 @@ function withinWarranty(order: any, warrantyDays: number): boolean {
   return elapsedDays <= warrantyDays;
 }
 
-/** Parse content string → { email, password, twofa } */
-function parseContent(content: string): { email: string; password: string; twofa: string } {
+/**
+ * Parse content string → mảng các account { email, password, twofa }
+ *
+ * Format thực tế từ bot Telegram:
+ *   email / password | Verify: 2FA_CODE | Giao: timestamp
+ * Nhiều account cách nhau bằng \n
+ *
+ * Fallback: email|pass|2fa hoặc email:pass:2fa
+ */
+function parseContent(content: string): { email: string; password: string; twofa: string }[] {
   const s = (content ?? "").trim();
-  if (!s) return { email: "", password: "", twofa: "" };
+  if (!s) return [];
 
-  // Thử pipe: email|pass|2fa
-  let parts = s.split("|").map(p => p.trim());
-  if (parts.length >= 2 && parts[0].includes("@")) {
-    return { email: parts[0] ?? "", password: parts[1] ?? "", twofa: parts[2] ?? "" };
-  }
-  // Thử dấu xuống dòng
-  parts = s.split(/\r?\n/).map(p => p.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    // Mỗi dòng có thể là "key: value" hoặc "value"
-    const map: Record<string, string> = {};
-    const plain: string[] = [];
-    for (const line of parts) {
-      const m = line.match(/^([^:]+):\s*(.+)$/);
-      if (m) map[m[1].toLowerCase().trim()] = m[2].trim();
-      else    plain.push(line);
+  // Chuẩn thực tế: mỗi dòng là "email / pass | Verify: 2FA | Giao: time"
+  const lines = s.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  const results: { email: string; password: string; twofa: string }[] = [];
+
+  for (const line of lines) {
+    // Tách theo " | "
+    const segments = line.split(" | ").map(p => p.trim());
+
+    // Segment 0: "email / password"
+    const accountSeg = segments[0] ?? "";
+    const slashIdx   = accountSeg.lastIndexOf(" / ");
+    let email = "", password = "";
+    if (slashIdx !== -1) {
+      email    = accountSeg.slice(0, slashIdx).trim();
+      password = accountSeg.slice(slashIdx + 3).trim();
+    } else {
+      email = accountSeg;
     }
-    const email    = map["email"]    || map["mail"]     || plain[0] || "";
-    const password = map["password"] || map["pass"]     || map["mật khẩu"] || plain[1] || "";
-    const twofa    = map["2fa"]      || map["totp"]     || map["secret"]   || plain[2] || "";
-    if (email) return { email, password, twofa };
+
+    // Segment 1+: tìm "Verify: XXX"
+    let twofa = "";
+    for (let i = 1; i < segments.length; i++) {
+      if (segments[i].startsWith("Verify: ")) {
+        twofa = segments[i].slice(8).trim();
+        break;
+      }
+    }
+
+    if (email) results.push({ email, password, twofa });
   }
-  // Thử colon: email:pass:2fa
-  parts = s.split(":").map(p => p.trim());
-  if (parts.length >= 2) {
-    return { email: parts[0] ?? "", password: parts[1] ?? "", twofa: parts[2] ?? "" };
+
+  if (results.length) return results;
+
+  // Fallback: pipe-separated email|pass|2fa (1 account)
+  const pipe = s.split("|").map(p => p.trim());
+  if (pipe.length >= 2 && pipe[0].includes("@")) {
+    return [{ email: pipe[0], password: pipe[1] ?? "", twofa: pipe[2] ?? "" }];
   }
-  // Thử khoảng trắng
-  parts = s.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return { email: parts[0] ?? "", password: parts[1] ?? "", twofa: parts[2] ?? "" };
+
+  // Fallback: colon-separated
+  const colon = s.split(":").map(p => p.trim());
+  if (colon.length >= 2) {
+    return [{ email: colon[0], password: colon[1] ?? "", twofa: colon[2] ?? "" }];
   }
-  return { email: s, password: "", twofa: "" };
+
+  return [{ email: s, password: "", twofa: "" }];
 }
 
 /** Format ngày từ ISO string → dd/mm/yyyy */
@@ -125,20 +148,23 @@ router.post("/bot/export-sheet/preview", requireAuth, (req: any, res: any) => {
     return true;
   });
 
-  const rows = matched.map((o: any) => {
-    const { email, password, twofa } = parseContent(o.content ?? "");
-    const dateRaw = o.completed_at || o.delivered_at || o.payment_at
-                  || o.created_at_raw || o.created_at || "";
-    return {
-      email,
-      password,
-      twofa,
-      date:    fmtDate(dateRaw),
-      price:   o.sell_price ?? o.price ?? "",
-      seller:  o.seller ?? "",
-      product: o.product_name ?? "",
-    };
-  });
+  const rows: any[] = [];
+  for (const o of matched) {
+    const accounts = parseContent(o.content ?? "");
+    const dateRaw  = o.completed_at || o.delivered_at || o.payment_at
+                   || o.created_at_raw || o.created_at || "";
+    const date     = fmtDate(dateRaw);
+    const price    = o.sell_price ?? o.price ?? "";
+    const seller   = o.seller ?? "";
+    const product  = o.product_name ?? "";
+    if (!accounts.length) {
+      rows.push({ email: "", password: "", twofa: "", date, price, seller, product });
+    } else {
+      for (const acc of accounts) {
+        rows.push({ ...acc, date, price, seller, product });
+      }
+    }
+  }
 
   res.json({ total: rows.length, rows });
 });
@@ -192,11 +218,18 @@ router.post("/bot/export-sheet/download", requireAuth, (req: any, res: any) => {
   rows.push(["Email", "Mật khẩu", "2FA", "Ngày mua", "Giá mua (VNĐ)"]);
 
   for (const order of matched) {
-    const { email, password, twofa } = parseContent(order.content ?? "");
-    const dateRaw = order.completed_at || order.delivered_at
-                  || order.payment_at  || order.created_at_raw || order.created_at || "";
+    const accounts = parseContent(order.content ?? "");
+    const dateRaw  = order.completed_at || order.delivered_at
+                   || order.payment_at  || order.created_at_raw || order.created_at || "";
+    const date  = fmtDate(dateRaw);
     const price = order.sell_price ?? order.price ?? "";
-    rows.push([email, password, twofa, fmtDate(dateRaw), price]);
+    if (!accounts.length) {
+      rows.push(["", "", "", date, price]);
+    } else {
+      for (const { email, password, twofa } of accounts) {
+        rows.push([email, password, twofa, date, price]);
+      }
+    }
   }
 
   // ── Tạo workbook xlsx ────────────────────────────────────────────────────────
