@@ -338,11 +338,14 @@ export default function ExportSheet() {
                       <th className="px-2 py-2 text-center font-semibold">Đơn</th>
                       <th className="px-2 py-2 text-right font-semibold">Giá</th>
                       <th className="px-2 py-2 text-center font-semibold">Còn BH</th>
-                      <th className="px-2 py-2 text-center font-semibold">Rule</th>
+                      <th className="px-2 py-2 text-center font-semibold">Xem</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredSuggestions.map((s, i) => (
+                    {filteredSuggestions.map((s, i) => {
+                      const tempId = `sugg-${s.seller}-${s.keyword}`
+                      const isPrev = loadingPreview === tempId
+                      return (
                       <tr
                         key={`${s.seller}|||${s.keyword}`}
                         className={i % 2 === 0 ? "bg-background" : "bg-muted/20"}
@@ -380,14 +383,29 @@ export default function ExportSheet() {
                           <Button
                             size="sm"
                             variant="outline"
-                            className="h-6 text-[11px] px-2 gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                            onClick={() => createFromSuggestion(s)}
+                            className="h-6 text-[11px] px-2 gap-1 border-blue-300 text-blue-700 hover:bg-blue-50"
+                            disabled={isPrev}
+                            onClick={() => {
+                              const tempRule: ExportRule = {
+                                id:            tempId,
+                                name:          `${s.seller.replace(/^@/, "")} – ${s.keyword}`,
+                                sellers:       [s.seller],
+                                include:       [s.keyword],
+                                exclude:       [],
+                                warranty_days: s.warranty || 30,
+                              }
+                              handlePreview(tempRule)
+                            }}
                           >
-                            <Plus className="h-3 w-3" /> Tạo rule
+                            {isPrev
+                              ? <Loader2 className="h-3 w-3 animate-spin" />
+                              : <Eye     className="h-3 w-3" />}
+                            Xem trước
                           </Button>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               )}
