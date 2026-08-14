@@ -16,7 +16,7 @@ import {
 import {
   Save, Loader2, Plus, Trash2, RefreshCw,
   TableProperties, Wifi, WifiOff, BookOpen, CheckCircle2, Upload,
-  ChevronRight, ChevronDown, ShieldCheck, ShieldX,
+  ChevronRight, ChevronDown, ShieldCheck, ShieldX, User,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -35,10 +35,12 @@ async function apiFetch(method: string, path: string, body?: unknown): Promise<a
 }
 
 interface TabRule {
-  tab:           string
-  include:       string[]
-  exclude:       string[]
-  warranty_days: number   // 0 = không lọc BH; >0 = chỉ đẩy đơn còn trong N ngày
+  tab:                string
+  sellers:            string[]   // danh sách tên người bán, rỗng = tất cả
+  include:            string[]   // từ khóa tên sản phẩm (bao gồm)
+  exclude:            string[]   // từ khóa tên sản phẩm (loại trừ)
+  warranty_days:      number     // tổng số ngày bảo hành (0 = không lọc)
+  min_remaining_days: number     // phải còn ít nhất X ngày BH (0 = chỉ cần chưa hết hạn)
 }
 
 interface SheetsConfig {
@@ -194,7 +196,7 @@ export default function SheetsSync() {
 
   // Rule CRUD
   function addRule() {
-    const blank: TabRule = { tab: "", include: [], exclude: [], warranty_days: 0 }
+    const blank: TabRule = { tab: "", sellers: [], include: [], exclude: [], warranty_days: 0, min_remaining_days: 0 }
     setCfg(c => ({ ...c, tab_rules: [...(c.tab_rules || []), blank] }))
     const newIdx = (cfg.tab_rules?.length || 0)
     setOpenRules(o => ({ ...o, [newIdx]: true }))
@@ -353,10 +355,17 @@ export default function SheetsSync() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                      <Badge variant="outline" className="text-xs gap-1 text-green-700 border-green-300">
-                        <ShieldCheck className="h-3 w-3" />{rule.include.length}
-                      </Badge>
-                      {rule.exclude.length > 0 && (
+                      {(rule.sellers?.length ?? 0) > 0 && (
+                        <Badge variant="outline" className="text-xs gap-1 text-blue-700 border-blue-300">
+                          <User className="h-3 w-3" />{rule.sellers.length}
+                        </Badge>
+                      )}
+                      {(rule.include?.length ?? 0) > 0 && (
+                        <Badge variant="outline" className="text-xs gap-1 text-green-700 border-green-300">
+                          <ShieldCheck className="h-3 w-3" />{rule.include.length}
+                        </Badge>
+                      )}
+                      {(rule.exclude?.length ?? 0) > 0 && (
                         <Badge variant="outline" className="text-xs gap-1 text-destructive border-destructive/30">
                           <ShieldX className="h-3 w-3" />{rule.exclude.length}
                         </Badge>
@@ -384,61 +393,92 @@ export default function SheetsSync() {
                         />
                       </div>
 
+                      {/* Người bán */}
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium flex items-center gap-1">
+                          <User className="h-3.5 w-3.5 text-blue-600" />
+                          <span className="text-blue-700">Người bán</span>
+                          <span className="text-muted-foreground font-normal ml-1">— mỗi username một dòng, để trống = tất cả</span>
+                        </Label>
+                        <Textarea
+                          value={(rule.sellers ?? []).join("\n")}
+                          onChange={e => updateRule(idx, { ...rule, sellers: parseKws(e.target.value.replace(/,/g, "\n")) })}
+                          onBlur={e => updateRule(idx, { ...rule, sellers: parseKws(e.target.value) })}
+                          placeholder={"@lemonlove24\n@shop_abc"}
+                          className="text-sm font-mono min-h-[60px] resize-y"
+                          rows={2}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Không phân biệt hoa thường, @ ở đầu là tùy chọn.
+                        </p>
+                      </div>
+
+                      {/* Bao gồm */}
                       <div className="space-y-1.5">
                         <Label className="text-xs font-medium flex items-center gap-1">
                           <ShieldCheck className="h-3.5 w-3.5 text-green-600" />
-                          <span className="text-green-700">Bao gồm</span>
+                          <span className="text-green-700">Tên sản phẩm — Bao gồm</span>
                           <span className="text-muted-foreground font-normal ml-1">— một từ khóa mỗi dòng</span>
                         </Label>
                         <Textarea
-                          value={rule.include.join("\n")}
+                          value={(rule.include ?? []).join("\n")}
                           onChange={e => updateRule(idx, { ...rule, include: parseKws(e.target.value.replace(/,/g, "\n")) })}
                           onBlur={e => updateRule(idx, { ...rule, include: parseKws(e.target.value) })}
                           placeholder={"chatgpt\nchat gpt\ngpt plus"}
-                          className="text-sm font-mono min-h-[80px] resize-y"
-                          rows={4}
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-medium flex items-center gap-1">
-                          <ShieldX className="h-3.5 w-3.5 text-destructive" />
-                          <span className="text-destructive">Loại trừ</span>
-                          <span className="text-muted-foreground font-normal ml-1">— tên có từ này sẽ bị bỏ qua</span>
-                        </Label>
-                        <Textarea
-                          value={rule.exclude.join("\n")}
-                          onChange={e => updateRule(idx, { ...rule, exclude: parseKws(e.target.value.replace(/,/g, "\n")) })}
-                          onBlur={e => updateRule(idx, { ...rule, exclude: parseKws(e.target.value) })}
-                          placeholder={"api\ntoken\ncredit"}
                           className="text-sm font-mono min-h-[60px] resize-y"
                           rows={3}
                         />
                       </div>
 
-                      <div className="space-y-1.5 pt-1 border-t">
+                      {/* Loại trừ */}
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium flex items-center gap-1">
+                          <ShieldX className="h-3.5 w-3.5 text-destructive" />
+                          <span className="text-destructive">Tên sản phẩm — Loại trừ</span>
+                          <span className="text-muted-foreground font-normal ml-1">— tên có từ này sẽ bị bỏ qua</span>
+                        </Label>
+                        <Textarea
+                          value={(rule.exclude ?? []).join("\n")}
+                          onChange={e => updateRule(idx, { ...rule, exclude: parseKws(e.target.value.replace(/,/g, "\n")) })}
+                          onBlur={e => updateRule(idx, { ...rule, exclude: parseKws(e.target.value) })}
+                          placeholder={"api\ntoken\ncredit"}
+                          className="text-sm font-mono min-h-[50px] resize-y"
+                          rows={2}
+                        />
+                      </div>
+
+                      {/* Bảo hành */}
+                      <div className="space-y-2 pt-1 border-t">
                         <Label className="text-xs font-medium flex items-center gap-1.5">
                           <span>⏳</span>
-                          <span>Thời hạn bảo hành (ngày)</span>
+                          <span>Lọc theo bảo hành</span>
                         </Label>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="number"
-                            min={0}
-                            value={rule.warranty_days ?? 0}
-                            onChange={e => updateRule(idx, { ...rule, warranty_days: Math.max(0, parseInt(e.target.value) || 0) })}
-                            className="text-sm w-28"
-                            placeholder="0"
-                          />
-                          <span className="text-xs text-muted-foreground">
-                            {(rule.warranty_days ?? 0) > 0
-                              ? `Chỉ đẩy đơn trong vòng ${rule.warranty_days} ngày kể từ ngày hoàn tất`
-                              : "0 = không lọc, đẩy tất cả"}
-                          </span>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Tổng ngày BH</Label>
+                            <Input
+                              type="number" min={0}
+                              value={rule.warranty_days ?? 0}
+                              onChange={e => updateRule(idx, { ...rule, warranty_days: Math.max(0, parseInt(e.target.value) || 0) })}
+                              className="text-sm h-8"
+                              placeholder="0"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Còn ít nhất (ngày)</Label>
+                            <Input
+                              type="number" min={0}
+                              value={rule.min_remaining_days ?? 0}
+                              onChange={e => updateRule(idx, { ...rule, min_remaining_days: Math.max(0, parseInt(e.target.value) || 0) })}
+                              className="text-sm h-8"
+                              placeholder="0"
+                            />
+                          </div>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Khi đẩy, đơn đã hết bảo hành (hoàn tất &gt; N ngày trước) sẽ bị bỏ qua.
-                          Khớp theo <strong>Người bán + Tên sản phẩm</strong> kết hợp.
+                          {(rule.warranty_days ?? 0) > 0
+                            ? `Đẩy đơn mua ≤ ${(rule.warranty_days ?? 0) - (rule.min_remaining_days ?? 0)} ngày trước (BH ${rule.warranty_days}d, còn > ${rule.min_remaining_days ?? 0}d)`
+                            : "0 = không lọc BH, đẩy tất cả đơn khớp"}
                         </p>
                       </div>
                     </div>

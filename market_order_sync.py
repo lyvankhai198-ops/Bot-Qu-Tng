@@ -570,85 +570,144 @@ def _resolve_tab(product_name: str, config: dict, default_tab: str, seller: str 
     return _resolve_tab_full(product_name, config, default_tab, seller=seller)[0]
 
 
+def _check_warranty_filter(order: dict, warranty_days: int, min_remaining_days: int) -> bool:
+    """
+    Kiểm tra đơn có đủ điều kiện bảo hành để đẩy sheet không.
+
+    warranty_days = 0        → không lọc, trả True
+    warranty_days > 0:
+      - Tính elapsed = số ngày từ ngày mua đến hôm nay
+      - remaining = warranty_days - elapsed
+      - Trả True nếu remaining > min_remaining_days
+      - Nếu không xác định được ngày → giữ lại (trả True)
+    """
+    if warranty_days <= 0:
+        return True
+    raw_date = (
+        order.get("completed_at") or
+        order.get("delivered_at") or
+        order.get("payment_at")   or
+        order.get("created_at_raw")
+    )
+    order_date = _parse_completed_date(raw_date)
+    if order_date is None:
+        return True   # Không rõ ngày → giữ lại
+    from datetime import date as _date
+    elapsed   = (_date.today() - order_date).days
+    remaining = warranty_days - elapsed
+    return remaining > min_remaining_days
+
+
+def _seller_matches(order_seller: str, rule_sellers: list) -> bool:
+    """
+    Kiểm tra người bán của đơn có khớp danh sách sellers trong rule không.
+    - rule_sellers rỗng → khớp tất cả (không lọc người bán)
+    - So sánh không phân biệt hoa thường, bỏ qua ký tự @ ở đầu
+    """
+    if not rule_sellers:
+        return True
+    order_norm = order_seller.lower().strip().lstrip("@")
+    for rs in rule_sellers:
+        rs_norm = rs.lower().strip().lstrip("@")
+        if not rs_norm:
+            continue
+        if order_norm == rs_norm or rs_norm in order_norm or order_norm in rs_norm:
+            return True
+    return False
+
+
 def _resolve_tab_full(product_name: str, config: dict, default_tab: str,
                       seller: str = "") -> tuple:
     """
     Tìm tab phù hợp cho đơn hàng theo config.
-    Returns: (tab_name: str, warranty_days: int)
+    Returns: (tab_name: str, warranty_days: int, min_remaining_days: int)
 
-    Chuỗi tìm kiếm = "{seller} {product_name}" (ghép lại) — từ khóa sẽ khớp
-    cả khi nằm trong tên người bán lẫn tên sản phẩm.
-
-    Chế độ mới — tab_rules (include + exclude + warranty_days):
-      1. Chuẩn hóa chuỗi ghép
-      2. Với từng rule:
-         - Nếu chuỗi chứa bất kỳ từ khóa Loại trừ → bỏ qua
-         - Đếm số từ khóa Bao gồm xuất hiện trong chuỗi
-         - Cần ≥1 include khớp
+    Chế độ mới — tab_rules (sellers + include + exclude + warranty):
+      1. Lọc người bán: nếu rule có danh sách sellers, đơn phải khớp ít nhất 1
+      2. Lọc tên sản phẩm: đếm include keywords khớp trong product_name
+         (exclude → bỏ qua rule nếu khớp)
       3. Chọn rule có nhiều include khớp nhất (cụ thể hơn thắng)
-      4. Trả kèm warranty_days của rule thắng (0 nếu không cấu hình)
 
-    Fallback — tab_mappings cũ (không có warranty_days):
-      - Dùng khi không có tab_rules
+    Fallback — tab_mappings cũ: dùng khi không có tab_rules
     """
-    # Ghép seller + product_name để tìm khớp
-    combined     = f"{seller} {product_name}".strip()
-    name_norm    = _normalize_name(combined)
-    name_nospace = name_norm.replace(' ', '')      # "chat gpt" ≈ "chatgpt"
+    # Chuẩn hóa chỉ tên sản phẩm (seller dùng riêng qua _seller_matches)
+    name_norm    = _normalize_name(product_name)
+    name_nospace = name_norm.replace(" ", "")      # "chat gpt" ≈ "chatgpt"
 
     # ── Chế độ mới: tab_rules ─────────────────────────────────────────────────
     tab_rules: list = config.get("tab_rules") or []
     if tab_rules:
-        best_tab      = None
-        best_score    = 0
-        best_wdays    = 0
+        best_tab    = None
+        best_score  = 0
+        best_wdays  = 0
+        best_minrem = 0
 
         for rule in tab_rules:
             tab      = (rule.get("tab") or "").strip()
             includes = [k.lower().strip() for k in (rule.get("include") or []) if k.strip()]
             excludes = [k.lower().strip() for k in (rule.get("exclude") or []) if k.strip()]
+            sellers  = [s.strip() for s in (rule.get("sellers") or []) if s.strip()]
 
-            if not tab or not includes:
+            if not tab:
                 continue
 
-            # Bất kỳ exclude keyword nào khớp → bỏ qua ngay
-            if any(kw in name_norm or kw in name_nospace for kw in excludes):
+            # ── Lọc người bán ─────────────────────────────────────────────────
+            if not _seller_matches(seller, sellers):
                 continue
 
-            # Đếm include keyword khớp (so sánh cả có/không dấu cách)
-            matched = sum(
-                1 for kw in includes
-                if kw in name_norm or kw in name_nospace
-            )
-            if matched > 0 and matched > best_score:
-                best_score = matched
-                best_tab   = tab
+            # ── Lọc tên sản phẩm ──────────────────────────────────────────────
+            # Nếu không có include keyword → chỉ lọc seller (khớp tất cả SP)
+            if includes:
+                # Bất kỳ exclude keyword nào khớp → bỏ qua rule
+                if any(kw in name_norm or kw in name_nospace for kw in excludes):
+                    continue
+
+                matched = sum(
+                    1 for kw in includes
+                    if kw in name_norm or kw in name_nospace
+                )
+                if matched == 0:
+                    continue   # Không có include keyword nào khớp
+            else:
+                # Không có include → sellers đã khớp, coi score = 1
+                matched = 1
+                # Nhưng vẫn kiểm tra exclude
+                if any(kw in name_norm or kw in name_nospace for kw in excludes):
+                    continue
+
+            if matched > best_score:
+                best_score  = matched
+                best_tab    = tab
                 try:
                     best_wdays = int(rule.get("warranty_days") or 0)
                 except (TypeError, ValueError):
                     best_wdays = 0
+                try:
+                    best_minrem = int(rule.get("min_remaining_days") or 0)
+                except (TypeError, ValueError):
+                    best_minrem = 0
 
         tab_out = best_tab if best_tab else default_tab
-        wdays   = best_wdays if best_tab else 0
-        return (tab_out, wdays)
+        if not best_tab:
+            return (tab_out, 0, 0)
+        return (tab_out, best_wdays, best_minrem)
 
     # ── Fallback: tab_mappings cũ ─────────────────────────────────────────────
     tab_mappings: dict = config.get("tab_mappings") or {}
     if not tab_mappings:
-        return (default_tab, 0)
+        return (default_tab, 0, 0)
 
     best_tab   = None
     best_score = 0
     for keyword, tab in tab_mappings.items():
-        # Tách CamelCase: "ChatGPT" → ["chat","gpt"]
-        spaced = _re.sub(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ', keyword)
+        spaced = _re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", keyword)
         words  = [w.lower() for w in spaced.split() if len(w) > 1]
         matched = sum(1 for w in words if w in name_norm or w in name_nospace)
         if matched >= 1 and matched > best_score:
             best_score = matched
             best_tab   = tab.strip()
 
-    return (best_tab if best_tab else default_tab, 0)
+    return (best_tab if best_tab else default_tab, 0, 0)
 
 
 def _parse_completed_date(val):
@@ -675,26 +734,6 @@ def _parse_completed_date(val):
     return None
 
 
-def _is_within_warranty(order: dict, warranty_days: int) -> bool:
-    """
-    Kiểm tra đơn còn trong thời hạn bảo hành.
-    Nếu warranty_days <= 0 → không lọc (trả True).
-    Nếu không xác định được ngày → trả True (giữ lại đơn).
-    """
-    if warranty_days <= 0:
-        return True
-    raw_date = (
-        order.get("completed_at") or
-        order.get("delivered_at") or
-        order.get("payment_at")   or
-        order.get("created_at_raw")
-    )
-    order_date = _parse_completed_date(raw_date)
-    if order_date is None:
-        return True   # Không rõ ngày → giữ lại
-    from datetime import date as _date
-    elapsed = (_date.today() - order_date).days
-    return elapsed <= warranty_days
 
 
 def _parse_amount(val) -> float:
@@ -856,15 +895,15 @@ def _sync_to_sheets(new_orders: list, force: bool = False) -> dict:
         if not order_id:
             continue
 
-        product_name = order.get("product_name", "")
-        seller       = order.get("seller", "")
-        tab, wdays   = _resolve_tab_full(product_name, config, default_tab, seller=seller)
+        product_name        = order.get("product_name", "")
+        seller              = order.get("seller", "")
+        tab, wdays, minrem  = _resolve_tab_full(product_name, config, default_tab, seller=seller)
 
-        # ── Lọc đơn hết bảo hành ──────────────────────────────────────────────
-        if not _is_within_warranty(order, wdays):
+        # ── Lọc đơn không đủ điều kiện bảo hành ──────────────────────────────
+        if not _check_warranty_filter(order, wdays, minrem):
             logger.debug(
-                f"[MARKET-SHEETS] Bỏ qua {order_id}: hết bảo hành "
-                f"(warranty_days={wdays}, tab={tab!r})"
+                f"[MARKET-SHEETS] Bỏ qua {order_id}: không đủ BH "
+                f"(warranty={wdays}d, min_remaining={minrem}d, tab={tab!r})"
             )
             skipped_dup += 1
             continue
@@ -967,7 +1006,14 @@ def _sync_to_sheets(new_orders: list, force: bool = False) -> dict:
                 order_ids_ok.append(order_id)
 
             # Ghi batch — insert tại row 3 → đơn mới nhất luôn ngay dưới header
+            # Fix: Google Sheets từ chối insert khi grid chỉ có 2 dòng (title+header)
+            # → resize trước để có ít nhất MARKET_DATA_START_ROW dòng
             if rows_to_insert:
+                try:
+                    if ws.row_count < MARKET_DATA_START_ROW:
+                        ws.resize(MARKET_DATA_START_ROW)
+                except Exception as _re_err:
+                    logger.debug(f"[MARKET-SHEETS] resize skip: {_re_err}")
                 ws.insert_rows(rows_to_insert, row=MARKET_DATA_START_ROW,
                                value_input_option="USER_ENTERED")
                 for order_id in order_ids_ok:
@@ -1192,7 +1238,7 @@ def push_all_to_sheets(filter_tab: str | None = None, force: bool = False) -> di
 
     all_orders = list(orders_dict.values())
 
-    # Lọc theo tab nếu được chỉ định (dùng seller + product_name)
+    # Lọc theo tab nếu được chỉ định
     if filter_tab and filter_tab != "all":
         all_orders = [
             o for o in all_orders
