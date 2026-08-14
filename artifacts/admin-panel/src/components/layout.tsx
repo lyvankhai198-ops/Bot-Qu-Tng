@@ -10,7 +10,7 @@ import {
   Activity, Send, FileText, CalendarCheck,
   Gift, PackageOpen, Target, Settings as SettingsIcon, ArrowLeftRight,
   LogOut, Bot, Menu, X, ChevronDown, ChevronRight,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, FileSpreadsheet,
 } from "lucide-react"
 import { Button } from "./ui/button"
 import {
@@ -65,7 +65,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     key: "dong-bo", label: "ĐỒNG BỘ",
     items: [
-      { href: "/sync-robot",  label: "Robot đồng bộ",        icon: RefreshCw, badgeKey: "syncRobot" },
+      { href: "/sync-robot",   label: "Robot đồng bộ",        icon: RefreshCw, badgeKey: "syncRobot" },
+      { href: "/export-sheet", label: "Xuất Sheet đơn chợ",   icon: FileSpreadsheet },
       { href: "/logs",        label: "Lịch sử hệ thống",     icon: Activity },
     ],
   },

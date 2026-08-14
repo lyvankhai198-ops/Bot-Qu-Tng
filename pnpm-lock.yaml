@@ -414,6 +414,9 @@ importers:
       playwright:
         specifier: ^1.61.1
         version: 1.61.1
+      xlsx:
+        specifier: ^0.18.5
+        version: 0.18.5
     devDependencies:
       '@types/bcryptjs':
         specifier: ^2.4.6
