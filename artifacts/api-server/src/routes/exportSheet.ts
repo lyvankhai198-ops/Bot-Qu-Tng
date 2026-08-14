@@ -310,7 +310,75 @@ function buildXlsx(rows: RowData[]): Buffer {
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
+// ── Keyword extraction ────────────────────────────────────────────────────────
+
+/** Danh sách prefix không có ý nghĩa, bỏ qua khi extract keyword */
+const SKIP_PREFIX_RE = /^(cdk|api|admin|slot|code|mã|key|tk|redeem|add|hot|vip|best seller|best|top)\s+/i;
+
+/**
+ * Extract keyword ngắn gọn từ tên sản phẩm để dùng trong rule include.
+ * Ví dụ: "ChatGPT Plus Apple Pay BHF acc cấp 30DAY Gmail" → "chatgpt plus"
+ */
+function extractKeyword(productName: string): string {
+  let s = productName
+    // Xoá emoji và ký tự đặc biệt (giữ lại chữ Latin + tiếng Việt)
+    .replace(/[^\w\s\u00C0-\u024F\u1E00-\u1EFF]/g, " ")
+    // Xoá nội dung trong ngoặc
+    .replace(/\[.*?\]/g, " ").replace(/\(.*?\)/g, " ")
+    .replace(/\s+/g, " ").trim();
+
+  // Bỏ các prefix vô nghĩa (lặp tối đa 3 lần)
+  for (let i = 0; i < 3; i++) {
+    const before = s;
+    s = s.replace(SKIP_PREFIX_RE, "").trim();
+    if (s === before) break;
+  }
+
+  // Lấy 2 từ đầu có ý nghĩa (≥ 2 ký tự, không phải số thuần)
+  const words = s.toLowerCase()
+    .split(/\s+/)
+    .filter(w => w.length >= 2 && !/^\d+$/.test(w));
+
+  return words.slice(0, 2).join(" ").trim() || productName.slice(0, 20).toLowerCase();
+}
+
 // ── Routes ────────────────────────────────────────────────────────────────────
+
+// GET /bot/export-sheet/suggestions — gợi ý rule từ đơn hàng chợ thực tế
+router.get("/bot/export-sheet/suggestions", requireAuth, (_req: any, res: any) => {
+  const allOrders: Record<string, any> = readJson("market_orders", {}) ?? {};
+
+  // Group by seller + product_name
+  const groups = new Map<string, { seller: string; product: string; count: number; price: number }>();
+  for (const o of Object.values(allOrders)) {
+    const seller  = (o.seller  ?? "").trim();
+    const product = (o.product_name ?? "").trim();
+    if (!seller && !product) continue;
+    const key   = `${seller}|||${product}`;
+    const price = parsePrice(o.price ?? "");
+    if (!groups.has(key)) groups.set(key, { seller, product, count: 0, price: 0 });
+    const g = groups.get(key)!;
+    g.count++;
+    if (price) g.price = price;
+  }
+
+  const suggestions = Array.from(groups.values())
+    .sort((a, b) => {
+      const sa = a.seller.toLowerCase().replace(/^@/, "");
+      const sb = b.seller.toLowerCase().replace(/^@/, "");
+      if (sa !== sb) return sa.localeCompare(sb, "vi");
+      return a.product.toLowerCase().localeCompare(b.product.toLowerCase(), "vi");
+    })
+    .map(g => ({
+      seller:  g.seller,
+      product: g.product,
+      count:   g.count,
+      price:   g.price,
+      keyword: extractKeyword(g.product),   // từ khóa gợi ý cho rule include
+    }));
+
+  res.json({ total: suggestions.length, suggestions });
+});
 
 // GET /bot/export-sheet/config
 router.get("/bot/export-sheet/config", requireAuth, (_req: any, res: any) => {
