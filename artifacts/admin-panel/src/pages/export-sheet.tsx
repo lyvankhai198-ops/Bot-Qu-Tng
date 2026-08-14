@@ -1,7 +1,7 @@
 /**
  * export-sheet.tsx — Xuất file .xlsx từ đơn hàng chợ theo rule lọc
  */
-import { useState, useMemo } from "react"
+import { useState, useMemo, useRef } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Button }   from "@/components/ui/button"
 import { Input }    from "@/components/ui/input"
@@ -93,6 +93,7 @@ export default function ExportSheet() {
   const [loadingPreview, setLoadingPreview] = useState<string | null>(null)
   const [downloading, setDownloading]       = useState<string | null>(null)
   const [copied, setCopied]                 = useState(false)
+  const copyTextareaRef                     = useRef<HTMLTextAreaElement>(null)
 
   // Suggestions state
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -636,38 +637,43 @@ export default function ExportSheet() {
             </table>
           </div>
 
+          {/* Textarea visible — nguồn copy thật, iOS/Android select được */}
+          {(() => {
+            const text = (preview?.rows ?? [])
+              .map(r => [r.email, r.password, r.twofa].filter(Boolean).join(" / "))
+              .join("\n")
+            return (
+              <textarea
+                ref={copyTextareaRef}
+                readOnly
+                value={text}
+                rows={3}
+                className="mx-4 mt-2 text-xs font-mono border rounded p-2 resize-none bg-muted/30 text-foreground leading-relaxed"
+                style={{ minHeight: 64, maxHeight: 100 }}
+                onFocus={e => {
+                  e.currentTarget.select()
+                  e.currentTarget.setSelectionRange(0, text.length)
+                }}
+              />
+            )
+          })()}
+
           {/* Footer */}
           <div className="flex flex-col gap-2 px-4 py-3 border-t bg-background">
-            {/* Copy tất cả */}
+            {/* Copy tất cả — select textarea visible rồi execCommand */}
             <Button
               variant="outline"
               className="w-full gap-2"
               onClick={() => {
-                const text = (preview?.rows ?? [])
-                  .map(r => [r.email, r.password, r.twofa].filter(Boolean).join(" / "))
-                  .join("\n")
-
-                // execCommand phải chạy ĐỒNG BỘ trong user-gesture — không dùng async/await
-                // Tạo textarea ngoài dialog để tránh modal intercept focus
-                const ta = document.createElement("textarea")
-                ta.value = text
-                ta.setAttribute("readonly", "")   // tránh bàn phím pop lên trên mobile
-                ta.style.cssText = [
-                  "position:fixed", "top:0", "left:0",
-                  "width:100px", "height:100px",
-                  "opacity:0.01", "z-index:99999",
-                  "pointer-events:none",
-                ].join(";")
-                document.body.appendChild(ta)
-                ta.focus({ preventScroll: true })
+                const ta = copyTextareaRef.current
+                if (!ta) return
+                ta.focus()
                 ta.select()
-                ta.setSelectionRange(0, text.length)   // iOS cần dòng này
-                try { document.execCommand("copy") } catch {}
-                document.body.removeChild(ta)
-
-                // Clipboard API song song (nếu HTTPS — không block execCommand)
-                navigator.clipboard?.writeText?.(text).catch(() => {})
-
+                ta.setSelectionRange(0, ta.value.length)
+                let ok = false
+                try { ok = document.execCommand("copy") } catch {}
+                // Backup: Clipboard API nếu có HTTPS
+                if (!ok) navigator.clipboard?.writeText?.(ta.value).catch(() => {})
                 setCopied(true)
                 setTimeout(() => setCopied(false), 2500)
               }}
