@@ -38,12 +38,23 @@ function sellerMatches(orderSeller: string, sellers: string[]): boolean {
   return sellers.some(s => norm.includes(s.toLowerCase().replace(/^@/, "")));
 }
 
-/** Kiểm tra tên sản phẩm khớp rule include/exclude */
+/** Kiểm tra tên sản phẩm khớp rule include/exclude
+ *
+ * Matching theo từng token (tách bởi khoảng trắng):
+ *   keyword "chatgpt plus" → tokens ["chatgpt", "plus"]
+ *   → tất cả token phải xuất hiện trong tên sản phẩm (thứ tự không quan trọng)
+ *   → "ChatGPT 4 Plus", "ChatGPT Plus Pro" đều khớp
+ */
+function kwTokenMatch(productNorm: string, keyword: string): boolean {
+  const tokens = keyword.toLowerCase().split(/\s+/).filter(Boolean);
+  return tokens.every(token => productNorm.includes(token));
+}
+
 function productMatches(productName: string, include: string[], exclude: string[]): boolean {
   const norm = normName(productName);
-  if (exclude.some(kw => norm.includes(kw.toLowerCase()))) return false;
+  if (exclude.some(kw => kwTokenMatch(norm, kw))) return false;
   if (!include.length) return true;
-  return include.some(kw => norm.includes(kw.toLowerCase()));
+  return include.some(kw => kwTokenMatch(norm, kw));
 }
 
 /** Kiểm tra đơn còn trong thời hạn bảo hành */
