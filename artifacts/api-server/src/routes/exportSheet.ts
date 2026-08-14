@@ -186,11 +186,18 @@ function filterAndBuild(rule: {
     const refund = calcRefund(adjPrice, remaining, warrantyDays);
     const seller = o.seller ?? "";
 
+    // Nếu 1 đơn chứa nhiều tài khoản → chia đều giá theo số tk thực tế
+    const acctCount       = accounts.length || 1;
+    const pricePerAcct    = acctCount > 1 ? Math.round(adjPrice / acctCount) : adjPrice;
+    const refundPerAcct   = calcRefund(pricePerAcct, remaining, warrantyDays);
+
     if (!accounts.length) {
-      rows.push({ seller, email: "", password: "", twofa: "", purchaseDate, expiryDate, adjPrice, remaining, refund });
+      rows.push({ seller, email: "", password: "", twofa: "", purchaseDate, expiryDate,
+        adjPrice: pricePerAcct, remaining, refund: refundPerAcct });
     } else {
       for (const { email, password, twofa } of accounts) {
-        rows.push({ seller, email, password, twofa, purchaseDate, expiryDate, adjPrice, remaining, refund });
+        rows.push({ seller, email, password, twofa, purchaseDate, expiryDate,
+          adjPrice: pricePerAcct, remaining, refund: refundPerAcct });
       }
     }
   }
@@ -452,19 +459,23 @@ router.get("/bot/export-sheet/suggestions", requireAuth, (_req: any, res: any) =
     const remaining = calcRemaining(pDate, warrantyDays);
     if (remaining <= 0) continue;                   // hết bảo hành → bỏ
 
-    const keyword = extractKeyword(product);
-    const key     = `${seller}|||${keyword}`;
-    const price   = parsePrice(o.price ?? "");
+    const keyword   = extractKeyword(product);
+    const key       = `${seller}|||${keyword}`;
+    // Chia giá theo số tk thực tế trong đơn
+    const accts     = parseContent(o.content ?? "");
+    const acctCount = accts.length || 1;
+    const rawPrice  = parsePrice(o.price ?? "");
+    const price     = acctCount > 1 ? Math.round(rawPrice / acctCount) : rawPrice;
 
     if (!groups.has(key)) {
       groups.set(key, { seller, keyword, products: new Set(), count: 0, price: 0, minRemain: 999, warranty: 0 });
     }
     const g = groups.get(key)!;
-    g.count++;
+    g.count += acctCount;        // đếm số tk, không phải số đơn
     g.products.add(product);
     if (price) g.price = price;
-    if (remaining  < g.minRemain) g.minRemain = remaining;
-    if (warrantyDays > g.warranty) g.warranty = warrantyDays;  // lấy cao nhất làm gợi ý
+    if (remaining    < g.minRemain) g.minRemain = remaining;
+    if (warrantyDays > g.warranty)  g.warranty  = warrantyDays;
   }
 
   const suggestions = Array.from(groups.values())
