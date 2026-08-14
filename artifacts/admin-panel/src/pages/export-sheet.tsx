@@ -640,7 +640,7 @@ export default function ExportSheet() {
           {/* Textarea visible — nguồn copy thật, iOS/Android select được */}
           {(() => {
             const text = (preview?.rows ?? [])
-              .map(r => [r.email, r.password, r.twofa].filter(Boolean).join(" / "))
+              .map(r => [r.email, r.password, r.twofa].filter(Boolean).join(" | "))
               .join("\n")
             return (
               <textarea
