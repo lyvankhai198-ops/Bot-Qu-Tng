@@ -41,11 +41,12 @@ interface PreviewRow {
 }
 
 interface Suggestion {
-  seller:  string
-  product: string
-  count:   number
-  price:   number
-  keyword: string
+  seller:    string
+  product:   string   // tên đại diện (ngắn nhất trong nhóm)
+  keyword:   string
+  count:     number
+  price:     number
+  minRemain: number   // ngày BH còn lại tối thiểu trong nhóm
 }
 
 // ── Auth helpers ───────────────────────────────────────────────────────────────
@@ -116,12 +117,12 @@ export default function ExportSheet() {
   const filteredSuggestions = useMemo(() => {
     const list = suggData?.suggestions ?? []
     if (!suggSearch.trim()) return list
-    const q = suggSearch.toLowerCase()
-    return list.filter(s =>
-      s.seller.toLowerCase().includes(q) ||
-      s.product.toLowerCase().includes(q) ||
-      s.keyword.toLowerCase().includes(q)
-    )
+    // Tách các từ tìm kiếm — mỗi từ phải khớp ít nhất 1 trường (seller / product / keyword)
+    const terms = suggSearch.toLowerCase().split(/\s+/).filter(Boolean)
+    return list.filter(s => {
+      const haystack = [s.seller, s.product, s.keyword].join(" ").toLowerCase()
+      return terms.every(t => haystack.includes(t))
+    })
   }, [suggData, suggSearch])
 
   // ── Save config ──────────────────────────────────────────────────────────────
@@ -251,34 +252,56 @@ export default function ExportSheet() {
 
       {/* ── Gợi ý rule ──────────────────────────────────────────────────────── */}
       <div className="border rounded-lg overflow-hidden">
-        <button
-          className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left"
-          onClick={() => {
-            setShowSuggestions(v => !v)
-            if (!showSuggestions) refetchSugg()
-          }}
-        >
-          <Lightbulb className="h-4 w-4 text-amber-500 flex-shrink-0" />
-          <span className="font-medium text-sm flex-1">Gợi ý rule từ đơn hàng</span>
-          {suggData && (
-            <Badge variant="outline" className="text-xs mr-1">{suggData.total} nhóm</Badge>
+        {/* Header toggle */}
+        <div className="flex items-center">
+          <button
+            className="flex-1 flex items-center gap-2 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left"
+            onClick={() => {
+              setShowSuggestions(v => !v)
+              if (!showSuggestions) refetchSugg()
+            }}
+          >
+            <Lightbulb className="h-4 w-4 text-amber-500 flex-shrink-0" />
+            <span className="font-medium text-sm flex-1">
+              Gợi ý rule — đơn còn bảo hành
+            </span>
+            {suggData && !suggLoading && (
+              <Badge variant="outline" className="text-xs mr-1 border-emerald-300 text-emerald-700">
+                {suggData.total} nhóm còn BH
+              </Badge>
+            )}
+            {showSuggestions
+              ? <ChevronDown  className="h-4 w-4 text-muted-foreground" />
+              : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+          </button>
+
+          {/* Nút quét lại */}
+          {showSuggestions && (
+            <button
+              className="flex items-center gap-1 px-3 py-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors border-l"
+              disabled={suggLoading}
+              onClick={() => refetchSugg()}
+              title="Quét lại đơn hàng"
+            >
+              {suggLoading
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Search   className="h-3.5 w-3.5" />}
+              <span>Quét lại</span>
+            </button>
           )}
-          {showSuggestions
-            ? <ChevronDown  className="h-4 w-4 text-muted-foreground" />
-            : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-        </button>
+        </div>
 
         {showSuggestions && (
           <div className="border-t bg-muted/10">
-            {/* Search box */}
+            {/* Search — lọc seller VÀ sản phẩm cùng lúc */}
             <div className="p-2 border-b bg-background">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
                 <Input
                   value={suggSearch}
                   onChange={e => setSuggSearch(e.target.value)}
-                  placeholder="Tìm seller hoặc sản phẩm..."
-                  className="pl-8 h-8 text-sm"
+                  placeholder="Tìm seller và sản phẩm (gõ nhiều từ để lọc cùng lúc)..."
+                  className="pl-8 pr-8 h-8 text-sm"
                 />
                 {suggSearch && (
                   <button
@@ -295,35 +318,36 @@ export default function ExportSheet() {
             <div className="overflow-auto max-h-[420px]">
               {suggLoading ? (
                 <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Đang phân tích đơn hàng...
+                  <Loader2 className="h-4 w-4 animate-spin" /> Đang quét đơn còn bảo hành...
                 </div>
               ) : filteredSuggestions.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">
-                  {suggSearch ? "Không tìm thấy kết quả." : "Chưa có đơn hàng nào."}
+                  {suggSearch ? "Không tìm thấy kết quả." : "Không có đơn nào còn bảo hành."}
                 </div>
               ) : (
                 <table className="w-full text-xs">
                   <thead className="bg-muted sticky top-0 z-10">
                     <tr>
                       <th className="px-3 py-2 text-left font-semibold">Seller</th>
-                      <th className="px-2 py-2 text-left font-semibold">Sản phẩm</th>
-                      <th className="px-2 py-2 text-left font-semibold text-emerald-700">Keyword</th>
-                      <th className="px-2 py-2 text-center font-semibold">Số đơn</th>
-                      <th className="px-2 py-2 text-right font-semibold">Giá mua</th>
+                      <th className="px-2 py-2 text-left font-semibold">Sản phẩm đại diện</th>
+                      <th className="px-2 py-2 text-left font-semibold text-emerald-700">Keyword rule</th>
+                      <th className="px-2 py-2 text-center font-semibold">Đơn</th>
+                      <th className="px-2 py-2 text-right font-semibold">Giá</th>
+                      <th className="px-2 py-2 text-center font-semibold">Còn BH</th>
                       <th className="px-2 py-2 text-center font-semibold">Rule</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredSuggestions.map((s, i) => (
                       <tr
-                        key={`${s.seller}|||${s.product}`}
+                        key={`${s.seller}|||${s.keyword}`}
                         className={i % 2 === 0 ? "bg-background" : "bg-muted/20"}
                       >
                         <td className="px-3 py-1.5 whitespace-nowrap">
                           <span className="font-mono text-blue-700 text-[11px]">{s.seller}</span>
                         </td>
-                        <td className="px-2 py-1.5 max-w-[220px]">
-                          <span className="line-clamp-2 text-[11px] leading-tight" title={s.product}>
+                        <td className="px-2 py-1.5 max-w-[180px]">
+                          <span className="line-clamp-2 text-[11px] leading-tight text-muted-foreground" title={s.product}>
                             {s.product}
                           </span>
                         </td>
@@ -337,6 +361,16 @@ export default function ExportSheet() {
                         </td>
                         <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap text-[11px]">
                           {s.price ? s.price.toLocaleString("vi-VN") + "đ" : "—"}
+                        </td>
+                        <td className="px-2 py-1.5 text-center whitespace-nowrap">
+                          <span className={
+                            s.minRemain <= 3  ? "text-red-600 font-bold" :
+                            s.minRemain <= 7  ? "text-orange-500 font-semibold" :
+                            s.minRemain <= 14 ? "text-amber-600" :
+                            "text-emerald-600"
+                          }>
+                            {s.minRemain}n
+                          </span>
                         </td>
                         <td className="px-2 py-1.5 text-center">
                           <Button
@@ -355,12 +389,13 @@ export default function ExportSheet() {
               )}
             </div>
 
-            {/* Footer count */}
+            {/* Footer */}
             {!suggLoading && filteredSuggestions.length > 0 && (
-              <div className="px-3 py-1.5 border-t text-[11px] text-muted-foreground bg-background">
+              <div className="px-3 py-1.5 border-t text-[11px] text-muted-foreground bg-background flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
                 {suggSearch
-                  ? `${filteredSuggestions.length} / ${suggData?.total ?? 0} nhóm`
-                  : `${filteredSuggestions.length} nhóm seller × sản phẩm`}
+                  ? `${filteredSuggestions.length} / ${suggData?.total ?? 0} nhóm còn bảo hành`
+                  : `${filteredSuggestions.length} nhóm còn bảo hành trong 30 ngày gần nhất`}
               </div>
             )}
           </div>

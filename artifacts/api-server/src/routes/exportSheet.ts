@@ -364,22 +364,44 @@ function extractKeyword(productName: string): string {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-// GET /bot/export-sheet/suggestions — gợi ý rule từ đơn hàng chợ thực tế
+// GET /bot/export-sheet/suggestions — gợi ý rule từ đơn hàng còn bảo hành
 router.get("/bot/export-sheet/suggestions", requireAuth, (_req: any, res: any) => {
   const allOrders: Record<string, any> = readJson("market_orders", {}) ?? {};
+  const DEFAULT_WARRANTY = 30;
 
-  // Group by seller + product_name
-  const groups = new Map<string, { seller: string; product: string; count: number; price: number }>();
+  // Group by (seller, keyword) — chỉ đếm đơn CÒNN bảo hành (remaining > 0)
+  const groups = new Map<string, {
+    seller:     string;
+    keyword:    string;
+    products:   Set<string>;   // tên gốc để hiển thị đại diện
+    count:      number;
+    price:      number;
+    minRemain:  number;        // số ngày BH còn lại tối thiểu trong nhóm
+  }>();
+
   for (const o of Object.values(allOrders)) {
-    const seller  = (o.seller  ?? "").trim();
+    const seller  = (o.seller       ?? "").trim();
     const product = (o.product_name ?? "").trim();
     if (!seller && !product) continue;
-    const key   = `${seller}|||${product}`;
-    const price = parsePrice(o.price ?? "");
-    if (!groups.has(key)) groups.set(key, { seller, product, count: 0, price: 0 });
+
+    // Tính còn bảo hành không
+    const pDate = parsePurchaseDate(o);
+    if (!pDate) continue;                           // không có ngày → bỏ
+    const remaining = calcRemaining(pDate, DEFAULT_WARRANTY);
+    if (remaining <= 0) continue;                   // hết bảo hành → bỏ
+
+    const keyword = extractKeyword(product);
+    const key     = `${seller}|||${keyword}`;
+    const price   = parsePrice(o.price ?? "");
+
+    if (!groups.has(key)) {
+      groups.set(key, { seller, keyword, products: new Set(), count: 0, price: 0, minRemain: 999 });
+    }
     const g = groups.get(key)!;
     g.count++;
+    g.products.add(product);
     if (price) g.price = price;
+    if (remaining < g.minRemain) g.minRemain = remaining;
   }
 
   const suggestions = Array.from(groups.values())
@@ -387,14 +409,15 @@ router.get("/bot/export-sheet/suggestions", requireAuth, (_req: any, res: any) =
       const sa = a.seller.toLowerCase().replace(/^@/, "");
       const sb = b.seller.toLowerCase().replace(/^@/, "");
       if (sa !== sb) return sa.localeCompare(sb, "vi");
-      return a.product.toLowerCase().localeCompare(b.product.toLowerCase(), "vi");
+      return a.keyword.localeCompare(b.keyword, "vi");
     })
     .map(g => ({
-      seller:  g.seller,
-      product: g.product,
-      count:   g.count,
-      price:   g.price,
-      keyword: extractKeyword(g.product),   // từ khóa gợi ý cho rule include
+      seller:    g.seller,
+      keyword:   g.keyword,
+      product:   [...g.products].sort((a, b) => a.length - b.length)[0], // tên ngắn nhất làm đại diện
+      count:     g.count,
+      price:     g.price,
+      minRemain: g.minRemain === 999 ? 0 : g.minRemain,
     }));
 
   res.json({ total: suggestions.length, suggestions });
