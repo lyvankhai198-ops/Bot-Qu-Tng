@@ -675,8 +675,13 @@ def _resolve_tab_full(product_name: str, config: dict, default_tab: str,
                 if any(kw in name_norm or kw in name_nospace for kw in excludes):
                     continue
 
-            if matched > best_score:
-                best_score  = matched
+            # ── Tính điểm ưu tiên ─────────────────────────────────────────────
+            # Rule có seller filter cụ thể → ưu tiên tuyệt đối (thêm 10000 điểm)
+            has_seller_filter = bool(sellers)
+            priority = (10000 if has_seller_filter else 0) + matched
+
+            if priority > best_score:
+                best_score  = priority
                 best_tab    = tab
                 try:
                     best_wdays = int(rule.get("warranty_days") or 0)
