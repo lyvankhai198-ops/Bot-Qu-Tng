@@ -4,6 +4,7 @@ All JSON files live in DATA_DIR (default: ./data/)
 """
 import json
 import os
+import math
 import re
 import shutil
 import uuid
@@ -695,6 +696,13 @@ def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:
         _day_m = re.search(r'(?<!\d)(\d{1,2})D\b', _pname_upper)
         if _day_m:
             warranty_days = int(_day_m.group(1))
+
+    # BHxH = Bảo Hành x giờ (BH24H, BH 24H, BH48H...) — override warrantyDays
+    if not _is_kbh:
+        _bh_h = re.search(r'BH\s*(\d+)\s*H\b', _pname_upper)
+        if _bh_h:
+            _h_val = int(_bh_h.group(1))
+            warranty_days = max(1, math.ceil(_h_val / 24))
 
     # BHF = Bảo Hành Full (toàn chu kỳ) — suy ra số ngày từ tên SP nếu warrantyDays = 0
     if not _is_kbh and warranty_days == 0 and re.search(r'\bBHF\b', _pname_upper):

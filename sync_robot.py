@@ -14,6 +14,7 @@ import threading
 import tempfile
 import traceback
 import shutil
+import math
 import re
 import unicodedata
 import urllib.request
@@ -390,12 +391,17 @@ def parse_symbols_from_name(name: str) -> dict:
         warranty_days = usage_days if usage_days else 0
     else:
         # "BH 2 Ngày", "BH 7D", "BH2D" ...
-        bh = re.search(r'BH\s*(\d+)\s*(?:NGÀY\b|D\b)', n)
+        bh = re.search(r'BH\s*(\d+)\s*(?:NGÀY\b|D\b|H\b)', n)
         if bh:
-            warranty_days = int(bh.group(1))
+            val = int(bh.group(1))
+            matched_unit = bh.group(0).upper()
+            if re.search(r'H\b$', matched_unit.rstrip()):
+                warranty_days = max(1, math.ceil(val / 24))
+            else:
+                warranty_days = val
 
     # 3. Nếu tên chỉ có "1D" / "2D" một mình (không có BH riêng) → coi như BHF ngắn
-    if usage_days > 0 and warranty_days == 0 and not re.search(r'\bBH\b', n):
+    if usage_days > 0 and warranty_days == 0 and not re.search(r'\bBH', n):  # \bBH catches BHF,BH24H,BH 2D etc.
         warranty_days = usage_days
 
     return {"usageDays": usage_days, "warrantyDays": warranty_days}
