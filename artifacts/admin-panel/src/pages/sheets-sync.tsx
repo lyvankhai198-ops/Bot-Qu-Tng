@@ -35,9 +35,10 @@ async function apiFetch(method: string, path: string, body?: unknown): Promise<a
 }
 
 interface TabRule {
-  tab:     string
-  include: string[]
-  exclude: string[]
+  tab:           string
+  include:       string[]
+  exclude:       string[]
+  warranty_days: number   // 0 = không lọc BH; >0 = chỉ đẩy đơn còn trong N ngày
 }
 
 interface SheetsConfig {
@@ -193,7 +194,7 @@ export default function SheetsSync() {
 
   // Rule CRUD
   function addRule() {
-    const blank: TabRule = { tab: "", include: [], exclude: [] }
+    const blank: TabRule = { tab: "", include: [], exclude: [], warranty_days: 0 }
     setCfg(c => ({ ...c, tab_rules: [...(c.tab_rules || []), blank] }))
     const newIdx = (cfg.tab_rules?.length || 0)
     setOpenRules(o => ({ ...o, [newIdx]: true }))
@@ -413,6 +414,32 @@ export default function SheetsSync() {
                           className="text-sm font-mono min-h-[60px] resize-y"
                           rows={3}
                         />
+                      </div>
+
+                      <div className="space-y-1.5 pt-1 border-t">
+                        <Label className="text-xs font-medium flex items-center gap-1.5">
+                          <span>⏳</span>
+                          <span>Thời hạn bảo hành (ngày)</span>
+                        </Label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min={0}
+                            value={rule.warranty_days ?? 0}
+                            onChange={e => updateRule(idx, { ...rule, warranty_days: Math.max(0, parseInt(e.target.value) || 0) })}
+                            className="text-sm w-28"
+                            placeholder="0"
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {(rule.warranty_days ?? 0) > 0
+                              ? `Chỉ đẩy đơn trong vòng ${rule.warranty_days} ngày kể từ ngày hoàn tất`
+                              : "0 = không lọc, đẩy tất cả"}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Khi đẩy, đơn đã hết bảo hành (hoàn tất &gt; N ngày trước) sẽ bị bỏ qua.
+                          Khớp theo <strong>Người bán + Tên sản phẩm</strong> kết hợp.
+                        </p>
                       </div>
                     </div>
                   )}

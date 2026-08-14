@@ -565,29 +565,43 @@ def _normalize_name(s: str) -> str:
     return s
 
 
-def _resolve_tab(product_name: str, config: dict, default_tab: str) -> str:
-    """
-    Tìm tab phù hợp cho đơn hàng theo config (tab_rules hoặc tab_mappings cũ).
+def _resolve_tab(product_name: str, config: dict, default_tab: str, seller: str = "") -> str:
+    """Wrapper — trả chỉ tab name (backward-compat)."""
+    return _resolve_tab_full(product_name, config, default_tab, seller=seller)[0]
 
-    Chế độ mới — tab_rules (include + exclude):
-      1. Chuẩn hóa tên sản phẩm
+
+def _resolve_tab_full(product_name: str, config: dict, default_tab: str,
+                      seller: str = "") -> tuple:
+    """
+    Tìm tab phù hợp cho đơn hàng theo config.
+    Returns: (tab_name: str, warranty_days: int)
+
+    Chuỗi tìm kiếm = "{seller} {product_name}" (ghép lại) — từ khóa sẽ khớp
+    cả khi nằm trong tên người bán lẫn tên sản phẩm.
+
+    Chế độ mới — tab_rules (include + exclude + warranty_days):
+      1. Chuẩn hóa chuỗi ghép
       2. Với từng rule:
-         - Nếu tên chứa bất kỳ từ khóa Loại trừ → bỏ qua
-         - Đếm số từ khóa Bao gồm xuất hiện trong tên
+         - Nếu chuỗi chứa bất kỳ từ khóa Loại trừ → bỏ qua
+         - Đếm số từ khóa Bao gồm xuất hiện trong chuỗi
          - Cần ≥1 include khớp
       3. Chọn rule có nhiều include khớp nhất (cụ thể hơn thắng)
+      4. Trả kèm warranty_days của rule thắng (0 nếu không cấu hình)
 
-    Fallback — tab_mappings cũ:
+    Fallback — tab_mappings cũ (không có warranty_days):
       - Dùng khi không có tab_rules
     """
-    name_norm    = _normalize_name(product_name)
+    # Ghép seller + product_name để tìm khớp
+    combined     = f"{seller} {product_name}".strip()
+    name_norm    = _normalize_name(combined)
     name_nospace = name_norm.replace(' ', '')      # "chat gpt" ≈ "chatgpt"
 
     # ── Chế độ mới: tab_rules ─────────────────────────────────────────────────
     tab_rules: list = config.get("tab_rules") or []
     if tab_rules:
-        best_tab   = None
-        best_score = 0
+        best_tab      = None
+        best_score    = 0
+        best_wdays    = 0
 
         for rule in tab_rules:
             tab      = (rule.get("tab") or "").strip()
@@ -609,13 +623,19 @@ def _resolve_tab(product_name: str, config: dict, default_tab: str) -> str:
             if matched > 0 and matched > best_score:
                 best_score = matched
                 best_tab   = tab
+                try:
+                    best_wdays = int(rule.get("warranty_days") or 0)
+                except (TypeError, ValueError):
+                    best_wdays = 0
 
-        return best_tab if best_tab else default_tab
+        tab_out = best_tab if best_tab else default_tab
+        wdays   = best_wdays if best_tab else 0
+        return (tab_out, wdays)
 
     # ── Fallback: tab_mappings cũ ─────────────────────────────────────────────
     tab_mappings: dict = config.get("tab_mappings") or {}
     if not tab_mappings:
-        return default_tab
+        return (default_tab, 0)
 
     best_tab   = None
     best_score = 0
@@ -628,7 +648,53 @@ def _resolve_tab(product_name: str, config: dict, default_tab: str) -> str:
             best_score = matched
             best_tab   = tab.strip()
 
-    return best_tab if best_tab else default_tab
+    return (best_tab if best_tab else default_tab, 0)
+
+
+def _parse_completed_date(val):
+    """
+    Parse completed_at / created_at → datetime.date.
+    Trả None nếu không phân tích được.
+    """
+    if not val:
+        return None
+    s = str(val).strip()
+    # Cắt timezone offset nếu có dạng "+07:00" / "Z"
+    s_clean = _re.sub(r'[+\-]\d{2}:\d{2}$', '', s).rstrip('Z').strip()
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y",
+    ):
+        try:
+            return datetime.strptime(s_clean[:len(fmt)], fmt).date()
+        except Exception:
+            continue
+    return None
+
+
+def _is_within_warranty(order: dict, warranty_days: int) -> bool:
+    """
+    Kiểm tra đơn còn trong thời hạn bảo hành.
+    Nếu warranty_days <= 0 → không lọc (trả True).
+    Nếu không xác định được ngày → trả True (giữ lại đơn).
+    """
+    if warranty_days <= 0:
+        return True
+    raw_date = (
+        order.get("completed_at") or
+        order.get("delivered_at") or
+        order.get("payment_at")   or
+        order.get("created_at_raw")
+    )
+    order_date = _parse_completed_date(raw_date)
+    if order_date is None:
+        return True   # Không rõ ngày → giữ lại
+    from datetime import date as _date
+    elapsed = (_date.today() - order_date).days
+    return elapsed <= warranty_days
 
 
 def _parse_amount(val) -> float:
@@ -791,7 +857,17 @@ def _sync_to_sheets(new_orders: list, force: bool = False) -> dict:
             continue
 
         product_name = order.get("product_name", "")
-        tab = _resolve_tab(product_name, config, default_tab)
+        seller       = order.get("seller", "")
+        tab, wdays   = _resolve_tab_full(product_name, config, default_tab, seller=seller)
+
+        # ── Lọc đơn hết bảo hành ──────────────────────────────────────────────
+        if not _is_within_warranty(order, wdays):
+            logger.debug(
+                f"[MARKET-SHEETS] Bỏ qua {order_id}: hết bảo hành "
+                f"(warranty_days={wdays}, tab={tab!r})"
+            )
+            skipped_dup += 1
+            continue
 
         if order_id in synced:
             if synced[order_id].get("tab") == tab:
@@ -1116,11 +1192,14 @@ def push_all_to_sheets(filter_tab: str | None = None, force: bool = False) -> di
 
     all_orders = list(orders_dict.values())
 
-    # Lọc theo tab nếu được chỉ định
+    # Lọc theo tab nếu được chỉ định (dùng seller + product_name)
     if filter_tab and filter_tab != "all":
         all_orders = [
             o for o in all_orders
-            if _resolve_tab(o.get("product_name", ""), config, default_tab) == filter_tab
+            if _resolve_tab_full(
+                o.get("product_name", ""), config, default_tab,
+                seller=o.get("seller", "")
+            )[0] == filter_tab
         ]
         if not all_orders:
             return {
