@@ -57,7 +57,6 @@ const NAV_GROUPS: NavGroup[] = [
     key: "bao-hanh", label: "BẢO HÀNH & HOÀN TIỀN",
     items: [
       { href: "/warranty",       label: "Bảo hành",            icon: ShieldCheck, badgeKey: "warranty" },
-      { href: "/warranty-scan",  label: "Quét đơn còn BH",     icon: Search },
       { href: "/refund-calc",    label: "Máy tính hoàn tiền",  icon: Calculator },
       { href: "/refund-history", label: "Lịch sử hoàn tiền",  icon: WalletCards },
     ],

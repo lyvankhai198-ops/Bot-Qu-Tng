@@ -26,7 +26,6 @@ import Delivery from "@/pages/delivery";
 import RefundCalc from "@/pages/refund-calc";
 import MarketOrders from "@/pages/market-orders";
 import ExportSheet  from "@/pages/export-sheet";
-import WarrantyScan from "@/pages/warranty-scan";
 import ReturnQueue from "@/pages/return-queue";
 import NotFound from "@/pages/not-found";
 
@@ -91,7 +90,6 @@ function Router() {
       <Route path="/refund-calc"><ProtectedRoute component={RefundCalc} /></Route>
       <Route path="/market-orders"><ProtectedRoute component={MarketOrders} /></Route>
       <Route path="/export-sheet"><ProtectedRoute component={ExportSheet} /></Route>
-      <Route path="/warranty-scan"><ProtectedRoute component={WarrantyScan} /></Route>
       <Route path="/return-queue"><ProtectedRoute component={ReturnQueue} /></Route>
       <Route component={NotFound} />
     </Switch>
