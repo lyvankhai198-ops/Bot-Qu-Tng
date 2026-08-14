@@ -642,31 +642,31 @@ export default function ExportSheet() {
             <Button
               variant="outline"
               className="w-full gap-2"
-              onClick={async () => {
+              onClick={() => {
                 const text = (preview?.rows ?? [])
                   .map(r => [r.email, r.password, r.twofa].filter(Boolean).join(" / "))
                   .join("\n")
 
-                let ok = false
+                // execCommand phải chạy ĐỒNG BỘ trong user-gesture — không dùng async/await
+                // Tạo textarea ngoài dialog để tránh modal intercept focus
+                const ta = document.createElement("textarea")
+                ta.value = text
+                ta.setAttribute("readonly", "")   // tránh bàn phím pop lên trên mobile
+                ta.style.cssText = [
+                  "position:fixed", "top:0", "left:0",
+                  "width:100px", "height:100px",
+                  "opacity:0.01", "z-index:99999",
+                  "pointer-events:none",
+                ].join(";")
+                document.body.appendChild(ta)
+                ta.focus({ preventScroll: true })
+                ta.select()
+                ta.setSelectionRange(0, text.length)   // iOS cần dòng này
+                try { document.execCommand("copy") } catch {}
+                document.body.removeChild(ta)
 
-                // 1. Thử Clipboard API (HTTPS)
-                if (navigator.clipboard?.writeText) {
-                  try { await navigator.clipboard.writeText(text); ok = true } catch {}
-                }
-
-                // 2. Fallback: textarea + execCommand (HTTP / WebView / iOS)
-                if (!ok) {
-                  try {
-                    const ta = document.createElement("textarea")
-                    ta.value = text
-                    ta.style.cssText = "position:fixed;top:0;left:0;width:2px;height:2px;opacity:0.01"
-                    document.body.appendChild(ta)
-                    ta.focus()
-                    ta.setSelectionRange(0, text.length) // cần cho iOS
-                    ok = document.execCommand("copy")
-                    document.body.removeChild(ta)
-                  } catch {}
-                }
+                // Clipboard API song song (nếu HTTPS — không block execCommand)
+                navigator.clipboard?.writeText?.(text).catch(() => {})
 
                 setCopied(true)
                 setTimeout(() => setCopied(false), 2500)
