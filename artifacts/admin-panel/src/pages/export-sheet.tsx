@@ -642,33 +642,34 @@ export default function ExportSheet() {
             <Button
               variant="outline"
               className="w-full gap-2"
-              onClick={() => {
+              onClick={async () => {
                 const text = (preview?.rows ?? [])
                   .map(r => [r.email, r.password, r.twofa].filter(Boolean).join(" / "))
                   .join("\n")
-                // Thử Clipboard API trước, fallback execCommand cho HTTP / WebView
-                const doCopy = () => {
-                  if (navigator.clipboard?.writeText) {
-                    return navigator.clipboard.writeText(text)
-                  }
-                  // fallback
-                  const ta = document.createElement("textarea")
-                  ta.value = text
-                  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none"
-                  document.body.appendChild(ta)
-                  ta.focus(); ta.select()
-                  document.execCommand("copy")
-                  document.body.removeChild(ta)
-                  return Promise.resolve()
+
+                let ok = false
+
+                // 1. Thử Clipboard API (HTTPS)
+                if (navigator.clipboard?.writeText) {
+                  try { await navigator.clipboard.writeText(text); ok = true } catch {}
                 }
-                doCopy().then(() => {
-                  setCopied(true)
-                  setTimeout(() => setCopied(false), 2000)
-                }).catch(() => {
-                  // execCommand đã chạy trong doCopy rồi — vẫn báo thành công
-                  setCopied(true)
-                  setTimeout(() => setCopied(false), 2000)
-                })
+
+                // 2. Fallback: textarea + execCommand (HTTP / WebView / iOS)
+                if (!ok) {
+                  try {
+                    const ta = document.createElement("textarea")
+                    ta.value = text
+                    ta.style.cssText = "position:fixed;top:0;left:0;width:2px;height:2px;opacity:0.01"
+                    document.body.appendChild(ta)
+                    ta.focus()
+                    ta.setSelectionRange(0, text.length) // cần cho iOS
+                    ok = document.execCommand("copy")
+                    document.body.removeChild(ta)
+                  } catch {}
+                }
+
+                setCopied(true)
+                setTimeout(() => setCopied(false), 2500)
               }}
             >
               {copied
