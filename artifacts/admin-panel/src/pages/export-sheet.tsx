@@ -47,6 +47,7 @@ interface Suggestion {
   count:     number
   price:     number
   minRemain: number   // ngày BH còn lại tối thiểu trong nhóm
+  warranty:  number   // warranty_days gợi ý (đọc từ tên sản phẩm)
 }
 
 // ── Auth helpers ───────────────────────────────────────────────────────────────
@@ -158,11 +159,14 @@ export default function ExportSheet() {
     setDirty(true)
   }
 
-  /** Tạo rule từ suggestion */
+  /** Tạo rule từ suggestion — dùng warranty_days đọc từ tên sản phẩm */
   function createFromSuggestion(s: Suggestion) {
     const name = `${s.seller.replace(/^@/, "")} – ${s.keyword}`
-    addRule({ name, sellers: [s.seller], include: [s.keyword], warranty_days: 30 })
-    toast({ title: `✅ Đã tạo rule "${name}"`, description: "Cuộn xuống để xem và chỉnh sửa." })
+    addRule({ name, sellers: [s.seller], include: [s.keyword], warranty_days: s.warranty || 30 })
+    toast({
+      title: `✅ Đã tạo rule "${name}"`,
+      description: `BH ${s.warranty || 30} ngày · Cuộn xuống để xem và chỉnh sửa.`,
+    })
   }
 
   // ── Preview ───────────────────────────────────────────────────────────────────

@@ -310,6 +310,64 @@ function buildXlsx(rows: RowData[]): Buffer {
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
+// ── Warranty parsing ──────────────────────────────────────────────────────────
+
+/**
+ * Chuẩn hoá tiếng Việt về ASCII để regex dễ match (chỉ dùng nội bộ).
+ * "bảo hành" → "bao hanh", "tháng" → "thang", v.v.
+ */
+function vietNorm(s: string): string {
+  return s
+    .replace(/[àáạảãâầấậẩẫăằắặẳẵ]/gi, "a")
+    .replace(/[èéẹẻẽêềếệểễ]/gi, "e")
+    .replace(/[ìíịỉĩ]/gi, "i")
+    .replace(/[òóọỏõôồốộổỗơờớợởỡ]/gi, "o")
+    .replace(/[ùúụủũưừứựửữ]/gi, "u")
+    .replace(/[ỳýỵỷỹ]/gi, "y")
+    .replace(/[đ]/gi, "d");
+}
+
+/**
+ * Đọc thời hạn bảo hành (số ngày) từ tên sản phẩm.
+ *
+ * Quy tắc (không phân biệt hoa/thường):
+ *   KBH / không bảo hành          → 0
+ *   BH 7 ngày / BH 7D / 7D BHF   → 7
+ *   BH 1 tháng / BH 1TH / 1m     → 30
+ *   BH 2 tháng / 2TH              → 60
+ *   BHF / bảo hành full / BH full → 30
+ *   BH (không có số)              → 30
+ *   Không có gì                   → 30  (default)
+ */
+function parseWarrantyDays(productName: string): number {
+  const s = vietNorm(productName ?? "").toLowerCase();
+
+  // KBH / không bảo hành → 0
+  if (/\bkbh\b|khong bao hanh/.test(s)) return 0;
+
+  // BHF số ngày: "bhf 7d", "bhf 7 ngay", "bh 7d", "bh 7 ngay", "7d bhf", "7 ngay bhf"
+  const dayMatch =
+    s.match(/\bbhf?\s*(\d+)\s*(?:d\b|days?\b|ngay\b)/) ||
+    s.match(/\b(\d+)\s*(?:d\b|days?\b|ngay\b)\s*bhf?\b/);
+  if (dayMatch) return parseInt(dayMatch[1]);
+
+  // Tháng: "bh 1 thang", "bh 1th", "bhf 2th", "1th bhf", "1m"
+  const monthMatch =
+    s.match(/\bbhf?\s*(\d+)\s*(?:th\b|thang\b|months?\b)/) ||
+    s.match(/\b(\d+)\s*(?:th\b|thang\b|months?\b)\s*bhf?\b/) ||
+    s.match(/\b(\d+)m\b/);
+  if (monthMatch) return parseInt(monthMatch[1]) * 30;
+
+  // BHF alone / bảo hành full / bh full → 30
+  if (/\bbhf\b|bao hanh full|\bbh\s+full\b/.test(s)) return 30;
+
+  // BH alone (có bảo hành nhưng không ghi rõ số) → default 30
+  if (/\bbh\b/.test(s)) return 30;
+
+  // Không có thông tin bảo hành → mặc định 30
+  return 30;
+}
+
 // ── Keyword extraction ────────────────────────────────────────────────────────
 
 /** Prefix vô nghĩa ở đầu tên sản phẩm */
@@ -317,18 +375,18 @@ const SKIP_PREFIX_RE = /^(cdk|api|admin|slot|code|mã|key|tk|redeem|add|hot|vip|
 
 /**
  * Token bảo hành / mô tả tài khoản — loại bỏ hoàn toàn khi extract keyword.
- * Ví dụ: "ChatGPT Plus 30D BHF acc cấp Apple Pay Gmail" → token sạch = ["chatgpt","plus"]
  *
  * Bao gồm:
- *   - bhf, bh, bv, bvh                  (bảo hành)
- *   - \d+d, \d+day, \d+days             (30D, 30day)
- *   - \d+m                              (1m, 3m = 1 tháng, 3 tháng)
- *   - \d+ngay, \d+thang                 (30ngay)
- *   - acc, cấp, cap, slot, ngày, ngan   (loại tài khoản)
- *   - apple, pay, gmail, icloud, phone  (chi tiết phụ)
- *   - via                               (via gmail...)
+ *   - bhf, bh, bv, bvh, kbh            (bảo hành / không bảo hành)
+ *   - \d+d, \d+day, \d+days            (30D, 30day)
+ *   - \d+m, \d+th                      (1m, 3m, 1th, 2th)
+ *   - \d+ngay, \d+thang                (30ngay)
+ *   - full                             (bảo hành full)
+ *   - acc, cấp, cap, slot, ngày        (loại tài khoản)
+ *   - apple, pay, gmail, icloud, phone (chi tiết phụ)
+ *   - via                              (via gmail...)
  */
-const NOISE_TOKEN_RE = /^(bhf|bvh?|bh|via|acc|c[aấ]p|slot|ngày|ngay|ngan|thang|apple|pay|gmail|icloud|phone|\d+(m|d|day|days|ngay|thang))$/i;
+const NOISE_TOKEN_RE = /^(bhf|bvh?|bh|kbh|full|via|acc|c[aấ]p|slot|ngày|ngay|ngan|thang|th|tháng|apple|pay|gmail|icloud|phone|\d+(m|d|th|day|days|ngay|thang))$/i;
 
 /**
  * Extract keyword ngắn gọn từ tên sản phẩm để dùng trong rule include.
@@ -367,9 +425,8 @@ function extractKeyword(productName: string): string {
 // GET /bot/export-sheet/suggestions — gợi ý rule từ đơn hàng còn bảo hành
 router.get("/bot/export-sheet/suggestions", requireAuth, (_req: any, res: any) => {
   const allOrders: Record<string, any> = readJson("market_orders", {}) ?? {};
-  const DEFAULT_WARRANTY = 30;
 
-  // Group by (seller, keyword) — chỉ đếm đơn CÒNN bảo hành (remaining > 0)
+  // Group by (seller, keyword) — chỉ đếm đơn CÒN bảo hành (remaining > 0)
   const groups = new Map<string, {
     seller:     string;
     keyword:    string;
@@ -377,6 +434,7 @@ router.get("/bot/export-sheet/suggestions", requireAuth, (_req: any, res: any) =
     count:      number;
     price:      number;
     minRemain:  number;        // số ngày BH còn lại tối thiểu trong nhóm
+    warranty:   number;        // warranty_days gợi ý cho rule (max trong nhóm)
   }>();
 
   for (const o of Object.values(allOrders)) {
@@ -384,10 +442,14 @@ router.get("/bot/export-sheet/suggestions", requireAuth, (_req: any, res: any) =
     const product = (o.product_name ?? "").trim();
     if (!seller && !product) continue;
 
+    // Đọc thời hạn BH thực tế từ tên sản phẩm
+    const warrantyDays = parseWarrantyDays(product);
+    if (warrantyDays === 0) continue;               // KBH → bỏ
+
     // Tính còn bảo hành không
     const pDate = parsePurchaseDate(o);
     if (!pDate) continue;                           // không có ngày → bỏ
-    const remaining = calcRemaining(pDate, DEFAULT_WARRANTY);
+    const remaining = calcRemaining(pDate, warrantyDays);
     if (remaining <= 0) continue;                   // hết bảo hành → bỏ
 
     const keyword = extractKeyword(product);
@@ -395,13 +457,14 @@ router.get("/bot/export-sheet/suggestions", requireAuth, (_req: any, res: any) =
     const price   = parsePrice(o.price ?? "");
 
     if (!groups.has(key)) {
-      groups.set(key, { seller, keyword, products: new Set(), count: 0, price: 0, minRemain: 999 });
+      groups.set(key, { seller, keyword, products: new Set(), count: 0, price: 0, minRemain: 999, warranty: 0 });
     }
     const g = groups.get(key)!;
     g.count++;
     g.products.add(product);
     if (price) g.price = price;
-    if (remaining < g.minRemain) g.minRemain = remaining;
+    if (remaining  < g.minRemain) g.minRemain = remaining;
+    if (warrantyDays > g.warranty) g.warranty = warrantyDays;  // lấy cao nhất làm gợi ý
   }
 
   const suggestions = Array.from(groups.values())
@@ -418,6 +481,7 @@ router.get("/bot/export-sheet/suggestions", requireAuth, (_req: any, res: any) =
       count:     g.count,
       price:     g.price,
       minRemain: g.minRemain === 999 ? 0 : g.minRemain,
+      warranty:  g.warranty,   // warranty_days gợi ý cho rule
     }));
 
   res.json({ total: suggestions.length, suggestions });
