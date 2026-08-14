@@ -54,9 +54,9 @@ function parsePrice(raw: string | number): number {
   return parseInt(s, 10) || 0;
 }
 
-/** Giá mua sau khi trừ 3% */
+/** Giá mua — đã trừ 3% sẵn trong data, lấy thẳng */
 function adjustPrice(raw: string | number): number {
-  return Math.round(parsePrice(raw) * 0.97);
+  return parsePrice(raw);
 }
 
 /**
