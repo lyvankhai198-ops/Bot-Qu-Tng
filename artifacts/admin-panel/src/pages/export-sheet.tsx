@@ -15,7 +15,7 @@ import { useToast }  from "@/hooks/use-toast"
 import {
   Plus, Trash2, Save, Loader2, Download,
   ShieldCheck, ShieldX, User, ChevronDown, ChevronRight,
-  FileSpreadsheet, Eye, Lightbulb, Search, X,
+  FileSpreadsheet, Eye, Lightbulb, Search, X, ClipboardCopy, Check,
 } from "lucide-react"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -92,6 +92,7 @@ export default function ExportSheet() {
   const [preview, setPreview]             = useState<{ rule: ExportRule; rows: PreviewRow[] } | null>(null)
   const [loadingPreview, setLoadingPreview] = useState<string | null>(null)
   const [downloading, setDownloading]       = useState<string | null>(null)
+  const [copied, setCopied]                 = useState(false)
 
   // Suggestions state
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -594,62 +595,40 @@ export default function ExportSheet() {
       </Button>
 
       {/* ── Preview Dialog ─────────────────────────────────────────────────────── */}
-      <Dialog open={!!preview} onOpenChange={open => !open && setPreview(null)}>
-        <DialogContent className="max-w-5xl max-h-[88vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Eye className="h-4 w-4" />
-              Xem trước — {preview?.rule.name || "export"}
-              <Badge className="ml-1">{preview?.rows.length ?? 0} dòng</Badge>
+      <Dialog open={!!preview} onOpenChange={open => { if (!open) { setPreview(null); setCopied(false) } }}>
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-0 gap-0">
+          {/* Header */}
+          <DialogHeader className="px-4 pt-4 pb-3 border-b">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Eye className="h-4 w-4 flex-shrink-0" />
+              <span className="truncate">{preview?.rule.name || "Xem trước"}</span>
+              <Badge className="ml-auto flex-shrink-0">{preview?.rows.length ?? 0} dòng</Badge>
             </DialogTitle>
           </DialogHeader>
 
-          <div className="flex-1 overflow-auto border rounded-md">
+          {/* Table — chỉ email / pass / 2fa, hiện full không ẩn */}
+          <div className="flex-1 overflow-auto">
             <table className="w-full text-xs">
               <thead className="bg-muted sticky top-0 z-10">
                 <tr>
-                  <th className="px-2 py-1.5 text-left font-semibold">#</th>
-                  <th className="px-2 py-1.5 text-left font-semibold">Seller</th>
-                  <th className="px-2 py-1.5 text-left font-semibold">Email</th>
-                  <th className="px-2 py-1.5 text-left font-semibold">Mật khẩu</th>
-                  <th className="px-2 py-1.5 text-left font-semibold">2FA</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Giá mua</th>
-                  <th className="px-2 py-1.5 text-left font-semibold">Ngày mua</th>
-                  <th className="px-2 py-1.5 text-left font-semibold">Hết hạn BH</th>
-                  <th className="px-2 py-1.5 text-center font-semibold">Còn lại</th>
-                  <th className="px-2 py-1.5 text-right font-semibold">Tiền hoàn</th>
+                  <th className="px-2 py-2 text-left font-semibold text-muted-foreground w-6">#</th>
+                  <th className="px-2 py-2 text-left font-semibold">Email</th>
+                  <th className="px-2 py-2 text-left font-semibold">Mật khẩu</th>
+                  <th className="px-2 py-2 text-left font-semibold">2FA</th>
                 </tr>
               </thead>
               <tbody>
                 {preview?.rows.map((row, i) => (
                   <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-muted/30"}>
-                    <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
-                    <td className="px-2 py-1 text-[11px] truncate max-w-[100px]" title={row.seller}>
-                      {row.seller || <span className="text-muted-foreground italic">—</span>}
-                    </td>
-                    <td className="px-2 py-1 font-mono max-w-[180px] truncate" title={row.email}>
+                    <td className="px-2 py-1.5 text-muted-foreground text-[10px]">{i + 1}</td>
+                    <td className="px-2 py-1.5 font-mono text-[11px] break-all">
                       {row.email || <span className="text-muted-foreground italic">—</span>}
                     </td>
-                    <td className="px-2 py-1 font-mono text-muted-foreground">{maskPass(row.password)}</td>
-                    <td className="px-2 py-1 font-mono max-w-[120px] truncate text-muted-foreground" title={row.twofa}>
-                      {row.twofa ? maskPass(row.twofa) : <span className="italic">—</span>}
+                    <td className="px-2 py-1.5 font-mono text-[11px] break-all">
+                      {row.password || <span className="text-muted-foreground italic">—</span>}
                     </td>
-                    <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
-                      {fmtVND(row.price)}
-                    </td>
-                    <td className="px-2 py-1 whitespace-nowrap">{row.date || "—"}</td>
-                    <td className="px-2 py-1 whitespace-nowrap">{row.expiry || "—"}</td>
-                    <td className="px-2 py-1 text-center">
-                      <span className={
-                        row.remaining <= 0 ? "text-red-500 font-semibold" :
-                        row.remaining <= 7 ? "text-orange-500 font-semibold" :
-                        "text-emerald-600"
-                      }>
-                        {row.remaining}n
-                      </span>
-                    </td>
-                    <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap font-semibold text-emerald-700">
-                      {fmtVND(row.refund)}
+                    <td className="px-2 py-1.5 font-mono text-[11px] break-all text-muted-foreground">
+                      {row.twofa || <span className="italic">—</span>}
                     </td>
                   </tr>
                 ))}
@@ -657,19 +636,43 @@ export default function ExportSheet() {
             </table>
           </div>
 
-          <DialogFooter className="gap-2 pt-2">
-            <Button variant="outline" onClick={() => setPreview(null)}>Đóng</Button>
+          {/* Footer */}
+          <div className="flex flex-col gap-2 px-4 py-3 border-t bg-background">
+            {/* Copy tất cả */}
             <Button
-              className="gap-2 bg-green-600 hover:bg-green-700"
-              disabled={!!downloading}
-              onClick={() => preview && handleDownload(preview.rule)}
+              variant="outline"
+              className="w-full gap-2"
+              onClick={() => {
+                const text = (preview?.rows ?? [])
+                  .map(r => [r.email, r.password, r.twofa].filter(Boolean).join(" / "))
+                  .join("\n")
+                navigator.clipboard.writeText(text).then(() => {
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 2000)
+                })
+              }}
             >
-              {downloading
-                ? <Loader2 className="h-4 w-4 animate-spin" />
-                : <Download className="h-4 w-4" />}
-              Tải file .xlsx ({preview?.rows.length ?? 0} dòng)
+              {copied
+                ? <><Check className="h-4 w-4 text-emerald-600" /> Đã copy!</>
+                : <><ClipboardCopy className="h-4 w-4" /> Copy tất cả ({preview?.rows.length ?? 0} dòng)</>}
             </Button>
-          </DialogFooter>
+
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => { setPreview(null); setCopied(false) }}>
+                Đóng
+              </Button>
+              <Button
+                className="flex-1 gap-2 bg-green-600 hover:bg-green-700"
+                disabled={!!downloading}
+                onClick={() => preview && handleDownload(preview.rule)}
+              >
+                {downloading
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Download className="h-4 w-4" />}
+                Tải .xlsx
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
