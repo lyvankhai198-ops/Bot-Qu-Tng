@@ -646,7 +646,26 @@ export default function ExportSheet() {
                 const text = (preview?.rows ?? [])
                   .map(r => [r.email, r.password, r.twofa].filter(Boolean).join(" / "))
                   .join("\n")
-                navigator.clipboard.writeText(text).then(() => {
+                // Thử Clipboard API trước, fallback execCommand cho HTTP / WebView
+                const doCopy = () => {
+                  if (navigator.clipboard?.writeText) {
+                    return navigator.clipboard.writeText(text)
+                  }
+                  // fallback
+                  const ta = document.createElement("textarea")
+                  ta.value = text
+                  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none"
+                  document.body.appendChild(ta)
+                  ta.focus(); ta.select()
+                  document.execCommand("copy")
+                  document.body.removeChild(ta)
+                  return Promise.resolve()
+                }
+                doCopy().then(() => {
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 2000)
+                }).catch(() => {
+                  // execCommand đã chạy trong doCopy rồi — vẫn báo thành công
                   setCopied(true)
                   setTimeout(() => setCopied(false), 2000)
                 })
