@@ -3,15 +3,19 @@
  */
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Button }    from "@/components/ui/button"
-import { Input }     from "@/components/ui/input"
-import { Textarea }  from "@/components/ui/textarea"
-import { Label }     from "@/components/ui/label"
-import { Badge }     from "@/components/ui/badge"
+import { Button }   from "@/components/ui/button"
+import { Input }    from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Label }    from "@/components/ui/label"
+import { Badge }    from "@/components/ui/badge"
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog"
 import { useToast }  from "@/hooks/use-toast"
 import {
   Plus, Trash2, Save, Loader2, Download,
-  ShieldCheck, ShieldX, User, ChevronDown, ChevronRight, FileSpreadsheet,
+  ShieldCheck, ShieldX, User, ChevronDown, ChevronRight,
+  FileSpreadsheet, Eye,
 } from "lucide-react"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -22,6 +26,16 @@ interface ExportRule {
   include:       string[]
   exclude:       string[]
   warranty_days: number
+}
+
+interface PreviewRow {
+  email:   string
+  password: string
+  twofa:   string
+  date:    string
+  price:   string | number
+  seller:  string
+  product: string
 }
 
 // ── Auth helpers ───────────────────────────────────────────────────────────────
@@ -45,6 +59,11 @@ function uid() { return Math.random().toString(36).slice(2, 9) }
 function parseKws(raw: string): string[] {
   return raw.split(/\n|,/).map(s => s.trim()).filter(Boolean)
 }
+function maskPass(s: string) {
+  if (!s) return "—"
+  if (s.length <= 4) return "••••"
+  return s.slice(0, 2) + "••••" + s.slice(-2)
+}
 
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function ExportSheet() {
@@ -53,7 +72,11 @@ export default function ExportSheet() {
   const [rules, setRules]     = useState<ExportRule[]>([])
   const [openIdx, setOpenIdx] = useState<number | null>(null)
   const [dirty, setDirty]     = useState(false)
-  const [downloading, setDownloading] = useState<string | null>(null)   // rule id đang tạo
+
+  // Preview state
+  const [preview, setPreview] = useState<{ rule: ExportRule; rows: PreviewRow[] } | null>(null)
+  const [loadingPreview, setLoadingPreview] = useState<string | null>(null)
+  const [downloading, setDownloading]       = useState<string | null>(null)
 
   // ── Load config ──────────────────────────────────────────────────────────────
   const { isLoading } = useQuery({
@@ -67,8 +90,7 @@ export default function ExportSheet() {
 
   // ── Save config ──────────────────────────────────────────────────────────────
   const saveMut = useMutation({
-    mutationFn: () =>
-      apiFetch("PUT", "/bot/export-sheet/config", { rules }),
+    mutationFn: () => apiFetch("PUT", "/bot/export-sheet/config", { rules }),
     onSuccess: () => {
       toast({ title: "✅ Đã lưu cấu hình" })
       setDirty(false)
@@ -81,20 +103,36 @@ export default function ExportSheet() {
     setRules(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r))
     setDirty(true)
   }
-
   function addRule() {
-    const blank: ExportRule = {
-      id: uid(), name: "", sellers: [], include: [], exclude: [], warranty_days: 0,
-    }
+    const blank: ExportRule = { id: uid(), name: "", sellers: [], include: [], exclude: [], warranty_days: 0 }
     setRules(prev => [...prev, blank])
     setOpenIdx(rules.length)
     setDirty(true)
   }
-
   function removeRule(idx: number) {
     setRules(prev => prev.filter((_, i) => i !== idx))
     setOpenIdx(null)
     setDirty(true)
+  }
+
+  // ── Preview ───────────────────────────────────────────────────────────────────
+  async function handlePreview(rule: ExportRule) {
+    setLoadingPreview(rule.id)
+    try {
+      const d = await apiFetch("POST", "/bot/export-sheet/preview", {
+        sellers: rule.sellers, include: rule.include,
+        exclude: rule.exclude, warranty_days: rule.warranty_days,
+      })
+      if (!d.total) {
+        toast({ title: "Không có đơn nào khớp rule này.", variant: "destructive" })
+        return
+      }
+      setPreview({ rule, rows: d.rows })
+    } catch (e: any) {
+      toast({ title: "❌ Lỗi preview", description: e?.message, variant: "destructive" })
+    } finally {
+      setLoadingPreview(null)
+    }
   }
 
   // ── Download xlsx ─────────────────────────────────────────────────────────────
@@ -102,34 +140,26 @@ export default function ExportSheet() {
     setDownloading(rule.id)
     try {
       const res = await apiFetchRaw("POST", "/bot/export-sheet/download", {
-        name:          rule.name || "export",
-        sellers:       rule.sellers,
-        include:       rule.include,
-        exclude:       rule.exclude,
-        warranty_days: rule.warranty_days,
+        name: rule.name || "export",
+        sellers: rule.sellers, include: rule.include,
+        exclude: rule.exclude, warranty_days: rule.warranty_days,
       })
-
-      // Kiểm tra content-type — nếu là JSON thì là thông báo lỗi
       const ct = res.headers.get("content-type") ?? ""
       if (ct.includes("json")) {
         const d = await res.json()
-        toast({ title: d.message ?? "Không có đơn nào khớp rule.", variant: "destructive" })
+        toast({ title: d.message ?? "Không có đơn nào khớp.", variant: "destructive" })
         return
       }
-
-      // Tải file
-      const blob     = await res.blob()
-      const cd       = res.headers.get("content-disposition") ?? ""
-      const fnMatch  = cd.match(/filename="([^"]+)"/)
+      const blob    = await res.blob()
+      const cd      = res.headers.get("content-disposition") ?? ""
+      const fnMatch = cd.match(/filename="([^"]+)"/)
       const filename = fnMatch ? fnMatch[1] : `${rule.name || "export"}.xlsx`
-
       const url = URL.createObjectURL(blob)
       const a   = document.createElement("a")
-      a.href    = url
-      a.download = filename
-      a.click()
+      a.href = url; a.download = filename; a.click()
       URL.revokeObjectURL(url)
-      toast({ title: `✅ Đã tạo: ${filename}` })
+      toast({ title: `✅ Đã tải: ${filename}` })
+      setPreview(null)
     } catch (e: any) {
       toast({ title: "❌ Lỗi tạo file", description: e?.message, variant: "destructive" })
     } finally {
@@ -137,7 +167,7 @@ export default function ExportSheet() {
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-48 gap-2 text-muted-foreground">
@@ -156,21 +186,20 @@ export default function ExportSheet() {
             Xuất Sheet từ Đơn Chợ
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Lọc đơn theo người bán + từ khóa sản phẩm + bảo hành → tải file .xlsx
+            Lọc đơn → xem trước → tải file .xlsx
           </p>
         </div>
         <Button
           onClick={() => saveMut.mutate()}
           disabled={!dirty || saveMut.isPending}
-          size="sm"
-          className="gap-1.5"
+          size="sm" className="gap-1.5"
         >
           {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           Lưu cấu hình
         </Button>
       </div>
 
-      {/* Danh sách rule */}
+      {/* Rule list */}
       <div className="space-y-2">
         {rules.length === 0 && (
           <div className="text-center py-10 text-muted-foreground border rounded-lg border-dashed text-sm">
@@ -179,17 +208,19 @@ export default function ExportSheet() {
         )}
 
         {rules.map((rule, idx) => {
-          const isOpen = openIdx === idx
-          const isLoading = downloading === rule.id
+          const isOpen    = openIdx === idx
+          const isPrev    = loadingPreview === rule.id
+          const isDl      = downloading === rule.id
+
           return (
             <div key={rule.id} className="border rounded-lg overflow-hidden bg-card">
-              {/* Rule header */}
+              {/* Header */}
               <div
                 className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-muted/50 transition-colors"
                 onClick={() => setOpenIdx(isOpen ? null : idx)}
               >
                 {isOpen
-                  ? <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  ? <ChevronDown  className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                   : <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />}
 
                 <span className="font-medium text-sm flex-1 truncate">
@@ -197,7 +228,7 @@ export default function ExportSheet() {
                 </span>
 
                 {/* Badges */}
-                <div className="flex items-center gap-1.5 flex-shrink-0">
+                <div className="flex items-center gap-1 flex-shrink-0">
                   {rule.sellers.length > 0 && (
                     <Badge variant="outline" className="text-xs gap-1 text-blue-700 border-blue-300">
                       <User className="h-3 w-3" />{rule.sellers.length}
@@ -214,29 +245,25 @@ export default function ExportSheet() {
                     </Badge>
                   )}
                   {rule.warranty_days > 0 && (
-                    <Badge variant="outline" className="text-xs gap-1 text-orange-700 border-orange-300">
+                    <Badge variant="outline" className="text-xs text-orange-700 border-orange-300">
                       ⏳{rule.warranty_days}d
                     </Badge>
                   )}
                 </div>
 
-                {/* Nút Tạo Sheet */}
+                {/* Nút Xem trước */}
                 <Button
-                  size="sm"
-                  variant="default"
-                  className="gap-1.5 h-7 text-xs ml-1 bg-green-600 hover:bg-green-700"
-                  disabled={isLoading}
-                  onClick={e => { e.stopPropagation(); handleDownload(rule) }}
+                  size="sm" variant="outline"
+                  className="gap-1 h-7 text-xs ml-1"
+                  disabled={isPrev || isDl}
+                  onClick={e => { e.stopPropagation(); handlePreview(rule) }}
                 >
-                  {isLoading
-                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    : <Download className="h-3.5 w-3.5" />}
-                  Tạo Sheet
+                  {isPrev ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
+                  Xem trước
                 </Button>
 
                 <Button
-                  size="icon"
-                  variant="ghost"
+                  size="icon" variant="ghost"
                   className="h-7 w-7 text-muted-foreground hover:text-destructive flex-shrink-0"
                   onClick={e => { e.stopPropagation(); removeRule(idx) }}
                 >
@@ -244,12 +271,11 @@ export default function ExportSheet() {
                 </Button>
               </div>
 
-              {/* Rule body */}
+              {/* Body */}
               {isOpen && (
                 <div className="px-4 pb-4 space-y-3 border-t bg-muted/20">
-                  {/* Tên rule */}
                   <div className="pt-3 space-y-1.5">
-                    <Label className="text-xs font-medium">Tên rule (dùng làm tên file)</Label>
+                    <Label className="text-xs font-medium">Tên rule (dùng làm tên file .xlsx)</Label>
                     <Input
                       value={rule.name}
                       onChange={e => updateRule(idx, { name: e.target.value })}
@@ -258,58 +284,50 @@ export default function ExportSheet() {
                     />
                   </div>
 
-                  {/* Người bán */}
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium flex items-center gap-1">
                       <User className="h-3.5 w-3.5 text-blue-600" />
                       <span className="text-blue-700">Người bán</span>
-                      <span className="text-muted-foreground font-normal ml-1">— mỗi username một dòng, để trống = tất cả</span>
+                      <span className="text-muted-foreground font-normal ml-1">— mỗi dòng 1 username, trống = tất cả</span>
                     </Label>
                     <Textarea
                       value={rule.sellers.join("\n")}
                       onChange={e => updateRule(idx, { sellers: parseKws(e.target.value.replace(/,/g, "\n")) })}
                       onBlur={e => updateRule(idx, { sellers: parseKws(e.target.value) })}
                       placeholder={"@lemonlove24\n@shop_abc"}
-                      className="text-sm font-mono min-h-[56px] resize-y"
-                      rows={2}
+                      className="text-sm font-mono min-h-[52px] resize-y" rows={2}
                     />
                   </div>
 
-                  {/* Tên sản phẩm bao gồm */}
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium flex items-center gap-1">
                       <ShieldCheck className="h-3.5 w-3.5 text-green-600" />
-                      <span className="text-green-700">Tên sản phẩm — Bao gồm</span>
+                      <span className="text-green-700">Tên SP — Bao gồm</span>
                       <span className="text-muted-foreground font-normal ml-1">— một từ khóa mỗi dòng</span>
                     </Label>
                     <Textarea
                       value={rule.include.join("\n")}
                       onChange={e => updateRule(idx, { include: parseKws(e.target.value.replace(/,/g, "\n")) })}
                       onBlur={e => updateRule(idx, { include: parseKws(e.target.value) })}
-                      placeholder={"chatgpt plus\ngpt plus"}
-                      className="text-sm font-mono min-h-[56px] resize-y"
-                      rows={2}
+                      placeholder={"chatgpt plus"}
+                      className="text-sm font-mono min-h-[52px] resize-y" rows={2}
                     />
                   </div>
 
-                  {/* Tên sản phẩm loại trừ */}
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium flex items-center gap-1">
                       <ShieldX className="h-3.5 w-3.5 text-destructive" />
-                      <span className="text-destructive">Tên sản phẩm — Loại trừ</span>
-                      <span className="text-muted-foreground font-normal ml-1">— bỏ qua nếu có từ này</span>
+                      <span className="text-destructive">Tên SP — Loại trừ</span>
                     </Label>
                     <Textarea
                       value={rule.exclude.join("\n")}
                       onChange={e => updateRule(idx, { exclude: parseKws(e.target.value.replace(/,/g, "\n")) })}
                       onBlur={e => updateRule(idx, { exclude: parseKws(e.target.value) })}
                       placeholder={"api\ntoken"}
-                      className="text-sm font-mono min-h-[44px] resize-y"
-                      rows={2}
+                      className="text-sm font-mono min-h-[44px] resize-y" rows={2}
                     />
                   </div>
 
-                  {/* Bảo hành */}
                   <div className="space-y-1.5 pt-1 border-t">
                     <Label className="text-xs font-medium">⏳ Tổng ngày bảo hành (0 = lấy tất cả)</Label>
                     <div className="flex items-center gap-2">
@@ -317,13 +335,12 @@ export default function ExportSheet() {
                         type="number" min={0}
                         value={rule.warranty_days}
                         onChange={e => updateRule(idx, { warranty_days: Math.max(0, parseInt(e.target.value) || 0) })}
-                        className="text-sm w-28 h-8"
-                        placeholder="0"
+                        className="text-sm w-28 h-8" placeholder="0"
                       />
                       <span className="text-xs text-muted-foreground">
                         {rule.warranty_days > 0
-                          ? `Chỉ lấy đơn mua trong vòng ${rule.warranty_days} ngày gần đây`
-                          : "Không lọc BH — lấy tất cả đơn khớp"}
+                          ? `Chỉ lấy đơn trong vòng ${rule.warranty_days} ngày gần đây`
+                          : "Không lọc BH"}
                       </span>
                     </div>
                   </div>
@@ -334,18 +351,79 @@ export default function ExportSheet() {
         })}
       </div>
 
-      {/* Nút thêm rule */}
       <Button variant="outline" className="w-full gap-2" onClick={addRule}>
-        <Plus className="h-4 w-4" />
-        Thêm rule
+        <Plus className="h-4 w-4" /> Thêm rule
       </Button>
 
-      {/* Ghi chú cột */}
       <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
-        <p className="font-medium text-foreground">Cột trong file .xlsx xuất ra:</p>
+        <p className="font-medium text-foreground">Cột trong file .xlsx:</p>
         <p>Email · Mật khẩu · 2FA · Ngày mua · Giá mua (VNĐ)</p>
-        <p>Dữ liệu email/mật khẩu/2FA lấy từ trường <code className="font-mono bg-muted px-1 rounded">content</code> của đơn hàng chợ.</p>
       </div>
+
+      {/* ── Preview Dialog ─────────────────────────────────────────────────────── */}
+      <Dialog open={!!preview} onOpenChange={open => !open && setPreview(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="h-4 w-4" />
+              Xem trước — {preview?.rule.name || "export"}
+              <Badge className="ml-1">{preview?.rows.length ?? 0} đơn</Badge>
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Table */}
+          <div className="flex-1 overflow-auto border rounded-md">
+            <table className="w-full text-xs">
+              <thead className="bg-muted sticky top-0 z-10">
+                <tr>
+                  <th className="px-2 py-1.5 text-left font-semibold">#</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Email</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Mật khẩu</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">2FA</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Ngày mua</th>
+                  <th className="px-2 py-1.5 text-right font-semibold">Giá (VNĐ)</th>
+                  <th className="px-2 py-1.5 text-left font-semibold">Người bán</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview?.rows.map((row, i) => (
+                  <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-muted/30"}>
+                    <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
+                    <td className="px-2 py-1 font-mono max-w-[180px] truncate" title={row.email}>
+                      {row.email || <span className="text-muted-foreground italic">—</span>}
+                    </td>
+                    <td className="px-2 py-1 font-mono text-muted-foreground">{maskPass(row.password)}</td>
+                    <td className="px-2 py-1 font-mono max-w-[120px] truncate text-muted-foreground" title={row.twofa}>
+                      {row.twofa ? maskPass(row.twofa) : <span className="italic">—</span>}
+                    </td>
+                    <td className="px-2 py-1 whitespace-nowrap">{row.date || "—"}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">
+                      {row.price ? Number(row.price).toLocaleString("vi-VN") : "—"}
+                    </td>
+                    <td className="px-2 py-1 text-muted-foreground text-[11px] truncate max-w-[110px]" title={row.seller}>
+                      {row.seller}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" onClick={() => setPreview(null)}>Đóng</Button>
+            <Button
+              className="gap-2 bg-green-600 hover:bg-green-700"
+              disabled={!!downloading}
+              onClick={() => preview && handleDownload(preview.rule)}
+            >
+              {downloading
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : <Download className="h-4 w-4" />}
+              Tải file .xlsx ({preview?.rows.length ?? 0} đơn)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

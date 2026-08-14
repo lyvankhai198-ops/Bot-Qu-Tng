@@ -107,6 +107,42 @@ function fmtDate(raw: string): string {
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
+// ── POST /bot/export-sheet/preview ─────────────────────────────────────────────
+router.post("/bot/export-sheet/preview", requireAuth, (req: any, res: any) => {
+  const rule = req.body as {
+    sellers:      string[];
+    include:      string[];
+    exclude:      string[];
+    warranty_days: number;
+  };
+
+  const allOrders: Record<string, any> = readJson("market_orders", {}) ?? {};
+
+  const matched = Object.values(allOrders).filter((o: any) => {
+    if (!sellerMatches(o.seller ?? "", rule.sellers ?? [])) return false;
+    if (!productMatches(o.product_name ?? "", rule.include ?? [], rule.exclude ?? [])) return false;
+    if (!withinWarranty(o, rule.warranty_days ?? 0)) return false;
+    return true;
+  });
+
+  const rows = matched.map((o: any) => {
+    const { email, password, twofa } = parseContent(o.content ?? "");
+    const dateRaw = o.completed_at || o.delivered_at || o.payment_at
+                  || o.created_at_raw || o.created_at || "";
+    return {
+      email,
+      password,
+      twofa,
+      date:    fmtDate(dateRaw),
+      price:   o.sell_price ?? o.price ?? "",
+      seller:  o.seller ?? "",
+      product: o.product_name ?? "",
+    };
+  });
+
+  res.json({ total: rows.length, rows });
+});
+
 // ── GET /bot/export-sheet/config ───────────────────────────────────────────────
 router.get("/bot/export-sheet/config", requireAuth, (_req: any, res: any) => {
   const cfg = readJson("export_sheet_config", { rules: [] });
