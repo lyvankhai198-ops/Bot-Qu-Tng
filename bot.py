@@ -3106,6 +3106,7 @@ def _append_chat_history(session: dict, uid_str: str, end_reason: str) -> None:
             "endedAt":   datetime.utcnow().isoformat(),
             "endReason": end_reason,
             "msgCount":  session.get("msg_count", 0),
+            "messages":  session.get("messages", []),
         }
         history.append(entry)
         # Giữ tối đa 500 mục (cũ nhất bị xoá trước)
@@ -3300,6 +3301,12 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
         except Exception as e:
             logger.error(f"handle_live_chat_message send error: {e}")
 
+    # Lưu nội dung tin vào session để ghi lịch sử
+    session.setdefault("messages", []).append({
+        "role": "user",
+        "text": text,
+        "time": datetime.utcnow().isoformat(),
+    })
     _save_chat_sessions(data)
 
 
@@ -3369,6 +3376,12 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.error(f"handle_live_chat_media send error: {e}")
 
+    # Lưu ảnh vào messages
+    session.setdefault("messages", []).append({
+        "role": "user",
+        "text": "[Ảnh]",
+        "time": datetime.utcnow().isoformat(),
+    })
     _save_chat_sessions(data)
 
 async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3480,6 +3493,13 @@ async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_
         return True
 
     session["last_active"] = datetime.utcnow().isoformat()
+    # Lưu reply support vào messages
+    if uid_str:
+        session.setdefault("messages", []).append({
+            "role": "support",
+            "text": msg.text if msg.text else "[Ảnh]",
+            "time": datetime.utcnow().isoformat(),
+        })
     _save_chat_sessions(data)
     return True
 
