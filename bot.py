@@ -3262,7 +3262,7 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
     _save_chat_sessions(data)
 
 async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """User nhấn Kết thúc chat — xoá toàn bộ tin rồi thông báo."""
+    """User nhấn Kết thúc chat — thông báo trước, 5 phút sau tự xoá tin."""
     user = update.effective_user
     L = lang(user.id)
 
@@ -3272,33 +3272,32 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if session:
         for mid in session.get("admin_msg_ids", []):
             data["msg_map"].pop(str(mid), None)
-    _save_chat_sessions(data)
     db.set_user_state(user.id, "conv_state", None)
 
-    # Xoá tin bot đã gửi cho user trong phiên chat
+    # Lên lịch xoá tin sau 5 phút
     if session:
-        for mid in session.get("user_bot_msg_ids", []):
-            try:
-                await context.bot.delete_message(chat_id=user.id, message_id=mid)
-            except Exception:
-                pass
+        data.setdefault("pending_deletions", {})[uid_str] = {
+            "scheduled_at": datetime.utcnow().isoformat(),
+            "user_id": user.id,
+            "user_bot_msg_ids": session.get("user_bot_msg_ids", []),
+            "admin_msg_ids": session.get("admin_msg_ids", []),
+        }
+    _save_chat_sessions(data)
 
-    # Xoá tin đã forward lên admin
-    if session:
-        for aid in _get_all_admin_ids():
-            for mid in session.get("admin_msg_ids", []):
-                _tg_delete_message(TOKEN, aid, mid)
-
-    # Gửi thông báo kết thúc (sau khi xoá)
+    # Thông báo kết thúc + cảnh báo sắp xoá
+    warn_suffix = "\n\n🗑 Tin nhắn trong phiên chat sẽ tự xoá sau 5 phút."
     await update.message.reply_text(
-        t(L, "chat_support_user_end"),
+        t(L, "chat_support_user_end") + warn_suffix,
         reply_markup=main_keyboard(user.id)
     )
 
     if session:
         admin_ids = _get_all_admin_ids()
         name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
-        notif = f"⏹ <b>{name}</b> (<code>{user.id}</code>) đã kết thúc phiên chat hỗ trợ."
+        notif = (
+            f"⧹ <b>{name}</b> (<code>{user.id}</code>) đã kết thúc phiên chat hỗ trợ.\n"
+            f"🗑 Tin nhắn sẽ tự xoá sau 5 phút."
+        )
         for aid in admin_ids:
             try:
                 _tg_send(TOKEN, aid, notif)
@@ -3388,20 +3387,19 @@ def _chat_timeout_worker() -> None:
 
                 user_id = int(uid_str)
 
-                # Xoá tin bot đã gửi cho user
-                for mid in session.get("user_bot_msg_ids", []):
-                    _tg_delete_message(TOKEN, user_id, mid)
-
-                # Xoá tin đã forward lên admin
-                timeout_admin_ids = _get_all_admin_ids()
-                for aid in timeout_admin_ids:
-                    for mid in session.get("admin_msg_ids", []):
-                        _tg_delete_message(TOKEN, aid, mid)
+                # Lên lịch xoá tin sau 5 phút
+                data.setdefault("pending_deletions", {})[uid_str] = {
+                    "scheduled_at": datetime.utcnow().isoformat(),
+                    "user_id": user_id,
+                    "user_bot_msg_ids": session.get("user_bot_msg_ids", []),
+                    "admin_msg_ids": session.get("admin_msg_ids", []),
+                }
 
                 try:
                     _tg_send(TOKEN, user_id,
                              "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau 10 phút.\n"
-                             "Nhấn <b>Chat với Support</b> nếu bạn cần hỗ trợ thêm.",
+                             "Nhấn <b>Chat với Support</b> nếu bạn cần hỗ trợ thêm.\n\n"
+                             "🗑 Tin nhắn trong phiên chat sẽ tự xoá sau 5 phút.",
                              )
                 except Exception:
                     pass
@@ -3422,6 +3420,32 @@ def _chat_timeout_worker() -> None:
                 logger.info(f"[CHAT] Timeout session uid={uid_str}")
 
             if to_close:
+                _save_chat_sessions(data)
+
+            # ── Xử lý hàng đợi xoá tin (pending_deletions) ──────────────────────────
+            data = _load_chat_sessions()  # reload sau khi to_close
+            pend = data.get("pending_deletions", {})
+            pend_done = []
+            for puid, pitem in list(pend.items()):
+                try:
+                    sched = datetime.fromisoformat(pitem["scheduled_at"])
+                    if (now - sched).total_seconds() < 300:  # chưa đủ 5 phút
+                        continue
+                    puid_int = int(pitem.get("user_id", puid))
+                    for mid in pitem.get("user_bot_msg_ids", []):
+                        _tg_delete_message(TOKEN, puid_int, mid)
+                    for aid in _get_all_admin_ids():
+                        for mid in pitem.get("admin_msg_ids", []):
+                            _tg_delete_message(TOKEN, aid, mid)
+                    pend_done.append(puid)
+                    logger.info(f"[CHAT] Deleted queued messages uid={puid}")
+                except Exception as ex:
+                    logger.error(f"pending_deletions uid={puid}: {ex}")
+                    pend_done.append(puid)
+            if pend_done:
+                for puid in pend_done:
+                    pend.pop(puid, None)
+                data["pending_deletions"] = pend
                 _save_chat_sessions(data)
         except Exception as e:
             logger.error(f"_chat_timeout_worker error: {e}")
