@@ -3069,7 +3069,7 @@ async def callback_warranty_noop(update: Update, context: ContextTypes.DEFAULT_T
 # ─── 💬 Chat với Support ──────────────────────────────────────────────────────
 
 _CHAT_SESSIONS_FILE = os.path.join(os.path.dirname(__file__), "data", "support_chat_sessions.json")
-_CHAT_TIMEOUT_MINUTES = 30
+_CHAT_TIMEOUT_MINUTES = 10
 
 
 def _load_chat_sessions() -> dict:
@@ -3120,15 +3120,18 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
         "username": user.username or "",
         "first_name": user.first_name or "",
         "admin_msg_ids": [],
+        "user_bot_msg_ids": [],
     }
     _save_chat_sessions(data)
     db.set_user_state(user.id, "conv_state", "live_chat")
 
-    await update.message.reply_text(
+    sent_start = await update.message.reply_text(
         t(L, "chat_support_start"),
         parse_mode=ParseMode.HTML,
         reply_markup=_chat_keyboard(user.id)
     )
+    data["sessions"][uid_str]["user_bot_msg_ids"].append(sent_start.message_id)
+    _save_chat_sessions(data)
 
     # Thông báo admin(s)
     admin_ids = _get_all_admin_ids()
@@ -3259,7 +3262,7 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
     _save_chat_sessions(data)
 
 async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """User nhấn Kết thúc chat."""
+    """User nhấn Kết thúc chat — xoá toàn bộ tin rồi thông báo."""
     user = update.effective_user
     L = lang(user.id)
 
@@ -3272,6 +3275,21 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     _save_chat_sessions(data)
     db.set_user_state(user.id, "conv_state", None)
 
+    # Xoá tin bot đã gửi cho user trong phiên chat
+    if session:
+        for mid in session.get("user_bot_msg_ids", []):
+            try:
+                await context.bot.delete_message(chat_id=user.id, message_id=mid)
+            except Exception:
+                pass
+
+    # Xoá tin đã forward lên admin
+    if session:
+        for aid in _get_all_admin_ids():
+            for mid in session.get("admin_msg_ids", []):
+                _tg_delete_message(TOKEN, aid, mid)
+
+    # Gửi thông báo kết thúc (sau khi xoá)
     await update.message.reply_text(
         t(L, "chat_support_user_end"),
         reply_markup=main_keyboard(user.id)
@@ -3322,14 +3340,17 @@ async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_
             caption_header = "💬 <b>Support:</b>"
             if caption_parts:
                 caption_header += "\n" + caption_parts[0]
-            await context.bot.send_photo(
+            sent_photo = await context.bot.send_photo(
                 chat_id=user_id,
                 photo=msg.photo[-1].file_id,
                 caption=caption_header,
                 parse_mode=ParseMode.HTML,
             )
+            session.setdefault("user_bot_msg_ids", []).append(sent_photo.message_id)
         else:
-            _tg_send(TOKEN, user_id, f"💬 <b>Support:</b>\n{msg.text}")
+            sent_mid = _tg_send(TOKEN, user_id, f"💬 <b>Support:</b>\n{msg.text}")
+            if sent_mid:
+                session.setdefault("user_bot_msg_ids", []).append(sent_mid)
     except Exception as e:
         logger.error(f"_route_admin_chat_reply error: {e}")
         return True
@@ -3342,7 +3363,7 @@ async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_
 def _chat_timeout_worker() -> None:
     """Background thread: đóng phiên chat sau 30 phút không hoạt động."""
     while True:
-        time.sleep(300)  # check mỗi 5 phút
+        time.sleep(60)  # check mỗi 1 phút
         try:
             data = _load_chat_sessions()
             now = datetime.utcnow()
@@ -3366,9 +3387,20 @@ def _chat_timeout_worker() -> None:
                     data["msg_map"].pop(str(mid), None)
 
                 user_id = int(uid_str)
+
+                # Xoá tin bot đã gửi cho user
+                for mid in session.get("user_bot_msg_ids", []):
+                    _tg_delete_message(TOKEN, user_id, mid)
+
+                # Xoá tin đã forward lên admin
+                timeout_admin_ids = _get_all_admin_ids()
+                for aid in timeout_admin_ids:
+                    for mid in session.get("admin_msg_ids", []):
+                        _tg_delete_message(TOKEN, aid, mid)
+
                 try:
                     _tg_send(TOKEN, user_id,
-                             "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau 30 phút.\n"
+                             "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau 10 phút.\n"
                              "Nhấn <b>Chat với Support</b> nếu bạn cần hỗ trợ thêm.",
                              )
                 except Exception:
