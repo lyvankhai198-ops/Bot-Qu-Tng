@@ -2525,7 +2525,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = update.message.text.strip()
 
     # Admin chat reply detection — must come first
-    if update.message.reply_to_message and await _route_admin_chat_reply(update):
+    if update.message.reply_to_message and await _route_admin_chat_reply(update, context):
         return
 
     # Auto-detect and save language from which button the user pressed
@@ -3179,15 +3179,84 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
     )
     for aid in admin_ids:
         try:
-            mid = _tg_send(TOKEN, aid, msg_to_admin)
-            if mid:
-                session.setdefault("admin_msg_ids", []).append(mid)
-                data["msg_map"][str(mid)] = uid_str
+            sent = await context.bot.send_message(
+                chat_id=aid, text=msg_to_admin,
+                parse_mode=ParseMode.HTML
+            )
+            session.setdefault("admin_msg_ids", []).append(sent.message_id)
+            data["msg_map"][str(sent.message_id)] = uid_str
         except Exception as e:
             logger.error(f"handle_live_chat_message send error: {e}")
 
     _save_chat_sessions(data)
 
+
+
+
+async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Xử lý ảnh trong phiên live_chat:
+    - Nếu là admin reply ảnh → forward về user
+    - Nếu là user trong live_chat → forward ảnh lên admin
+    """
+    user = update.effective_user
+    msg  = update.message
+
+    # Admin gửi ảnh là reply → route về user
+    if msg.reply_to_message:
+        admin_ids = _get_all_admin_ids()
+        if user.id in admin_ids:
+            if await _route_admin_chat_reply(update, context):
+                return
+
+    # User gửi ảnh
+    state = db.get_user_state(user.id).get("conv_state")
+    if state != "live_chat":
+        return  # ảnh ngoài phiên chat → bỏ qua
+
+    data    = _load_chat_sessions()
+    uid_str = str(user.id)
+    session = data["sessions"].get(uid_str)
+
+    if not session or session.get("status") != "active":
+        db.set_user_state(user.id, "conv_state", None)
+        await msg.reply_text(
+            "⚠️ Phiên chat đã hết hạn. Nhấn Chat với Support để bắt đầu lại.",
+            reply_markup=main_keyboard(user.id)
+        )
+        return
+
+    session["last_active"] = datetime.utcnow().isoformat()
+
+    admin_ids = _get_all_admin_ids()
+    if not admin_ids:
+        L = lang(user.id)
+        await msg.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
+        return
+
+    name   = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+    photo  = msg.photo[-1]  # lấy ảnh độ phân giải cao nhất
+    u_cap  = msg.caption or ""
+    header = (
+        f"📷 <b>{name}</b> (<code>{user.id}</code>):\n"
+        + (u_cap + "\n" if u_cap else "")
+        + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
+    )
+
+    for aid in admin_ids:
+        try:
+            sent = await context.bot.send_photo(
+                chat_id=aid,
+                photo=photo.file_id,
+                caption=header,
+                parse_mode=ParseMode.HTML,
+            )
+            session.setdefault("admin_msg_ids", []).append(sent.message_id)
+            data["msg_map"][str(sent.message_id)] = uid_str
+        except Exception as e:
+            logger.error(f"handle_live_chat_media send error: {e}")
+
+    _save_chat_sessions(data)
 
 async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """User nhấn Kết thúc chat."""
@@ -3219,13 +3288,13 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 pass
 
 
-async def _route_admin_chat_reply(update: Update) -> bool:
+async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     Nếu admin reply một tin nhắn được forward từ user → forward reply về user.
     Trả về True nếu đã xử lý.
     """
     msg = update.message
-    if not msg or not msg.reply_to_message or not msg.text:
+    if not msg or not msg.reply_to_message or (not msg.text and not msg.photo):
         return False
 
     sender = update.effective_user
@@ -3243,11 +3312,24 @@ async def _route_admin_chat_reply(update: Update) -> bool:
     if not session or session.get("status") != "active":
         return False
 
-    # Forward reply về user
+    # Forward reply về user (text hoặc ảnh)
     user_id = int(uid_str)
-    reply_text = f"💬 <b>Support:</b>\n{msg.text}"
     try:
-        _tg_send(TOKEN, user_id, reply_text)
+        if msg.photo:
+            caption_parts = []
+            if msg.caption:
+                caption_parts.append(msg.caption)
+            caption_header = "💬 <b>Support:</b>"
+            if caption_parts:
+                caption_header += "\n" + caption_parts[0]
+            await context.bot.send_photo(
+                chat_id=user_id,
+                photo=msg.photo[-1].file_id,
+                caption=caption_header,
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            _tg_send(TOKEN, user_id, f"💬 <b>Support:</b>\n{msg.text}")
     except Exception as e:
         logger.error(f"_route_admin_chat_reply error: {e}")
         return True
@@ -4129,6 +4211,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_return_gift_init,    pattern=r"^return_gift_init$"))
     app.add_handler(CallbackQueryHandler(callback_return_gift_confirm, pattern=r"^return_gift_confirm$"))
     app.add_handler(CallbackQueryHandler(callback_return_gift_cancel,  pattern=r"^return_gift_cancel$"))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_live_chat_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
