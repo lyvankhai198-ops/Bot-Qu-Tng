@@ -3417,10 +3417,12 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Lên lịch xoá tin sau 5 phút
     if session:
         data.setdefault("pending_deletions", {})[uid_str] = {
-            "scheduled_at": datetime.utcnow().isoformat(),
-            "user_id": user.id,
+            "scheduled_at":   datetime.utcnow().isoformat(),
+            "user_id":        user.id,
+            "first_name":     session.get("first_name", user.first_name or ""),
+            "admin_chat_ids": _get_all_admin_ids(),
             "user_bot_msg_ids": session.get("user_bot_msg_ids", []),
-            "admin_msg_ids": session.get("admin_msg_ids", []),
+            "admin_msg_ids":  session.get("admin_msg_ids", []),
         }
     _save_chat_sessions(data)
 
@@ -3552,10 +3554,12 @@ def _chat_timeout_worker() -> None:
 
                 # Lên lịch xoá tin sau 5 phút
                 data.setdefault("pending_deletions", {})[uid_str] = {
-                    "scheduled_at": datetime.utcnow().isoformat(),
-                    "user_id": user_id,
+                    "scheduled_at":   datetime.utcnow().isoformat(),
+                    "user_id":        user_id,
+                    "first_name":     session.get("first_name", ""),
+                    "admin_chat_ids": _get_all_admin_ids(),
                     "user_bot_msg_ids": session.get("user_bot_msg_ids", []),
-                    "admin_msg_ids": session.get("admin_msg_ids", []),
+                    "admin_msg_ids":  session.get("admin_msg_ids", []),
                 }
 
                 try:
@@ -3603,9 +3607,16 @@ def _chat_timeout_worker() -> None:
                     puid_int = int(pitem.get("user_id", puid))
                     for mid in pitem.get("user_bot_msg_ids", []):
                         _tg_delete_message(TOKEN, puid_int, mid)
-                    for aid in _get_all_admin_ids():
-                        for mid in pitem.get("admin_msg_ids", []):
-                            _tg_delete_message(TOKEN, aid, mid)
+                    # Xoá phía admin — dùng chat IDs đã lưu lúc tạo phiên
+                    _adm_chats = pitem.get("admin_chat_ids") or _get_all_admin_ids()
+                    _adm_msgs  = pitem.get("admin_msg_ids", [])
+                    _del_ok = 0
+                    for aid in _adm_chats:
+                        for mid in _adm_msgs:
+                            if _tg_delete_message(TOKEN, aid, mid):
+                                _del_ok += 1
+                    if _adm_msgs:
+                        logger.info(f"[CHAT] Admin-side deleted {_del_ok}/{len(_adm_chats)*len(_adm_msgs)} msgs uid={puid}")
                     # Sau khi xoá: gửi thông báo + hiện lại main menu
                     try:
                         _tg_send(TOKEN, puid_int,
@@ -3618,6 +3629,14 @@ def _chat_timeout_worker() -> None:
                         _tg_send_markup(TOKEN, puid_int, welcome_text, markup=kb_dict)
                     except Exception as wex:
                         logger.warning(f"post-deletion welcome error uid={puid}: {wex}")
+                    # Thông báo admin: tin đã xoá
+                    try:
+                        _sname = pitem.get("first_name", "") or str(puid)
+                        for _aid in _adm_chats:
+                            _tg_send(TOKEN, _aid,
+                                     f"🗑️ Tin nhắn phiên chat với <b>{_sname}</b> (<code>{puid}</code>) đã được xoá tự động.")
+                    except Exception:
+                        pass
                     pend_done.append(puid)
                     logger.info(f"[CHAT] Deleted queued messages uid={puid}")
                 except Exception as ex:
