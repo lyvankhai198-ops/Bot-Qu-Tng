@@ -3406,10 +3406,12 @@ async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_
                 photo=msg.photo[-1].file_id,
                 caption=caption_header,
                 parse_mode=ParseMode.HTML,
+                reply_markup=_chat_keyboard(user_id),
             )
             session.setdefault("user_bot_msg_ids", []).append(sent_photo.message_id)
         else:
-            sent_mid = _tg_send(TOKEN, user_id, f"💬 <b>Support:</b>\n{msg.text}")
+            kb = _chat_keyboard(user_id).to_dict()
+            sent_mid = _tg_send_markup(TOKEN, user_id, "💬 <b>Support:</b>\n" + msg.text, markup=kb)
             if sent_mid:
                 session.setdefault("user_bot_msg_ids", []).append(sent_mid)
     except Exception as e:
