@@ -3118,6 +3118,18 @@ def _append_chat_history(session: dict, uid_str: str, end_reason: str) -> None:
         logger.error(f"_append_chat_history error: {e}")
 
 
+# ─── 💬 Chat với Support — Anti-spam ─────────────────────────────────────────
+# In-memory: {uid_str: [timestamp, ...]}  — timestamps của tin nhắn gần đây
+_chat_msg_timestamps: dict[str, list] = {}
+# In-memory: {uid_str: float}  — thời điểm phiên trước kết thúc (epoch)
+_chat_session_ended_at: dict[str, float] = {}
+
+_CHAT_SPAM_MAX_MSGS   = 10    # tối đa N tin nhắn
+_CHAT_SPAM_WINDOW_SEC = 60    # trong vòng X giây
+_CHAT_SPAM_WARN_AT    = 8     # cảnh báo từ tin thứ N
+_CHAT_SESSION_COOLDOWN_SEC = 120  # cooldown 2 phút giữa các phiên
+
+
 # ─── 💬 Chat với Support ──────────────────────────────────────────────────────
 
 _CHAT_SESSIONS_FILE = os.path.join(os.path.dirname(__file__), "data", "support_chat_sessions.json")
@@ -3164,6 +3176,28 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
         return
 
     # Tạo phiên mới
+    # ── Anti-spam: cooldown giữa các phiên ─────────────────────────────
+    _ended = _chat_session_ended_at.get(uid_str, 0)
+    _elapsed = time.time() - _ended
+    if _elapsed < _CHAT_SESSION_COOLDOWN_SEC:
+        _wait = int(_CHAT_SESSION_COOLDOWN_SEC - _elapsed) + 1
+        await update.message.reply_text(
+            "Vi vui lòng chờ " + str(_wait) + "s trước khi bắt đầu phiên mới.",
+            reply_markup=main_keyboard(user.id)
+        )
+        return
+    # ───────────────────────────────────────────────────────────
+    # ── Anti-spam: cooldown giữa các phiên ─────────────────────────────
+    _ended_at = _chat_session_ended_at.get(uid_str, 0)
+    _elapsed  = time.time() - _ended_at
+    if _elapsed < _CHAT_SESSION_COOLDOWN_SEC:
+        _wait = int(_CHAT_SESSION_COOLDOWN_SEC - _elapsed) + 1
+        await update.message.reply_text(
+            "⏱ Vui lòng chờ " + str(_wait) + "s trước khi bắt đầu phiên mới.",
+            reply_markup=main_keyboard(user.id)
+        )
+        return
+    # ─────────────────────────────────────────────────────────────────
     now_ts = datetime.utcnow().isoformat()
     data["sessions"][uid_str] = {
         "started_at": now_ts,
@@ -3221,6 +3255,25 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
+    # ── Anti-spam: rate limit tin nhắn ─────────────────────────────
+    _now_ts = time.time()
+    _tss = _chat_msg_timestamps.setdefault(uid_str, [])
+    _tss[:] = [_t for _t in _tss if _now_ts - _t < _CHAT_SPAM_WINDOW_SEC]
+    if len(_tss) >= _CHAT_SPAM_MAX_MSGS:
+        _wait = int(_CHAT_SPAM_WINDOW_SEC - (_now_ts - _tss[0])) + 1
+        await update.message.reply_text(
+            "🚫 Bạn gử\i quá nhiều tin. Vui lòng chờ " + str(_wait) + "s trước khi tiếp tục.",
+            reply_markup=_chat_keyboard(user.id)
+        )
+        return
+    _tss.append(_now_ts)
+    if len(_tss) >= _CHAT_SPAM_WARN_AT:
+        _rem = _CHAT_SPAM_MAX_MSGS - len(_tss)
+        await update.message.reply_text(
+            "⚠️ Còn " + str(_rem) + " tin trước khi bị tạm dừng.",
+            reply_markup=_chat_keyboard(user.id)
+        )
+    # ───────────────────────────────────────────────────────────
     session["last_active"] = datetime.utcnow().isoformat()
     session["msg_count"] = session.get("msg_count", 0) + 1
 
@@ -3330,6 +3383,8 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         for mid in session.get("admin_msg_ids", []):
             data["msg_map"].pop(str(mid), None)
     db.set_user_state(user.id, "conv_state", None)
+    _chat_session_ended_at[uid_str] = time.time()  # anti-spam
+    _chat_msg_timestamps.pop(uid_str, None)
 
     # Lên lịch xoá tin sau 5 phút
     if session:
@@ -3479,6 +3534,8 @@ def _chat_timeout_worker() -> None:
                 except Exception:
                     pass
                 db.set_user_state(user_id, "conv_state", None)
+                _chat_session_ended_at[uid_str] = time.time()  # anti-spam
+                _chat_msg_timestamps.pop(uid_str, None)
 
                 admin_ids = _get_all_admin_ids()
                 sname = session.get("username") or session.get("first_name") or uid_str
