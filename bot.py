@@ -3344,10 +3344,14 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # Thông báo kết thúc + cảnh báo sắp xoá
     warn_suffix = "\n\n🗑 Tin nhắn trong phiên chat sẽ tự xoá sau 5 phút."
-    await update.message.reply_text(
+    end_msg = await update.message.reply_text(
         t(L, "chat_support_user_end") + warn_suffix,
         reply_markup=main_keyboard(user.id)
     )
+    # Track message kết thúc vào pending_deletions để xoá cùng lúc
+    if session and uid_str in data.get("pending_deletions", {}):
+        data["pending_deletions"][uid_str].setdefault("user_bot_msg_ids", []).append(end_msg.message_id)
+        _save_chat_sessions(data)
 
     if session:
         admin_ids = _get_all_admin_ids()
@@ -3457,11 +3461,13 @@ def _chat_timeout_worker() -> None:
                 }
 
                 try:
-                    _tg_send(TOKEN, user_id,
+                    timeout_notif_id = _tg_send(TOKEN, user_id,
                              "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau 10 phút.\n"
                              "Nhấn <b>Chat với Support</b> nếu bạn cần hỗ trợ thêm.\n\n"
                              "🗑 Tin nhắn trong phiên chat sẽ tự xoá sau 5 phút.",
                              )
+                    if timeout_notif_id:
+                        data["pending_deletions"][uid_str].setdefault("user_bot_msg_ids", []).append(timeout_notif_id)
                 except Exception:
                     pass
                 db.set_user_state(user_id, "conv_state", None)
@@ -3498,6 +3504,18 @@ def _chat_timeout_worker() -> None:
                     for aid in _get_all_admin_ids():
                         for mid in pitem.get("admin_msg_ids", []):
                             _tg_delete_message(TOKEN, aid, mid)
+                    # Sau khi xoá: gửi thông báo + hiện lại main menu
+                    try:
+                        _tg_send(TOKEN, puid_int,
+                                 "🗑 <b>Tin nhắn chat đã được xoá.</b>\n"
+                                 "Bạn có thể bắt đầu phiên hỗ trợ mới bất cứ lúc nào.")
+                        kb_dict = main_keyboard(puid_int).to_dict()
+                        sname = pitem.get("first_name", "") or str(puid)
+                        L_user = lang(puid_int)
+                        welcome_text = t(L_user, "welcome_admin", name=sname) if is_admin(puid_int) else t(L_user, "welcome", name=sname)
+                        _tg_send_markup(TOKEN, puid_int, welcome_text, markup=kb_dict)
+                    except Exception as wex:
+                        logger.warning(f"post-deletion welcome error uid={puid}: {wex}")
                     pend_done.append(puid)
                     logger.info(f"[CHAT] Deleted queued messages uid={puid}")
                 except Exception as ex:
