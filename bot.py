@@ -3195,7 +3195,10 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
         f"<i>Reply bất kỳ tin nhắn nào từ người dùng này để trả lời họ</i>"
     )
     for aid in admin_ids:
-        _tg_send(TOKEN, aid, notif)
+        mid = _tg_send(TOKEN, aid, notif)
+        if mid:
+            data["sessions"][uid_str].setdefault("admin_msg_ids", []).append(mid)
+    _save_chat_sessions(data)
 
 
 async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3362,9 +3365,12 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         for aid in admin_ids:
             try:
-                _tg_send(TOKEN, aid, notif)
+                mid = _tg_send(TOKEN, aid, notif)
+                if mid and uid_str in data.get("pending_deletions", {}):
+                    data["pending_deletions"][uid_str].setdefault("admin_msg_ids", []).append(mid)
             except Exception:
                 pass
+        _save_chat_sessions(data)
 
 
 async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -3483,7 +3489,9 @@ def _chat_timeout_worker() -> None:
                 )
                 for aid in admin_ids:
                     try:
-                        _tg_send(TOKEN, aid, notif)
+                        mid = _tg_send(TOKEN, aid, notif)
+                        if mid and uid_str in data.get("pending_deletions", {}):
+                            data["pending_deletions"][uid_str].setdefault("admin_msg_ids", []).append(mid)
                     except Exception:
                         pass
                 logger.info(f"[CHAT] Timeout session uid={uid_str}")
