@@ -3066,6 +3066,58 @@ async def callback_warranty_noop(update: Update, context: ContextTypes.DEFAULT_T
     await update.callback_query.answer()
 
 
+
+def _get_chat_settings() -> dict:
+    """Đọc cài đặt chat support từ file (fallback về mặc định)."""
+    try:
+        p = os.path.join(os.path.dirname(__file__), "data", "support_chat_settings.json")
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                s = _json.load(f)
+            return {
+                "timeout_minutes":      int(s.get("timeoutMinutes",     10)),
+                "delete_delay_seconds": int(s.get("deleteDelayMinutes",  5)) * 60,
+            }
+    except Exception:
+        pass
+    return {"timeout_minutes": 10, "delete_delay_seconds": 300}
+
+
+def _append_chat_history(session: dict, uid_str: str, end_reason: str) -> None:
+    """Ghi thêm 1 phiên vào lịch sử (support_chat_history.json), giữ tối đa 500 mục."""
+    try:
+        p = os.path.join(os.path.dirname(__file__), "data", "support_chat_history.json")
+        history: list = []
+        if os.path.exists(p):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    history = _json.load(f)
+                if not isinstance(history, list):
+                    history = []
+            except Exception:
+                history = []
+
+        entry = {
+            "uid":       uid_str,
+            "userId":    int(uid_str),
+            "username":  session.get("username", ""),
+            "firstName": session.get("first_name", ""),
+            "startedAt": session.get("started_at", ""),
+            "endedAt":   datetime.utcnow().isoformat(),
+            "endReason": end_reason,
+            "msgCount":  session.get("msg_count", 0),
+        }
+        history.append(entry)
+        # Giữ tối đa 500 mục (cũ nhất bị xoá trước)
+        if len(history) > 500:
+            history = history[-500:]
+
+        with open(p, "w", encoding="utf-8") as f:
+            _json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"_append_chat_history error: {e}")
+
+
 # ─── 💬 Chat với Support ──────────────────────────────────────────────────────
 
 _CHAT_SESSIONS_FILE = os.path.join(os.path.dirname(__file__), "data", "support_chat_sessions.json")
@@ -3167,6 +3219,7 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     session["last_active"] = datetime.utcnow().isoformat()
+    session["msg_count"] = session.get("msg_count", 0) + 1
 
     admin_ids = _get_all_admin_ids()
     if not admin_ids:
@@ -3230,6 +3283,7 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     session["last_active"] = datetime.utcnow().isoformat()
+    session["msg_count"] = session.get("msg_count", 0) + 1
 
     admin_ids = _get_all_admin_ids()
     if not admin_ids:
@@ -3283,6 +3337,10 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "admin_msg_ids": session.get("admin_msg_ids", []),
         }
     _save_chat_sessions(data)
+
+    # Ghi vào lịch sử
+    if session:
+        _append_chat_history(session, uid_str, "user_ended")
 
     # Thông báo kết thúc + cảnh báo sắp xoá
     warn_suffix = "\n\n🗑 Tin nhắn trong phiên chat sẽ tự xoá sau 5 phút."
@@ -3375,7 +3433,7 @@ def _chat_timeout_worker() -> None:
                     continue
                 try:
                     last_dt = datetime.fromisoformat(last)
-                    if (now - last_dt).total_seconds() > _CHAT_TIMEOUT_MINUTES * 60:
+                    if (now - last_dt).total_seconds() > _get_chat_settings()["timeout_minutes"] * 60:
                         to_close.append(uid_str)
                 except Exception:
                     pass
@@ -3386,6 +3444,9 @@ def _chat_timeout_worker() -> None:
                     data["msg_map"].pop(str(mid), None)
 
                 user_id = int(uid_str)
+
+                # Ghi vào lịch sử
+                _append_chat_history(session, uid_str, "timeout")
 
                 # Lên lịch xoá tin sau 5 phút
                 data.setdefault("pending_deletions", {})[uid_str] = {
@@ -3429,7 +3490,7 @@ def _chat_timeout_worker() -> None:
             for puid, pitem in list(pend.items()):
                 try:
                     sched = datetime.fromisoformat(pitem["scheduled_at"])
-                    if (now - sched).total_seconds() < 300:  # chưa đủ 5 phút
+                    if (now - sched).total_seconds() < _get_chat_settings()["delete_delay_seconds"]:
                         continue
                     puid_int = int(pitem.get("user_id", puid))
                     for mid in pitem.get("user_bot_msg_ids", []):
