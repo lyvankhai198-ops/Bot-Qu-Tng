@@ -3069,18 +3069,30 @@ async def callback_warranty_noop(update: Update, context: ContextTypes.DEFAULT_T
 
 def _get_chat_settings() -> dict:
     """Đọc cài đặt chat support từ file (fallback về mặc định)."""
+    defaults = {
+        "timeout_minutes":      10,
+        "delete_delay_seconds": 300,
+        "spam_max_msgs":        10,
+        "spam_window_sec":      60,
+        "spam_warn_at":          8,
+        "session_cooldown_sec": 120,
+    }
     try:
         p = os.path.join(os.path.dirname(__file__), "data", "support_chat_settings.json")
         if os.path.exists(p):
             with open(p, encoding="utf-8") as f:
                 s = _json.load(f)
             return {
-                "timeout_minutes":      int(s.get("timeoutMinutes",     10)),
-                "delete_delay_seconds": int(s.get("deleteDelayMinutes",  5)) * 60,
+                "timeout_minutes":      int(s.get("timeoutMinutes",       10)),
+                "delete_delay_seconds": int(s.get("deleteDelayMinutes",    5)) * 60,
+                "spam_max_msgs":        int(s.get("spamMaxMsgs",          10)),
+                "spam_window_sec":      int(s.get("spamWindowSec",        60)),
+                "spam_warn_at":         int(s.get("spamWarnAt",            8)),
+                "session_cooldown_sec": int(s.get("sessionCooldownSec",  120)),
             }
     except Exception:
         pass
-    return {"timeout_minutes": 10, "delete_delay_seconds": 300}
+    return defaults
 
 
 def _append_chat_history(session: dict, uid_str: str, end_reason: str) -> None:
@@ -3125,10 +3137,10 @@ _chat_msg_timestamps: dict[str, list] = {}
 # In-memory: {uid_str: float}  — thời điểm phiên trước kết thúc (epoch)
 _chat_session_ended_at: dict[str, float] = {}
 
-_CHAT_SPAM_MAX_MSGS   = 10    # tối đa N tin nhắn
-_CHAT_SPAM_WINDOW_SEC = 60    # trong vòng X giây
-_CHAT_SPAM_WARN_AT    = 8     # cảnh báo từ tin thứ N
-_CHAT_SESSION_COOLDOWN_SEC = 120  # cooldown 2 phút giữa các phiên
+# Spam settings đọc động từ _get_chat_settings() — không hardcode
+def _spam_cfg():
+    s = _get_chat_settings()
+    return s["spam_max_msgs"], s["spam_window_sec"], s["spam_warn_at"], s["session_cooldown_sec"]
 
 
 # ─── 💬 Chat với Support ──────────────────────────────────────────────────────
@@ -3178,10 +3190,11 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
 
     # Tạo phiên mới
     # ── Anti-spam: cooldown giữa các phiên ─────────────────────────────
+    _, _, _, _sess_cd = _spam_cfg()
     _ended = _chat_session_ended_at.get(uid_str, 0)
     _elapsed = time.time() - _ended
-    if _elapsed < _CHAT_SESSION_COOLDOWN_SEC:
-        _wait = int(_CHAT_SESSION_COOLDOWN_SEC - _elapsed) + 1
+    if _sess_cd > 0 and _elapsed < _sess_cd:
+        _wait = int(_sess_cd - _elapsed) + 1
         await update.message.reply_text(
             "Vi vui lòng chờ " + str(_wait) + "s trước khi bắt đầu phiên mới.",
             reply_markup=main_keyboard(user.id)
@@ -3189,10 +3202,11 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
         return
     # ───────────────────────────────────────────────────────────
     # ── Anti-spam: cooldown giữa các phiên ─────────────────────────────
+    _, _, _, _sess_cd = _spam_cfg()
     _ended_at = _chat_session_ended_at.get(uid_str, 0)
     _elapsed  = time.time() - _ended_at
-    if _elapsed < _CHAT_SESSION_COOLDOWN_SEC:
-        _wait = int(_CHAT_SESSION_COOLDOWN_SEC - _elapsed) + 1
+    if _sess_cd > 0 and _elapsed < _sess_cd:
+        _wait = int(_sess_cd - _elapsed) + 1
         await update.message.reply_text(
             "⏱ Vui lòng chờ " + str(_wait) + "s trước khi bắt đầu phiên mới.",
             reply_markup=main_keyboard(user.id)
@@ -3257,19 +3271,20 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
         return
 
     # ── Anti-spam: rate limit tin nhắn ─────────────────────────────
+    _spam_max, _spam_win, _spam_warn, _ = _spam_cfg()
     _now_ts = time.time()
     _tss = _chat_msg_timestamps.setdefault(uid_str, [])
-    _tss[:] = [_t for _t in _tss if _now_ts - _t < _CHAT_SPAM_WINDOW_SEC]
-    if len(_tss) >= _CHAT_SPAM_MAX_MSGS:
-        _wait = int(_CHAT_SPAM_WINDOW_SEC - (_now_ts - _tss[0])) + 1
+    _tss[:] = [_t for _t in _tss if _now_ts - _t < _spam_win]
+    if len(_tss) >= _spam_max:
+        _wait = int(_spam_win - (_now_ts - _tss[0])) + 1
         await update.message.reply_text(
-            "🚫 Bạn gử\i quá nhiều tin. Vui lòng chờ " + str(_wait) + "s trước khi tiếp tục.",
+            "🚫 Bạn gử i quá nhiều tin. Vui lòng chờ " + str(_wait) + "s trước khi tiếp tục.",
             reply_markup=_chat_keyboard(user.id)
         )
         return
     _tss.append(_now_ts)
-    if len(_tss) >= _CHAT_SPAM_WARN_AT:
-        _rem = _CHAT_SPAM_MAX_MSGS - len(_tss)
+    if len(_tss) >= _spam_warn:
+        _rem = _spam_max - len(_tss)
         await update.message.reply_text(
             "⚠️ Còn " + str(_rem) + " tin trước khi bị tạm dừng.",
             reply_markup=_chat_keyboard(user.id)

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -9,8 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-  DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog"
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -18,7 +17,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import {
   MessageSquare, Clock, User, Search, History,
-  Settings, RefreshCw, XCircle, Timer, Trash2,
+  Settings, RefreshCw, XCircle, Timer, Trash2, ShieldAlert,
 } from "lucide-react"
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -85,13 +84,11 @@ function ChatBubble({ msg }: { msg: { role: string; text: string; time: string }
   const isUser = msg.role === "user"
   return (
     <div className={`flex flex-col gap-0.5 ${isUser ? "items-start" : "items-end"}`}>
-      <div
-        className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
-          isUser
-            ? "bg-muted text-foreground rounded-tl-sm"
-            : "bg-primary text-primary-foreground rounded-tr-sm"
-        }`}
-      >
+      <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
+        isUser
+          ? "bg-muted text-foreground rounded-tl-sm"
+          : "bg-primary text-primary-foreground rounded-tr-sm"
+      }`}>
         {msg.text}
       </div>
       <span className="text-[10px] text-muted-foreground px-1">{fmtTime(msg.time)}</span>
@@ -108,7 +105,6 @@ function SessionDetailDialog({
 }) {
   const [tab, setTab] = useState<"info" | "chat">("info")
   if (!row) return null
-
   const messages: any[] = row.messages ?? []
 
   return (
@@ -116,89 +112,47 @@ function SessionDetailDialog({
       <DialogContent className="max-w-sm max-h-[90vh] flex flex-col">
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
-            <User className="h-4 w-4 text-primary" />
-            Chi tiết phiên chat
+            <User className="h-4 w-4 text-primary" />Chi tiết phiên chat
           </DialogTitle>
           <DialogDescription>{fmtDate(row.startedAt)}</DialogDescription>
         </DialogHeader>
 
-        {/* Tab switcher */}
         {messages.length > 0 && (
           <div className="flex shrink-0 border rounded-lg overflow-hidden text-sm">
-            <button
-              onClick={() => setTab("info")}
-              className={`flex-1 py-2 font-medium transition-colors ${tab === "info" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-            >
+            <button onClick={() => setTab("info")} className={`flex-1 py-2 font-medium transition-colors ${tab === "info" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
               Thông tin
             </button>
-            <button
-              onClick={() => setTab("chat")}
-              className={`flex-1 py-2 font-medium transition-colors ${tab === "chat" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-            >
+            <button onClick={() => setTab("chat")} className={`flex-1 py-2 font-medium transition-colors ${tab === "chat" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
               Hội thoại ({messages.length})
             </button>
           </div>
         )}
 
-        {/* Content — scrollable */}
         <div className="flex-1 overflow-y-auto min-h-0">
           {tab === "info" ? (
             <div className="space-y-3 text-sm py-1">
-              {/* user info */}
               <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Tên</span>
-                  <span className="font-medium">{row.firstName || "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Username</span>
-                  <span className="font-mono">{row.username ? `@${row.username}` : "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">ID</span>
-                  <code className="font-mono text-xs">{row.userId}</code>
-                </div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Tên</span><span className="font-medium">{row.firstName || "—"}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Username</span><span className="font-mono">{row.username ? `@${row.username}` : "—"}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">ID</span><code className="font-mono text-xs">{row.userId}</code></div>
               </div>
-              {/* session info */}
               <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Bắt đầu</span>
-                  <span>{fmtDate(row.startedAt)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Kết thúc</span>
-                  <span>{fmtDate(row.endedAt)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Thời lượng</span>
-                  <span className="font-medium">{fmtDuration(row.startedAt, row.endedAt)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Số tin nhắn</span>
-                  <span className="font-medium">{row.msgCount ?? 0} tin</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Lý do đóng</span>
-                  <EndReasonBadge reason={row.endReason} />
-                </div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Bắt đầu</span><span>{fmtDate(row.startedAt)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Kết thúc</span><span>{fmtDate(row.endedAt)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Thời lượng</span><span className="font-medium">{fmtDuration(row.startedAt, row.endedAt)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Số tin nhắn</span><span className="font-medium">{row.msgCount ?? 0} tin</span></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Lý do đóng</span><EndReasonBadge reason={row.endReason} /></div>
               </div>
               {messages.length === 0 && (
-                <p className="text-xs text-muted-foreground text-center">
-                  Phiên này chưa có nội dung hội thoại được lưu.
-                </p>
+                <p className="text-xs text-muted-foreground text-center">Phiên này chưa có nội dung hội thoại được lưu.</p>
               )}
             </div>
           ) : (
-            /* Chat transcript */
             <div className="space-y-3 py-2">
-              {/* legend */}
               <div className="flex justify-between text-[11px] text-muted-foreground px-1">
-                <span>👤 Khách hàng</span>
-                <span>Support 🎧</span>
+                <span>👤 Khách hàng</span><span>Support 🎧</span>
               </div>
-              {messages.map((m: any, i: number) => (
-                <ChatBubble key={i} msg={m} />
-              ))}
+              {messages.map((m: any, i: number) => <ChatBubble key={i} msg={m} />)}
             </div>
           )}
         </div>
@@ -260,7 +214,6 @@ function HistoryTab() {
 
   return (
     <div className="space-y-4">
-      {/* toolbar */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
@@ -279,7 +232,6 @@ function HistoryTab() {
         </div>
       </div>
 
-      {/* summary */}
       {!isLoading && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
@@ -348,9 +300,7 @@ function HistoryTab() {
               <TableBody>
                 {isLoading
                   ? Array(8).fill(0).map((_, i) => (
-                      <TableRow key={i}>
-                        <TableCell colSpan={7} className="h-12"><div className="h-4 bg-muted animate-pulse rounded" /></TableCell>
-                      </TableRow>
+                      <TableRow key={i}><TableCell colSpan={7} className="h-12"><div className="h-4 bg-muted animate-pulse rounded" /></TableCell></TableRow>
                     ))
                   : rows.length === 0
                     ? <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground">Chưa có lịch sử phiên chat.</TableCell></TableRow>
@@ -429,19 +379,63 @@ function HistoryTab() {
 
 // ─── Settings tab ─────────────────────────────────────────────────────────────
 
+function NumberField({
+  id, label, hint, value, onChange, min, max,
+}: {
+  id: string; label: string; hint?: string;
+  value: number; onChange: (v: number) => void; min: number; max: number;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-sm font-medium">{label}</Label>
+      <Input
+        id={id} type="number" min={min} max={max}
+        value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        className="min-h-[44px]"
+      />
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
 function SettingsTab() {
   const { toast } = useToast()
+
+  // Phiên chat
   const [timeoutMinutes,     setTimeoutMinutes]     = useState(10)
   const [deleteDelayMinutes, setDeleteDelayMinutes] = useState(5)
+
+  // Chống spam
+  const [spamMaxMsgs,        setSpamMaxMsgs]        = useState(10)
+  const [spamWindowSec,      setSpamWindowSec]      = useState(60)
+  const [spamWarnAt,         setSpamWarnAt]         = useState(8)
+  const [sessionCooldownSec, setSessionCooldownSec] = useState(120)
 
   const { isLoading } = useQuery({
     queryKey: ["chat-support-settings"],
     queryFn: () => apiFetch("GET", "/bot/chat-support/settings"),
-    select: (d: any) => { setTimeoutMinutes(d.timeoutMinutes ?? 10); setDeleteDelayMinutes(d.deleteDelayMinutes ?? 5); return d },
+    select: (d: any) => {
+      setTimeoutMinutes(d.timeoutMinutes     ?? 10)
+      setDeleteDelayMinutes(d.deleteDelayMinutes ?? 5)
+      setSpamMaxMsgs(d.spamMaxMsgs           ?? 10)
+      setSpamWindowSec(d.spamWindowSec       ?? 60)
+      setSpamWarnAt(d.spamWarnAt             ?? 8)
+      setSessionCooldownSec(d.sessionCooldownSec ?? 120)
+      return d
+    },
   })
 
+  // Validate warnAt < maxMsgs trước khi submit
+  const warnAtError = spamWarnAt >= spamMaxMsgs
+    ? `Cảnh báo (${spamWarnAt}) phải nhỏ hơn giới hạn chặn (${spamMaxMsgs})`
+    : null
+
   const mutation = useMutation({
-    mutationFn: () => apiFetch("PUT", "/bot/chat-support/settings", { timeoutMinutes, deleteDelayMinutes }),
+    mutationFn: () => apiFetch("PUT", "/bot/chat-support/settings", {
+      timeoutMinutes, deleteDelayMinutes,
+      spamMaxMsgs, spamWindowSec, spamWarnAt, sessionCooldownSec,
+    }),
     onSuccess: () => toast({ title: "Đã lưu cài đặt" }),
     onError:   (e: any) => toast({ title: "Lỗi", description: e.message, variant: "destructive" }),
   })
@@ -450,28 +444,91 @@ function SettingsTab() {
 
   return (
     <div className="space-y-5 max-w-sm">
+      {/* ── Phiên chat ── */}
       <Card>
-        <CardContent className="p-4 space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="timeout" className="flex items-center gap-2">
-              <Timer className="h-4 w-4 text-muted-foreground" />Timeout phiên (phút)
-            </Label>
-            <Input id="timeout" type="number" min={1} max={120} value={timeoutMinutes} onChange={e => setTimeoutMinutes(Number(e.target.value))} className="min-h-[44px]" />
-            <p className="text-xs text-muted-foreground">Phiên tự đóng nếu không có tin nhắn sau {timeoutMinutes} phút.</p>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Clock className="h-4 w-4 text-muted-foreground" />Phiên chat
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-4">
+          <NumberField
+            id="timeout" label="Timeout phiên (phút)"
+            hint={`Phiên tự đóng sau ${timeoutMinutes} phút không có tin nhắn.`}
+            value={timeoutMinutes} onChange={setTimeoutMinutes} min={1} max={120}
+          />
+          <NumberField
+            id="delay" label="Thời gian xoá tin (phút)"
+            hint={`Tin nhắn bị xoá ${deleteDelayMinutes} phút sau khi phiên kết thúc.`}
+            value={deleteDelayMinutes} onChange={setDeleteDelayMinutes} min={1} max={60}
+          />
+          <NumberField
+            id="cooldown" label="Cooldown mở phiên mới (giây)"
+            hint={`User phải chờ ${sessionCooldownSec}s sau khi đóng phiên trước. Đặt 0 để tắt.`}
+            value={sessionCooldownSec} onChange={setSessionCooldownSec} min={0} max={600}
+          />
+        </CardContent>
+      </Card>
+
+      {/* ── Chống spam tin nhắn ── */}
+      <Card>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 text-muted-foreground" />Chống spam tin nhắn
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <NumberField
+              id="maxMsgs" label="Giới hạn chặn (tin)"
+              hint="Chặn khi vượt quá"
+              value={spamMaxMsgs} onChange={setSpamMaxMsgs} min={1} max={100}
+            />
+            <NumberField
+              id="window" label="Cửa sổ (giây)"
+              hint="Tính trong N giây"
+              value={spamWindowSec} onChange={setSpamWindowSec} min={10} max={600}
+            />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="delay" className="flex items-center gap-2">
-              <Trash2 className="h-4 w-4 text-muted-foreground" />Thời gian xoá tin (phút)
-            </Label>
-            <Input id="delay" type="number" min={1} max={60} value={deleteDelayMinutes} onChange={e => setDeleteDelayMinutes(Number(e.target.value))} className="min-h-[44px]" />
-            <p className="text-xs text-muted-foreground">Tin nhắn bị xoá {deleteDelayMinutes} phút sau khi phiên kết thúc.</p>
+          <div className="space-y-1.5">
+            <Label htmlFor="warnAt" className="text-sm font-medium">Cảnh báo từ tin thứ</Label>
+            <Input
+              id="warnAt" type="number" min={1} max={spamMaxMsgs - 1}
+              value={spamWarnAt}
+              onChange={e => setSpamWarnAt(Number(e.target.value))}
+              className={`min-h-[44px] ${warnAtError ? "border-destructive" : ""}`}
+            />
+            {warnAtError
+              ? <p className="text-xs text-destructive">{warnAtError}</p>
+              : <p className="text-xs text-muted-foreground">
+                  Gửi cảnh báo khi user đạt tin thứ {spamWarnAt} trong {spamWindowSec}s (còn {spamMaxMsgs - spamWarnAt} tin trước khi bị chặn).
+                </p>
+            }
+          </div>
+
+          {/* Summary box */}
+          <div className="rounded-md bg-muted/50 border p-3 text-xs text-muted-foreground space-y-1">
+            <p>📊 <strong>Tóm tắt:</strong></p>
+            <p>• Cảnh báo khi gửi tin thứ <strong>{spamWarnAt}</strong> trong <strong>{spamWindowSec}s</strong></p>
+            <p>• Chặn khi gửi tin thứ <strong>{spamMaxMsgs}</strong> trong <strong>{spamWindowSec}s</strong></p>
+            <p>• Cooldown mở phiên mới: <strong>{sessionCooldownSec === 0 ? "Tắt" : `${sessionCooldownSec}s`}</strong></p>
           </div>
         </CardContent>
       </Card>
-      <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} className="w-full min-h-[44px]">
-        {mutation.isPending ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Đang lưu...</> : "Lưu cài đặt"}
+
+      <Button
+        onClick={() => mutation.mutate()}
+        disabled={mutation.isPending || !!warnAtError}
+        className="w-full min-h-[44px]"
+      >
+        {mutation.isPending
+          ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Đang lưu...</>
+          : "Lưu cài đặt"
+        }
       </Button>
-      <p className="text-xs text-muted-foreground text-center">⚠️ Cài đặt có hiệu lực ngay lần check tiếp theo của bot (trong vòng 1 phút).</p>
+      <p className="text-xs text-muted-foreground text-center">
+        ⚠️ Cài đặt spam có hiệu lực ngay lần gửi tin tiếp theo (đọc realtime từ file).
+      </p>
     </div>
   )
 }

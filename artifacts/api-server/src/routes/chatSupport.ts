@@ -9,7 +9,11 @@ const CHAT_SETTINGS_FILE = "support_chat_settings";
 
 const DEFAULT_SETTINGS = {
   timeoutMinutes:     10,
-  deleteDelayMinutes: 5,
+  deleteDelayMinutes:  5,
+  spamMaxMsgs:        10,
+  spamWindowSec:      60,
+  spamWarnAt:          8,
+  sessionCooldownSec: 120,
 };
 
 // ── GET /bot/chat-support/history ─────────────────────────────────────────────
@@ -63,11 +67,28 @@ router.put("/bot/chat-support/settings", requireAuth, async (req: any, res: any)
   const body    = req.body ?? {};
   const updated: any = { ...DEFAULT_SETTINGS, ...stored };
 
+  // Phiên chat
   if (typeof body.timeoutMinutes === "number" && body.timeoutMinutes >= 1 && body.timeoutMinutes <= 120) {
     updated.timeoutMinutes = body.timeoutMinutes;
   }
   if (typeof body.deleteDelayMinutes === "number" && body.deleteDelayMinutes >= 1 && body.deleteDelayMinutes <= 60) {
     updated.deleteDelayMinutes = body.deleteDelayMinutes;
+  }
+
+  // Chống spam
+  if (typeof body.spamMaxMsgs === "number" && body.spamMaxMsgs >= 1 && body.spamMaxMsgs <= 100) {
+    updated.spamMaxMsgs = body.spamMaxMsgs;
+  }
+  if (typeof body.spamWindowSec === "number" && body.spamWindowSec >= 10 && body.spamWindowSec <= 600) {
+    updated.spamWindowSec = body.spamWindowSec;
+  }
+  if (typeof body.spamWarnAt === "number" && body.spamWarnAt >= 1) {
+    // spamWarnAt phải nhỏ hơn spamMaxMsgs
+    const max = typeof body.spamMaxMsgs === "number" ? body.spamMaxMsgs : updated.spamMaxMsgs;
+    updated.spamWarnAt = Math.min(body.spamWarnAt, max - 1);
+  }
+  if (typeof body.sessionCooldownSec === "number" && body.sessionCooldownSec >= 0 && body.sessionCooldownSec <= 600) {
+    updated.sessionCooldownSec = body.sessionCooldownSec;
   }
 
   await writeJson(CHAT_SETTINGS_FILE, updated);
