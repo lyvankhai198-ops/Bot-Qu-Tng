@@ -60,7 +60,7 @@ def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([
         [t(L, "btn_support"), t(L, "btn_gift")],
         [t(L, "btn_check_order"), t(L, "btn_shop")],
-        [t(L, "btn_gift_box"), t(L, "btn_intro")],
+        [t(L, "btn_chat_support"), t(L, "btn_intro")],
     ], resize_keyboard=True)
 
 def back_keyboard(user_id: int) -> ReplyKeyboardMarkup:
@@ -2509,7 +2509,7 @@ async def handle_intro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 # All button keys used in menus — used to auto-detect language from button press
 _MENU_KEYS = ["btn_home", "btn_support", "btn_gift", "btn_check_order", "btn_shop", "btn_intro", "btn_gift_box",
-              "btn_bao_loi", "btn_yeu_cau_giao"]
+              "btn_bao_loi", "btn_yeu_cau_giao", "btn_chat_support", "btn_end_chat"]
 
 def detect_lang_from_text(text: str) -> str | None:
     """Return 'vi' or 'en' if text matches a known menu button, else None."""
@@ -2523,6 +2523,10 @@ def detect_lang_from_text(text: str) -> str | None:
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     text = update.message.text.strip()
+
+    # Admin chat reply detection — must come first
+    if update.message.reply_to_message and await _route_admin_chat_reply(update):
+        return
 
     # Auto-detect and save language from which button the user pressed
     detected = detect_lang_from_text(text)
@@ -2559,6 +2563,10 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await handle_intro(update, context)
     elif text in (t("vi", "btn_gift_box"), t("en", "btn_gift_box")):
         await handle_gift_box(update, context)
+    elif text in (t("vi", "btn_chat_support"), t("en", "btn_chat_support")):
+        await handle_chat_support_start(update, context)
+    elif text in (t("vi", "btn_end_chat"), t("en", "btn_end_chat")):
+        await handle_end_chat(update, context)
     else:
         # Check conversation state
         state = db.get_user_state(user.id).get("conv_state")
@@ -2572,6 +2580,8 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await handle_report_issue_input(update, context)
         elif state == "delivery_input":
             await handle_delivery_input(update, context)
+        elif state == "live_chat":
+            await handle_live_chat_message(update, context)
         else:
             # Check secret code before falling back to unknown-command reply
             if await _process_secret_code(update, context, text):
@@ -3054,6 +3064,253 @@ async def callback_warranty_ack(update: Update, context: ContextTypes.DEFAULT_TY
 async def callback_warranty_noop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """No-op handler for disabled inline buttons (e.g. '✅ Đã tiếp nhận')."""
     await update.callback_query.answer()
+
+
+# ─── 💬 Chat với Support ──────────────────────────────────────────────────────
+
+_CHAT_SESSIONS_FILE = os.path.join(os.path.dirname(__file__), "data", "support_chat_sessions.json")
+_CHAT_TIMEOUT_MINUTES = 30
+
+
+def _load_chat_sessions() -> dict:
+    try:
+        if os.path.exists(_CHAT_SESSIONS_FILE):
+            with open(_CHAT_SESSIONS_FILE, encoding="utf-8") as f:
+                return _json.load(f)
+    except Exception:
+        pass
+    return {"sessions": {}, "msg_map": {}}
+
+
+def _save_chat_sessions(data: dict) -> None:
+    try:
+        with open(_CHAT_SESSIONS_FILE, "w", encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"_save_chat_sessions error: {e}")
+
+
+def _chat_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    L = lang(user_id)
+    return ReplyKeyboardMarkup([[t(L, "btn_end_chat")]], resize_keyboard=True)
+
+
+async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """User nhấn Chat với Support — tạo/tiếp tục phiên chat."""
+    user = update.effective_user
+    L = lang(user.id)
+    data = _load_chat_sessions()
+    uid_str = str(user.id)
+
+    # Đã có phiên mở
+    if uid_str in data["sessions"] and data["sessions"][uid_str].get("status") == "active":
+        db.set_user_state(user.id, "conv_state", "live_chat")
+        await update.message.reply_text(
+            "🟢 Bạn đang có phiên chat đang mở. Tiếp tục gõ tin nhắn.",
+            reply_markup=_chat_keyboard(user.id)
+        )
+        return
+
+    # Tạo phiên mới
+    now_ts = datetime.utcnow().isoformat()
+    data["sessions"][uid_str] = {
+        "started_at": now_ts,
+        "last_active": now_ts,
+        "status": "active",
+        "username": user.username or "",
+        "first_name": user.first_name or "",
+        "admin_msg_ids": [],
+    }
+    _save_chat_sessions(data)
+    db.set_user_state(user.id, "conv_state", "live_chat")
+
+    await update.message.reply_text(
+        t(L, "chat_support_start"),
+        parse_mode=ParseMode.HTML,
+        reply_markup=_chat_keyboard(user.id)
+    )
+
+    # Thông báo admin(s)
+    admin_ids = _get_all_admin_ids()
+    name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+    notif = (
+        f"💬 <b>Phiên chat hỗ trợ mới</b>\n"
+        f"👤 {name} | <code>{user.id}</code>\n"
+        f"──────────────\n"
+        f"<i>Reply bất kỳ tin nhắn nào từ người dùng này để trả lời họ</i>"
+    )
+    for aid in admin_ids:
+        _tg_send(TOKEN, aid, notif)
+
+
+async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Forward tin nhắn của user đến admin khi đang trong phiên live_chat."""
+    user = update.effective_user
+    L = lang(user.id)
+    text = update.message.text.strip()
+    if not text:
+        return
+
+    data = _load_chat_sessions()
+    uid_str = str(user.id)
+    session = data["sessions"].get(uid_str)
+
+    if not session or session.get("status") != "active":
+        db.set_user_state(user.id, "conv_state", None)
+        await update.message.reply_text(
+            "⚠️ Phiên chat đã hết hạn. Nhấn Chat với Support để bắt đầu lại.",
+            reply_markup=main_keyboard(user.id)
+        )
+        return
+
+    session["last_active"] = datetime.utcnow().isoformat()
+
+    admin_ids = _get_all_admin_ids()
+    if not admin_ids:
+        await update.message.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
+        return
+
+    name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+    msg_to_admin = (
+        f"💬 <b>{name}</b> (<code>{user.id}</code>):\n"
+        f"{text}\n"
+        f"──────────────\n"
+        f"<i>↩️ Reply tin này để trả lời</i>"
+    )
+    for aid in admin_ids:
+        try:
+            mid = _tg_send(TOKEN, aid, msg_to_admin)
+            if mid:
+                session.setdefault("admin_msg_ids", []).append(mid)
+                data["msg_map"][str(mid)] = uid_str
+        except Exception as e:
+            logger.error(f"handle_live_chat_message send error: {e}")
+
+    _save_chat_sessions(data)
+
+
+async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """User nhấn Kết thúc chat."""
+    user = update.effective_user
+    L = lang(user.id)
+
+    data = _load_chat_sessions()
+    uid_str = str(user.id)
+    session = data["sessions"].pop(uid_str, None)
+    if session:
+        for mid in session.get("admin_msg_ids", []):
+            data["msg_map"].pop(str(mid), None)
+    _save_chat_sessions(data)
+    db.set_user_state(user.id, "conv_state", None)
+
+    await update.message.reply_text(
+        t(L, "chat_support_user_end"),
+        reply_markup=main_keyboard(user.id)
+    )
+
+    if session:
+        admin_ids = _get_all_admin_ids()
+        name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+        notif = f"⏹ <b>{name}</b> (<code>{user.id}</code>) đã kết thúc phiên chat hỗ trợ."
+        for aid in admin_ids:
+            try:
+                _tg_send(TOKEN, aid, notif)
+            except Exception:
+                pass
+
+
+async def _route_admin_chat_reply(update: Update) -> bool:
+    """
+    Nếu admin reply một tin nhắn được forward từ user → forward reply về user.
+    Trả về True nếu đã xử lý.
+    """
+    msg = update.message
+    if not msg or not msg.reply_to_message or not msg.text:
+        return False
+
+    sender = update.effective_user
+    admin_ids = _get_all_admin_ids()
+    if sender.id not in admin_ids:
+        return False
+
+    replied_mid = str(msg.reply_to_message.message_id)
+    data = _load_chat_sessions()
+    uid_str = data["msg_map"].get(replied_mid)
+    if not uid_str:
+        return False
+
+    session = data["sessions"].get(uid_str)
+    if not session or session.get("status") != "active":
+        return False
+
+    # Forward reply về user
+    user_id = int(uid_str)
+    reply_text = f"💬 <b>Support:</b>\n{msg.text}"
+    try:
+        _tg_send(TOKEN, user_id, reply_text)
+    except Exception as e:
+        logger.error(f"_route_admin_chat_reply error: {e}")
+        return True
+
+    session["last_active"] = datetime.utcnow().isoformat()
+    _save_chat_sessions(data)
+    return True
+
+
+def _chat_timeout_worker() -> None:
+    """Background thread: đóng phiên chat sau 30 phút không hoạt động."""
+    while True:
+        time.sleep(300)  # check mỗi 5 phút
+        try:
+            data = _load_chat_sessions()
+            now = datetime.utcnow()
+            to_close = []
+            for uid_str, session in data["sessions"].items():
+                if session.get("status") != "active":
+                    continue
+                last = session.get("last_active", "")
+                if not last:
+                    continue
+                try:
+                    last_dt = datetime.fromisoformat(last)
+                    if (now - last_dt).total_seconds() > _CHAT_TIMEOUT_MINUTES * 60:
+                        to_close.append(uid_str)
+                except Exception:
+                    pass
+
+            for uid_str in to_close:
+                session = data["sessions"].pop(uid_str, {})
+                for mid in session.get("admin_msg_ids", []):
+                    data["msg_map"].pop(str(mid), None)
+
+                user_id = int(uid_str)
+                try:
+                    _tg_send(TOKEN, user_id,
+                             "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau 30 phút.\n"
+                             "Nhấn <b>Chat với Support</b> nếu bạn cần hỗ trợ thêm.",
+                             )
+                except Exception:
+                    pass
+                db.set_user_state(user_id, "conv_state", None)
+
+                admin_ids = _get_all_admin_ids()
+                sname = session.get("username") or session.get("first_name") or uid_str
+                name_str = f"@{sname}" if session.get("username") else sname
+                notif = (
+                    f"⏱ Phiên chat với <b>{name_str}</b> (<code>{uid_str}</code>) "
+                    f"đã tự đóng (timeout {_CHAT_TIMEOUT_MINUTES} phút)."
+                )
+                for aid in admin_ids:
+                    try:
+                        _tg_send(TOKEN, aid, notif)
+                    except Exception:
+                        pass
+                logger.info(f"[CHAT] Timeout session uid={uid_str}")
+
+            if to_close:
+                _save_chat_sessions(data)
+        except Exception as e:
+            logger.error(f"_chat_timeout_worker error: {e}")
 
 # ─── Ô Quà Bí Mật ─────────────────────────────────────────────────────────────
 
@@ -3875,6 +4132,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
 
+    Thread(target=_chat_timeout_worker, daemon=True).start()
     logger.info("Bot is polling...")
     app.run_polling(
         drop_pending_updates=True,

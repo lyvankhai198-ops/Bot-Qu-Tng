@@ -26,6 +26,20 @@ LANG = {
         "btn_check_order": "📦 Kiểm Tra Đơn Hàng",
         "btn_intro": "📋 Giới Thiệu",
         "btn_gift_box": "🎁 Ô Quà Bí Mật",
+        "btn_chat_support": "💬 Chat với Support",
+        "btn_end_chat": "🔚 Kết thúc chat",
+        "chat_support_start": (
+            "🟢 <b>Đã kết nối với Support!</b>\n\n"
+            "Gõ tin nhắn của bạn, admin sẽ phản hồi sớm nhất.\n"
+            "⏱ Phiên chat tự đóng sau 30 phút không có hoạt động."
+        ),
+        "chat_support_user_end": "✅ Phiên chat đã kết thúc. Cảm ơn bạn đã liên hệ!",
+        "chat_support_reply": "💬 <b>Support:</b>\n{msg}",
+        "chat_support_timeout": (
+            "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau 30 phút.\n"
+            "Nhấn <b>Chat với Support</b> nếu bạn cần hỗ trợ thêm."
+        ),
+        "chat_support_no_admin": "⚠️ Hiện tại không có admin trực. Vui lòng thử lại sau hoặc báo lỗi qua mục Hỗ Trợ.",
         "btn_home": "🏠 Trang chủ",
         "btn_open_shop": "🛍 MỞ KÊNH BÁN HÀNG",
         "btn_report_issue": "⚠️ Báo Lỗi",
@@ -374,6 +388,20 @@ LANG = {
         "btn_check_order": "📦 Check Order",
         "btn_intro": "📋 Introduction",
         "btn_gift_box": "🎁 Mystery Gift Box",
+        "btn_chat_support": "💬 Chat with Support",
+        "btn_end_chat": "🔚 End Chat",
+        "chat_support_start": (
+            "🟢 <b>Connected to Support!</b>\n\n"
+            "Type your message and our admin will reply shortly.\n"
+            "⏱ Session auto-closes after 30 minutes of inactivity."
+        ),
+        "chat_support_user_end": "✅ Chat session ended. Thank you for contacting us!",
+        "chat_support_reply": "💬 <b>Support:</b>\n{msg}",
+        "chat_support_timeout": (
+            "⏱ Your support chat closed automatically after 30 minutes of inactivity.\n"
+            "Press <b>Chat with Support</b> if you need more help."
+        ),
+        "chat_support_no_admin": "⚠️ No admin is available right now. Please try again later or use the Support menu.",
         "btn_home": "🏠 Home",
         "btn_open_shop": "🛍 OPEN SHOP CHANNEL",
         "btn_report_issue": "⚠️ Report Issue",
