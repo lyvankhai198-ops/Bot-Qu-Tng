@@ -3338,16 +3338,39 @@ Các tính năng chính:
 • Kênh bán hàng: thông tin về các kênh mua sắm chính thức
 
 === CÁCH XỬ LÝ VẤN ĐỀ ===
-• Đơn hàng chưa nhận / bị lỗi → yêu cầu khách cung cấp mã đơn hàng, hướng dẫn dùng /orders
+• Đơn hàng chưa nhận / bị lỗi → KIỂM TRA NGAY trong [DỮ LIỆU ĐƠN HÀNG] bên dưới nếu có, hoặc hỏi mã đơn
 • Muốn nhận quà → hướng dẫn dùng /gift hoặc nút "Nhận Quà"
-• Bảo hành hết hạn / sản phẩm lỗi → hướng dẫn dùng tính năng kiểm tra bảo hành trong bot
+• Bảo hành còn hạn (BH còn) → khách có thể báo lỗi trong bot, hoặc gửi /orders và bấm nút báo lỗi
+• Bảo hành hết hạn (BH hết) → giải thích lịch sự rằng đơn đã hết bảo hành, không thể đổi/trả
+• Sản phẩm KBH (Không Bảo Hành) → giải thích rằng sản phẩm này không có chính sách bảo hành
 • Vấn đề thanh toán → hướng dẫn cung cấp thông tin đơn hàng để admin kiểm tra
 • Câu hỏi phức tạp / khiếu nại → thông báo sẽ chuyển cho nhân viên hỗ trợ
+
+=== HƯỚNG DẪN ĐỌC DỮ LIỆU ĐƠN HÀNG (khi có trong context) ===
+Khi có block [DỮ LIỆU ĐƠN HÀNG] được cung cấp, hãy dùng dữ liệu THẬT này để trả lời:
+- productName: tên sản phẩm
+- status: trạng thái đơn (active=đang hoạt động, expired=hết hạn, refunded=đã hoàn tiền)
+- purchaseDate: ngày mua
+- expiryDate: ngày hết hạn sử dụng
+- warrantyExpiry / warrantyEndDate: ngày hết hạn BẢO HÀNH
+- warrantyDays: số ngày bảo hành (0 hoặc "KBH"/"BHF" trong tên = không bảo hành toàn bộ thời gian)
+- BH_STATUS: "active"=còn BH, "expired"=hết BH, "no_warranty"=không BH, "no_data"=chưa có thông tin
+- items: danh sách tài khoản trong đơn (email/credential)
+- warranty_requests: các yêu cầu bảo hành đã gửi trước đó
+
+Khi khách cung cấp mã đơn và mã đó có trong dữ liệu → trả lời ngay với thông tin thật, KHÔNG yêu cầu dùng /orders nữa.
+Khi mã đơn KHÔNG có trong dữ liệu → nói không tìm thấy và hướng dẫn dùng /orders để xem chi tiết.
+
+=== QUY TẮC BẢO HÀNH ===
+• BH còn hạn: khách có thể báo lỗi → hướng dẫn bấm /orders rồi bấm nút "Báo Lỗi"
+• BH hết hạn: giải thích lịch sự, không thể bảo hành, nhưng có thể hỏi admin nếu cần
+• Sản phẩm KBH (warrantyDays=0, hoặc "KBH" trong tên): không có bảo hành từ đầu
+• Sản phẩm BHF (trong tên sản phẩm): bảo hành toàn bộ thời gian sử dụng
 
 === QUY TẮC QUAN TRỌNG ===
 1. Luôn trả lời bằng ngôn ngữ của khách (tiếng Việt hoặc tiếng Anh)
 2. Câu trả lời ngắn gọn, thân thiện, có emoji phù hợp
-3. KHÔNG tiết lộ thông tin nội bộ của hệ thống
+3. KHÔNG tiết lộ password / twoFA / thông tin đăng nhập cho khách qua chat này
 4. KHÔNG hứa hẹn điều không chắc chắn
 5. Nếu không biết câu trả lời → thành thật nói và đề nghị chờ admin hỗ trợ
 6. Nếu khách tức giận → bình tĩnh, đồng cảm, hứa chuyển cho admin xử lý ngay
@@ -3365,9 +3388,121 @@ def _load_ai_settings() -> dict:
         return {}
 
 
-async def _ai_chat_reply(session_messages: list) -> str | None:
+def _build_ai_order_context(uid_str: str, session_messages: list) -> str:
+    """
+    Tra cứu đơn hàng thực tế từ orders.json + order_items.json + warranty_requests.json.
+    Quét toàn bộ tin nhắn trong session để tìm mã đơn hàng (ORDER...).
+    Trả về chuỗi context để inject vào system prompt của AI.
+    """
+    import re as _re
+    from datetime import datetime as _dt
+
+    context_parts: list[str] = []
+
+    # ── 1. Tìm tất cả mã đơn đã đề cập trong cuộc trò chuyện ──────────────
+    order_id_pattern = _re.compile(r'\b(ORDER[A-Z0-9]{6,})\b', _re.IGNORECASE)
+    mentioned_ids: set[str] = set()
+    for m in session_messages:
+        text = m.get("text", "")
+        for match in order_id_pattern.findall(text):
+            mentioned_ids.add(match.upper())
+
+    # ── 2. Tra cứu từng mã đơn trong orders.json + order_items.json ────────
+    if mentioned_ids:
+        orders_data  = db.load("orders", {})
+        items_data   = db.load("order_items", {})
+        today        = _dt.utcnow().date()
+
+        for oid in list(mentioned_ids)[:5]:  # tối đa 5 đơn để tránh prompt quá dài
+            order = orders_data.get(oid)
+            if not order:
+                # thử fuzzy: O↔0
+                oid_canon = oid.replace("O", "0")
+                for k, v in orders_data.items():
+                    if k.replace("O", "0") == oid_canon:
+                        order = v
+                        oid   = k
+                        break
+            if not order:
+                context_parts.append(f"[DỮ LIỆU ĐƠN HÀNG]\nMã đơn {oid}: KHÔNG TÌM THẤY trong hệ thống.")
+                continue
+
+            items = items_data.get(oid, [])
+
+            # Tính trạng thái bảo hành
+            w_expiry_str = (order.get("warrantyExpiry") or order.get("warrantyDate") or "")[:10]
+            warranty_days = int(order.get("warrantyDays") or 0)
+            product_name  = order.get("productName", "")
+            is_bhf  = "BHF" in product_name.upper()
+            is_kbh  = "KBH" in product_name.upper() or warranty_days == 0
+
+            if is_bhf:
+                bh_status = "active (BHF - bảo hành toàn bộ thời gian)"
+            elif is_kbh:
+                bh_status = "no_warranty (KBH - không bảo hành)"
+            elif w_expiry_str:
+                try:
+                    w_date = _dt.strptime(w_expiry_str, "%Y-%m-%d").date()
+                    bh_status = "active" if w_date >= today else "expired"
+                except Exception:
+                    bh_status = "no_data"
+            else:
+                bh_status = "no_data"
+
+            # Định dạng danh sách item (email, không lộ password)
+            item_lines = []
+            for idx, it in enumerate(items[:5], 1):
+                i_email   = it.get("email") or it.get("credential") or ""
+                i_status  = it.get("item_status") or it.get("status") or "unknown"
+                i_wend    = (it.get("warranty_end_date") or "")[:10]
+                item_lines.append(
+                    f"  Item {idx}: {i_email} | status={i_status}"
+                    + (f" | BH đến {i_wend}" if i_wend else "")
+                )
+
+            lines = [
+                f"[DỮ LIỆU ĐƠN HÀNG] Mã: {oid}",
+                f"  Sản phẩm: {product_name}",
+                f"  Khách hàng: {order.get('customerName', '')}",
+                f"  Ngày mua: {order.get('purchaseDate', '')[:10]}",
+                f"  Hết hạn sử dụng: {(order.get('expiryDate') or '')[:10]}",
+                f"  Hết hạn BH: {w_expiry_str or 'N/A'}",
+                f"  Số ngày BH: {warranty_days}",
+                f"  BH_STATUS: {bh_status}",
+                f"  Trạng thái đơn: {order.get('status', '')}",
+                f"  Số lượng: {order.get('quantity', 1)}",
+                f"  Giá: {order.get('totalPrice', order.get('price', ''))} VNĐ",
+            ]
+            if item_lines:
+                lines.append("  Tài khoản trong đơn:")
+                lines.extend(item_lines)
+
+            context_parts.append("\n".join(lines))
+
+    # ── 3. Lấy lịch sử warranty_requests của user này ──────────────────────
+    try:
+        all_wrs = db.load("warranty_requests", [])
+        user_wrs = [r for r in all_wrs if str(r.get("userId", "")) == uid_str]
+        if user_wrs:
+            wr_lines = ["[YÊU CẦU BẢO HÀNH CỦA KHÁCH]"]
+            for wr in user_wrs[-5:]:  # 5 cái gần nhất
+                wr_lines.append(
+                    f"  Đơn {wr.get('orderId','')} | "
+                    f"Ngày gửi: {(wr.get('submittedAt') or '')[:10]} | "
+                    f"Trạng thái: {wr.get('status','')} | "
+                    f"Kết quả: {wr.get('resolution','chưa xử lý')}"
+                )
+            context_parts.append("\n".join(wr_lines))
+    except Exception:
+        pass
+
+    return "\n\n".join(context_parts)
+
+
+async def _ai_chat_reply(session_messages: list, uid_str: str | None = None) -> str | None:
     """
     Gọi OpenAI API để sinh câu trả lời tự động.
+    uid_str: Telegram user ID dạng string, dùng để tra cứu đơn hàng thực tế.
     Trả về chuỗi text hoặc None nếu AI tắt / lỗi.
     """
     import httpx as _httpx
@@ -3383,6 +3518,15 @@ async def _ai_chat_reply(session_messages: list) -> str | None:
 
     model         = cfg.get("model", "gpt-4o-mini")
     system_prompt = cfg.get("systemPrompt") or _DEFAULT_AI_SYSTEM_PROMPT
+
+    # ── Inject dữ liệu đơn hàng thực tế vào system prompt ─────────────────
+    if uid_str:
+        try:
+            order_ctx = _build_ai_order_context(uid_str, session_messages)
+            if order_ctx:
+                system_prompt = system_prompt + "\n\n" + order_ctx
+        except Exception as e:
+            logger.warning(f"AI order context error: {e}")
 
     messages = [{"role": "system", "content": system_prompt}]
     for m in session_messages[-20:]:
@@ -3576,7 +3720,7 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
     assigned = session.get("assigned_admin_id")
     if not assigned:
         try:
-            ai_reply = await _ai_chat_reply(session.get("messages", []))
+            ai_reply = await _ai_chat_reply(session.get("messages", []), uid_str=uid_str)
             if ai_reply:
                 await context.bot.send_chat_action(chat_id=user.id, action="typing")
                 ai_sent = await update.message.reply_text(
