@@ -3745,10 +3745,27 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
                     "time": datetime.utcnow().isoformat(),
                 })
                 session.setdefault("user_bot_msg_ids", []).append(ai_sent.message_id)
+
+                # ── Phát hiện AI muốn chuyển sang nhân viên ───────────────
+                if _ai_wants_transfer(ai_reply) and not session.get("admin_notified"):
+                    session["admin_notified"] = True
+                    # Báo khách đang kết nối
+                    conn_msg = await context.bot.send_message(
+                        chat_id=user.id,
+                        text="🔗 <i>Đang kết nối với nhân viên hỗ trợ, vui lòng chờ...</i>",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=_chat_keyboard(user.id),
+                    )
+                    session.setdefault("user_bot_msg_ids", []).append(conn_msg.message_id)
+                    # Gửi toàn bộ lịch sử chat lên admin
+                    await _notify_admin_with_history(context, session, uid_str, user)
         except Exception as e:
             logger.error(f"AI auto-reply error: {e}")
 
+    # ── Forward tin nhắn đến admin (chỉ khi admin đã được thông báo) ──────────
     assigned = session.get("assigned_admin_id")
+    name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+
     if assigned:
         # ── Đã chuyển phiên: forward ẩn danh cho admin phụ ──────────────────
         msg_anon = (
@@ -3764,42 +3781,28 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
             data["msg_map"][str(sent.message_id)] = uid_str
         except Exception as e:
             logger.error(f"handle_live_chat_message (assigned) send error: {e}")
-    else:
-        # ── Chưa chuyển: forward đến admin chính ────────────────────────────
+
+    elif session.get("admin_engaged") or session.get("admin_notified"):
+        # ── Admin đã biết / đã reply → forward tin tiếp theo lên ADMIN_ID ───
         if not ADMIN_ID:
             await update.message.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
             _save_chat_sessions(data)
             return
-        name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
-        is_first = not session.get("admin_msg_ids")
-        if is_first:
-            # Tin đầu tiên: gộp header phiên mới + nội dung + nút Chuyển phiên
-            msg_to_admin = (
-                f"💬 <b>Phiên mới — {name}</b> (<code>{user.id}</code>)\n"
-                f"──────────────\n"
-                f"{text}\n"
-                f"──────────────\n"
-                f"<i>↩️ Reply tin này để trả lời</i>"
-            )
-            transfer_markup = _build_transfer_markup(uid_str)
-        else:
-            msg_to_admin = (
-                f"💬 <b>{name}</b>:\n{text}\n"
-                f"──────────────\n"
-                f"<i>↩️ Reply tin này để trả lời</i>"
-            )
-            transfer_markup = None
+        msg_to_admin = (
+            f"💬 <b>{name}</b>:\n{text}\n"
+            f"──────────────\n"
+            f"<i>↩️ Reply tin này để trả lời</i>"
+        )
         try:
             sent = await context.bot.send_message(
                 chat_id=ADMIN_ID, text=msg_to_admin,
-                parse_mode=ParseMode.HTML, reply_markup=transfer_markup
+                parse_mode=ParseMode.HTML,
             )
             session.setdefault("admin_msg_ids", []).append(sent.message_id)
             data["msg_map"][str(sent.message_id)] = uid_str
-            if is_first:
-                session["session_notif_mid"] = sent.message_id
         except Exception as e:
             logger.error(f"handle_live_chat_message (main admin) send error: {e}")
+    # else: AI đang xử lý, chưa cần thông báo admin
 
     _save_chat_sessions(data)
 
@@ -3870,40 +3873,29 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
             data["msg_map"][str(sent.message_id)] = uid_str
         except Exception as e:
             logger.error(f"handle_live_chat_media (assigned) send error: {e}")
-    else:
-        # ── Chưa chuyển: gửi ảnh đến admin chính ────────────────────────────
+
+    elif session.get("admin_engaged") or session.get("admin_notified"):
+        # ── Admin đã biết / đã reply → forward ảnh tiếp theo lên ADMIN_ID ───
         if not ADMIN_ID:
             L = lang(user.id)
             await msg.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
             _save_chat_sessions(data)
             return
-        is_first = not session.get("admin_msg_ids")
-        if is_first:
-            header = (
-                f"📷 <b>Phiên mới — {name}</b> (<code>{user.id}</code>):\n"
-                + (u_cap + "\n" if u_cap else "")
-                + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
-            )
-            transfer_markup = _build_transfer_markup(uid_str)
-        else:
-            header = (
-                f"📷 <b>{name}</b>:\n"
-                + (u_cap + "\n" if u_cap else "")
-                + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
-            )
-            transfer_markup = None
+        header = (
+            f"📷 <b>{name}</b>:\n"
+            + (u_cap + "\n" if u_cap else "")
+            + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
+        )
         try:
             sent = await context.bot.send_photo(
                 chat_id=ADMIN_ID, photo=photo.file_id,
                 caption=header, parse_mode=ParseMode.HTML,
-                reply_markup=transfer_markup,
             )
             session.setdefault("admin_msg_ids", []).append(sent.message_id)
             data["msg_map"][str(sent.message_id)] = uid_str
-            if is_first:
-                session["session_notif_mid"] = sent.message_id
         except Exception as e:
             logger.error(f"handle_live_chat_media (main admin) send error: {e}")
+    # else: AI đang xử lý → không forward ảnh lên admin
 
     _save_chat_sessions(data)
 
@@ -3968,6 +3960,73 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             except Exception:
                 pass
         _save_chat_sessions(data)
+
+
+def _ai_wants_transfer(ai_reply: str) -> bool:
+    """Phát hiện AI đang nói chuyển sang nhân viên hỗ trợ."""
+    import re as _re
+    patterns = [
+        r"chuyển.*nhân viên", r"nhân viên.*hỗ trợ", r"chờ trong giây lát",
+        r"chuyển.*vấn đề", r"kết nối.*nhân viên", r"nhân viên.*tiếp nhận",
+        r"transfer.*support", r"connect.*support", r"support.*staff",
+        r"chuyển.*admin", r"admin.*hỗ trợ",
+    ]
+    text = ai_reply.lower()
+    return any(_re.search(p, text) for p in patterns)
+
+
+async def _notify_admin_with_history(context, session: dict, uid_str: str, user) -> None:
+    """
+    Gửi toàn bộ lịch sử chat lên ADMIN_ID kèm nút Chuyển phiên.
+    Gọi khi AI quyết định chuyển sang nhân viên hỗ trợ.
+    """
+    if not ADMIN_ID:
+        return
+
+    name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+    messages = session.get("messages", [])
+
+    # Dựng chuỗi lịch sử chat
+    history_lines = []
+    for m in messages:
+        role = m.get("role", "user")
+        txt  = m.get("text", "")
+        ts   = (m.get("time", "") or "")[:16].replace("T", " ")
+        if role == "user":
+            history_lines.append(f"👤 <b>Khách</b> [{ts}]: {txt}")
+        elif role == "assistant":
+            history_lines.append(f"🤖 <b>AI</b> [{ts}]: {txt}")
+        # bỏ qua role "support" — chưa có ở giai đoạn này
+
+    history_str = "\n".join(history_lines) if history_lines else "(chưa có tin nhắn)"
+
+    header = (
+        f"🔔 <b>Khách cần hỗ trợ — {name}</b> (<code>{user.id}</code>)\n"
+        f"──────────────\n"
+        f"📋 <b>Lịch sử chat với AI:</b>\n"
+        f"{history_str}\n"
+        f"──────────────\n"
+        f"<i>↩️ Reply tin này để trả lời khách</i>"
+    )
+
+    # Cắt nếu quá dài (Telegram limit 4096)
+    if len(header) > 4000:
+        header = header[:3900] + "\n...(cắt bớt)\n──────────────\n<i>↩️ Reply tin này để trả lời khách</i>"
+
+    transfer_markup = _build_transfer_markup(uid_str)
+    try:
+        from data_manager import load as _dm_load
+        data = _load_chat_sessions()
+        sent = await context.bot.send_message(
+            chat_id=ADMIN_ID, text=header,
+            parse_mode=ParseMode.HTML, reply_markup=transfer_markup,
+        )
+        session.setdefault("admin_msg_ids", []).append(sent.message_id)
+        data["msg_map"][str(sent.message_id)] = uid_str
+        session["session_notif_mid"] = sent.message_id
+        _save_chat_sessions(data)
+    except Exception as e:
+        logger.error(f"_notify_admin_with_history error: {e}")
 
 
 async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
