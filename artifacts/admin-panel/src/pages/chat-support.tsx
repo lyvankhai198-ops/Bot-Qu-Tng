@@ -19,7 +19,7 @@ import {
 import {
   MessageSquare, Clock, User, Search, History,
   Settings, RefreshCw, XCircle, Timer, Trash2, ShieldAlert,
-  Ban, UserCog, Plus, ArrowRightLeft, CheckCircle2, Sparkles, Eye, EyeOff,
+  Ban, UserCog, Plus, ArrowRightLeft, CheckCircle2, Sparkles, Eye, EyeOff, CalendarClock,
 } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -779,6 +779,8 @@ function NumberField({
   )
 }
 
+const DAYS_VN = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]  // index = JS day (0=Sun)
+
 function SettingsTab() {
   const { toast } = useToast()
 
@@ -788,6 +790,15 @@ function SettingsTab() {
   const [spamWindowSec,      setSpamWindowSec]      = useState(60)
   const [spamWarnAt,         setSpamWarnAt]         = useState(8)
   const [sessionCooldownSec, setSessionCooldownSec] = useState(120)
+
+  // Working hours
+  const [whEnabled,    setWhEnabled]    = useState(false)
+  const [whDays,       setWhDays]       = useState<number[]>([1,2,3,4,5,6])
+  const [whStart,      setWhStart]      = useState("08:00")
+  const [whEnd,        setWhEnd]        = useState("22:00")
+  const [whOfflineMsg, setWhOfflineMsg] = useState(
+    "⏰ Chat hỗ trợ hiện đang ngoài giờ làm việc. Vui lòng quay lại trong giờ làm việc hoặc liên hệ qua kênh bán hàng."
+  )
 
   const { isLoading, data: settingsData } = useQuery({
     queryKey: ["chat-support-settings"],
@@ -803,7 +814,17 @@ function SettingsTab() {
     setSpamWindowSec(d.spamWindowSec          ?? 60)
     setSpamWarnAt(d.spamWarnAt                ?? 8)
     setSessionCooldownSec(d.sessionCooldownSec ?? 120)
+    // Working hours
+    setWhEnabled(d.workingHoursEnabled   ?? false)
+    setWhDays(d.workingHoursDays         ?? [1,2,3,4,5,6])
+    setWhStart(d.workingHoursStart       ?? "08:00")
+    setWhEnd(d.workingHoursEnd           ?? "22:00")
+    setWhOfflineMsg(d.workingHoursOfflineMsg ?? "⏰ Chat hỗ trợ hiện đang ngoài giờ làm việc. Vui lòng quay lại trong giờ làm việc hoặc liên hệ qua kênh bán hàng.")
   }, [settingsData])
+
+  const toggleDay = (d: number) => setWhDays(prev =>
+    prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort()
+  )
 
   const warnAtError = spamWarnAt >= spamMaxMsgs
     ? `Cảnh báo (${spamWarnAt}) phải nhỏ hơn giới hạn chặn (${spamMaxMsgs})`
@@ -813,6 +834,11 @@ function SettingsTab() {
     mutationFn: () => apiFetch("PUT", "/bot/chat-support/settings", {
       timeoutMinutes, deleteDelayMinutes,
       spamMaxMsgs, spamWindowSec, spamWarnAt, sessionCooldownSec,
+      workingHoursEnabled: whEnabled,
+      workingHoursDays:    whDays,
+      workingHoursStart:   whStart,
+      workingHoursEnd:     whEnd,
+      workingHoursOfflineMsg: whOfflineMsg,
     }),
     onSuccess: () => toast({ title: "Đã lưu cài đặt" }),
     onError:   (e: any) => toast({ title: "Lỗi", description: e.message, variant: "destructive" }),
@@ -890,9 +916,105 @@ function SettingsTab() {
         </CardContent>
       </Card>
 
+      {/* Working hours */}
+      <Card>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <CalendarClock className="h-4 w-4 text-muted-foreground" />Giờ làm việc
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-4">
+          {/* Toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Bật giờ làm việc</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Khi ngoài giờ, khách nhấn "Chat Support" sẽ nhận thông báo offline.
+              </p>
+            </div>
+            <Switch checked={whEnabled} onCheckedChange={setWhEnabled} />
+          </div>
+
+          {whEnabled && (
+            <>
+              {/* Days of week */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Ngày làm việc</Label>
+                <div className="flex gap-1.5 flex-wrap">
+                  {DAYS_VN.map((label, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => toggleDay(idx)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+                        whDays.includes(idx)
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background border-border text-muted-foreground hover:border-primary/50"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {whDays.length === 0 && (
+                  <p className="text-xs text-destructive">Chọn ít nhất 1 ngày làm việc.</p>
+                )}
+              </div>
+
+              {/* Time range */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">Giờ mở</Label>
+                  <Input
+                    type="time"
+                    value={whStart}
+                    onChange={e => setWhStart(e.target.value)}
+                    className="min-h-[44px]"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">Giờ đóng</Label>
+                  <Input
+                    type="time"
+                    value={whEnd}
+                    onChange={e => setWhEnd(e.target.value)}
+                    className="min-h-[44px]"
+                  />
+                </div>
+              </div>
+              {whStart >= whEnd && (
+                <p className="text-xs text-destructive">Giờ mở phải trước giờ đóng.</p>
+              )}
+
+              {/* Offline message */}
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Tin nhắn ngoài giờ</Label>
+                <Textarea
+                  value={whOfflineMsg}
+                  onChange={e => setWhOfflineMsg(e.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  className="text-sm resize-none"
+                  placeholder="Ví dụ: ⏰ Chúng tôi làm việc 8:00–22:00. Vui lòng quay lại sau."
+                />
+                <p className="text-xs text-muted-foreground">{whOfflineMsg.length}/500 ký tự</p>
+              </div>
+
+              {/* Preview */}
+              <div className="rounded-md bg-muted/50 border p-3 text-xs text-muted-foreground space-y-1">
+                <p>📋 <strong>Tóm tắt:</strong></p>
+                <p>• Ngày: <strong>{whDays.map(d => DAYS_VN[d]).join(", ") || "—"}</strong></p>
+                <p>• Giờ: <strong>{whStart} – {whEnd}</strong></p>
+                <p className="italic">Múi giờ: Asia/Ho_Chi_Minh (GMT+7)</p>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       <Button
         onClick={() => mutation.mutate()}
-        disabled={mutation.isPending || !!warnAtError}
+        disabled={mutation.isPending || !!warnAtError || (whEnabled && (whDays.length === 0 || whStart >= whEnd))}
         className="w-full min-h-[44px]"
       >
         {mutation.isPending

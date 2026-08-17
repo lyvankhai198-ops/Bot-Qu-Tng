@@ -11,12 +11,18 @@ const CHAT_BANNED_FILE   = "support_chat_banned";
 const CHAT_ADMINS_FILE   = "support_chat_admins";
 
 const DEFAULT_SETTINGS = {
-  timeoutMinutes:     10,
-  deleteDelayMinutes:  5,
-  spamMaxMsgs:        10,
-  spamWindowSec:      60,
-  spamWarnAt:          8,
-  sessionCooldownSec: 120,
+  timeoutMinutes:          10,
+  deleteDelayMinutes:       5,
+  spamMaxMsgs:             10,
+  spamWindowSec:           60,
+  spamWarnAt:               8,
+  sessionCooldownSec:      120,
+  // Working hours
+  workingHoursEnabled:     false,
+  workingHoursDays:        [1, 2, 3, 4, 5, 6],   // 0=Sun,1=Mon,...,6=Sat
+  workingHoursStart:       "08:00",
+  workingHoursEnd:         "22:00",
+  workingHoursOfflineMsg:  "⏰ Chat hỗ trợ hiện đang ngoài giờ làm việc. Vui lòng quay lại trong giờ làm việc hoặc liên hệ qua kênh bán hàng.",
 };
 
 // ── GET /bot/chat-support/history ─────────────────────────────────────────────
@@ -80,6 +86,17 @@ router.put("/bot/chat-support/settings", requireAuth, async (req: any, res: any)
   }
   if (typeof body.sessionCooldownSec === "number" && body.sessionCooldownSec >= 0 && body.sessionCooldownSec <= 600)
     updated.sessionCooldownSec = body.sessionCooldownSec;
+
+  // Working hours
+  if (typeof body.workingHoursEnabled === "boolean") updated.workingHoursEnabled = body.workingHoursEnabled;
+  if (Array.isArray(body.workingHoursDays))
+    updated.workingHoursDays = body.workingHoursDays.filter((d: any) => typeof d === "number" && d >= 0 && d <= 6);
+  if (typeof body.workingHoursStart === "string" && /^\d{2}:\d{2}$/.test(body.workingHoursStart))
+    updated.workingHoursStart = body.workingHoursStart;
+  if (typeof body.workingHoursEnd === "string" && /^\d{2}:\d{2}$/.test(body.workingHoursEnd))
+    updated.workingHoursEnd = body.workingHoursEnd;
+  if (typeof body.workingHoursOfflineMsg === "string")
+    updated.workingHoursOfflineMsg = body.workingHoursOfflineMsg.slice(0, 500);
 
   await writeJson(CHAT_SETTINGS_FILE, updated);
   res.json(updated);

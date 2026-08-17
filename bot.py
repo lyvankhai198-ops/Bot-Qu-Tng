@@ -3401,6 +3401,50 @@ Khi mã đơn KHÔNG tìm thấy → nói không tìm thấy và hướng dẫn 
 """
 
 
+def _check_working_hours() -> tuple[bool, str]:
+    """
+    Trả về (is_open, offline_message).
+    Nếu workingHoursEnabled=False → luôn trả về (True, "").
+    """
+    from zoneinfo import ZoneInfo
+    p = os.path.join(os.path.dirname(__file__), "data", "support_chat_settings.json")
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            settings = _json.load(f)
+    except Exception:
+        return True, ""
+
+    if not settings.get("workingHoursEnabled", False):
+        return True, ""
+
+    offline_msg = settings.get(
+        "workingHoursOfflineMsg",
+        "⏰ Chat hỗ trợ hiện đang ngoài giờ làm việc. Vui lòng quay lại sau hoặc liên hệ qua kênh bán hàng."
+    )
+
+    try:
+        tz = ZoneInfo("Asia/Ho_Chi_Minh")
+        now = datetime.now(tz)
+
+        # Python weekday(): Mon=0 ... Sun=6 → JS format: Sun=0, Mon=1 ... Sat=6
+        js_day = (now.weekday() + 1) % 7
+        working_days: list = settings.get("workingHoursDays", [1, 2, 3, 4, 5, 6])
+        if js_day not in working_days:
+            return False, offline_msg
+
+        start_str: str = settings.get("workingHoursStart", "08:00")
+        end_str:   str = settings.get("workingHoursEnd",   "22:00")
+        sh, sm = map(int, start_str.split(":"))
+        eh, em = map(int, end_str.split(":"))
+        cur = now.hour * 60 + now.minute
+        if cur < sh * 60 + sm or cur >= eh * 60 + em:
+            return False, offline_msg
+    except Exception:
+        pass
+
+    return True, ""
+
+
 def _load_ai_settings() -> dict:
     """Đọc cài đặt AI từ file data/chat_ai_settings.json."""
     p = os.path.join(os.path.dirname(__file__), "data", "chat_ai_settings.json")
@@ -3627,6 +3671,13 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
     L = lang(user.id)
     data = _load_chat_sessions()
     uid_str = str(user.id)
+
+    # ── Kiểm tra giờ làm việc ───────────────────────────────────────────────
+    _is_open, _offline_msg = _check_working_hours()
+    if not _is_open:
+        await update.message.reply_text(_offline_msg, reply_markup=main_keyboard(user.id))
+        return
+    # ────────────────────────────────────────────────────────────────────────
 
     # ── Kiểm tra bị cấm chat ────────────────────────────────────────────────
     ban_entry = _get_chat_ban(uid_str)
