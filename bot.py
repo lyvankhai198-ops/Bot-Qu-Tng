@@ -3325,6 +3325,94 @@ def _get_chat_ban(uid_str: str) -> dict | None:
     return None
 
 
+_DEFAULT_AI_SYSTEM_PROMPT = """Bạn là AI trợ lý hỗ trợ khách hàng thân thiện và chuyên nghiệp của nền tảng Giveaway & Support.
+
+=== VỀ NỀN TẢNG ===
+Đây là nền tảng tặng quà, bán hàng và hỗ trợ khách hàng qua Telegram bot.
+
+Các tính năng chính:
+• Kiểm tra đơn hàng: dùng lệnh /orders hoặc nút "Kiểm Tra Đơn Hàng"
+• Nhận quà miễn phí: dùng lệnh /gift hoặc nút "Nhận Quà"
+• Bảo hành sản phẩm: kiểm tra và đăng ký bảo hành qua bot
+• Chat với nhân viên hỗ trợ: tính năng hiện tại đang dùng
+• Kênh bán hàng: thông tin về các kênh mua sắm chính thức
+
+=== CÁCH XỬ LÝ VẤN ĐỀ ===
+• Đơn hàng chưa nhận / bị lỗi → yêu cầu khách cung cấp mã đơn hàng, hướng dẫn dùng /orders
+• Muốn nhận quà → hướng dẫn dùng /gift hoặc nút "Nhận Quà"
+• Bảo hành hết hạn / sản phẩm lỗi → hướng dẫn dùng tính năng kiểm tra bảo hành trong bot
+• Vấn đề thanh toán → hướng dẫn cung cấp thông tin đơn hàng để admin kiểm tra
+• Câu hỏi phức tạp / khiếu nại → thông báo sẽ chuyển cho nhân viên hỗ trợ
+
+=== QUY TẮC QUAN TRỌNG ===
+1. Luôn trả lời bằng ngôn ngữ của khách (tiếng Việt hoặc tiếng Anh)
+2. Câu trả lời ngắn gọn, thân thiện, có emoji phù hợp
+3. KHÔNG tiết lộ thông tin nội bộ của hệ thống
+4. KHÔNG hứa hẹn điều không chắc chắn
+5. Nếu không biết câu trả lời → thành thật nói và đề nghị chờ admin hỗ trợ
+6. Nếu khách tức giận → bình tĩnh, đồng cảm, hứa chuyển cho admin xử lý ngay
+7. Khi cần chuyển admin hãy nói: "Tôi sẽ chuyển vấn đề này cho nhân viên hỗ trợ. Vui lòng chờ trong giây lát! 🙏"
+"""
+
+
+def _load_ai_settings() -> dict:
+    """Đọc cài đặt AI từ file data/chat_ai_settings.json."""
+    p = os.path.join(os.path.dirname(__file__), "data", "chat_ai_settings.json")
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return {}
+
+
+async def _ai_chat_reply(session_messages: list) -> str | None:
+    """
+    Gọi OpenAI API để sinh câu trả lời tự động.
+    Trả về chuỗi text hoặc None nếu AI tắt / lỗi.
+    """
+    import httpx as _httpx
+
+    cfg = _load_ai_settings()
+    if not cfg.get("enabled"):
+        return None
+
+    api_key = cfg.get("apiKey") or os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        logger.warning("AI reply: no API key configured")
+        return None
+
+    model         = cfg.get("model", "gpt-4o-mini")
+    system_prompt = cfg.get("systemPrompt") or _DEFAULT_AI_SYSTEM_PROMPT
+
+    messages = [{"role": "system", "content": system_prompt}]
+    for m in session_messages[-20:]:
+        role = "user" if m.get("role") == "user" else "assistant"
+        content = m.get("text", "")
+        if content and content != "[Ảnh]":
+            messages.append({"role": role, "content": content})
+
+    try:
+        async with _httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type":  "application/json",
+                },
+                json={
+                    "model":       model,
+                    "messages":    messages,
+                    "max_tokens":  800,
+                    "temperature": 0.7,
+                },
+            )
+            data = resp.json()
+            return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logger.error(f"AI chat reply error: {e}")
+        return None
+
+
 def _build_transfer_markup(uid_str: str) -> InlineKeyboardMarkup | None:
     """Nút đơn 'Chuyển phiên' — click sẽ hiện danh sách admin phụ."""
     if not _get_support_admins(enabled_only=True):
@@ -3483,6 +3571,25 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
         "text": text,
         "time": datetime.utcnow().isoformat(),
     })
+
+    # ── AI tự động trả lời (nếu bật và chưa có admin phụ tiếp nhận) ────────────
+    assigned = session.get("assigned_admin_id")
+    if not assigned:
+        try:
+            ai_reply = await _ai_chat_reply(session.get("messages", []))
+            if ai_reply:
+                await context.bot.send_chat_action(chat_id=user.id, action="typing")
+                ai_sent = await update.message.reply_text(
+                    ai_reply, reply_markup=_chat_keyboard(user.id)
+                )
+                session.setdefault("messages", []).append({
+                    "role": "assistant",
+                    "text": ai_reply,
+                    "time": datetime.utcnow().isoformat(),
+                })
+                session.setdefault("user_bot_msg_ids", []).append(ai_sent.message_id)
+        except Exception as e:
+            logger.error(f"AI auto-reply error: {e}")
 
     assigned = session.get("assigned_admin_id")
     if assigned:

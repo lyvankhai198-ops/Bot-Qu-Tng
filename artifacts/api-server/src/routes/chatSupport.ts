@@ -169,6 +169,53 @@ router.delete("/bot/chat-support/banned/:uid", requireAuth, async (req: any, res
   res.json({ ok: true });
 });
 
+// ─── AI Settings ─────────────────────────────────────────────────────────────
+
+const CHAT_AI_FILE = "chat_ai_settings";
+
+const DEFAULT_AI_SETTINGS = {
+  enabled:      false,
+  model:        "gpt-4o-mini",
+  systemPrompt: "",
+};
+
+// ── GET /bot/chat-support/ai-settings ─────────────────────────────────────────
+router.get("/bot/chat-support/ai-settings", requireAuth, (_req: any, res: any) => {
+  const stored: any = readJson(CHAT_AI_FILE, {}) ?? {};
+  const merged: any = { ...DEFAULT_AI_SETTINGS, ...stored };
+  // Mask API key
+  const raw: string = merged.apiKey ?? "";
+  merged.apiKeyMasked = raw.length > 4 ? `sk-...${raw.slice(-4)}` : (raw ? "****" : "");
+  merged.apiKeySet = raw.length > 0;
+  delete merged.apiKey;
+  res.json(merged);
+});
+
+// ── PUT /bot/chat-support/ai-settings ─────────────────────────────────────────
+router.put("/bot/chat-support/ai-settings", requireAuth, async (req: any, res: any) => {
+  const stored: any   = readJson(CHAT_AI_FILE, {}) ?? {};
+  const body: any     = req.body ?? {};
+  const updated: any  = { ...DEFAULT_AI_SETTINGS, ...stored };
+
+  if (typeof body.enabled === "boolean") updated.enabled = body.enabled;
+  if (typeof body.model   === "string"  && ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo", "gpt-4-turbo"].includes(body.model))
+    updated.model = body.model;
+  if (typeof body.systemPrompt === "string") updated.systemPrompt = body.systemPrompt;
+  // Only update key if explicitly provided and non-empty
+  if (typeof body.apiKey === "string" && body.apiKey.trim())
+    updated.apiKey = body.apiKey.trim();
+
+  await writeJson(CHAT_AI_FILE, updated);
+
+  const masked: string = updated.apiKey ?? "";
+  res.json({
+    ...updated,
+    apiKeyMasked: masked.length > 4 ? `sk-...${masked.slice(-4)}` : (masked ? "****" : ""),
+    apiKeySet: masked.length > 0,
+    apiKey: undefined,
+  });
+});
+
 // ── GET /bot/chat-support/admins — danh sách admin phụ ───────────────────────
 router.get("/bot/chat-support/admins", requireAuth, (_req: any, res: any) => {
   const list: any[] = readJson(CHAT_ADMINS_FILE, []) ?? [];

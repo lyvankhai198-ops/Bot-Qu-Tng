@@ -19,8 +19,12 @@ import {
 import {
   MessageSquare, Clock, User, Search, History,
   Settings, RefreshCw, XCircle, Timer, Trash2, ShieldAlert,
-  Ban, UserCog, Plus, ArrowRightLeft, CheckCircle2,
+  Ban, UserCog, Plus, ArrowRightLeft, CheckCircle2, Sparkles, Eye, EyeOff,
 } from "lucide-react"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -903,6 +907,207 @@ function SettingsTab() {
   )
 }
 
+// ─── AI Tab ───────────────────────────────────────────────────────────────────
+
+const DEFAULT_SYSTEM_PROMPT = `Bạn là AI trợ lý hỗ trợ khách hàng thân thiện và chuyên nghiệp của nền tảng Giveaway & Support.
+
+=== VỀ NỀN TẢNG ===
+Đây là nền tảng tặng quà, bán hàng và hỗ trợ khách hàng qua Telegram bot.
+
+Các tính năng chính:
+• Kiểm tra đơn hàng: dùng lệnh /orders hoặc nút "Kiểm Tra Đơn Hàng"
+• Nhận quà miễn phí: dùng lệnh /gift hoặc nút "Nhận Quà"
+• Bảo hành sản phẩm: kiểm tra và đăng ký bảo hành qua bot
+• Chat với nhân viên hỗ trợ: tính năng hiện tại đang dùng
+• Kênh bán hàng: thông tin về các kênh mua sắm chính thức
+
+=== CÁCH XỬ LÝ VẤN ĐỀ ===
+• Đơn hàng chưa nhận / bị lỗi → yêu cầu khách cung cấp mã đơn hàng, hướng dẫn dùng /orders
+• Muốn nhận quà → hướng dẫn dùng /gift hoặc nút "Nhận Quà"
+• Bảo hành hết hạn / sản phẩm lỗi → hướng dẫn dùng tính năng kiểm tra bảo hành trong bot
+• Vấn đề thanh toán → hướng dẫn cung cấp thông tin đơn hàng để admin kiểm tra
+• Câu hỏi phức tạp / khiếu nại → thông báo sẽ chuyển cho nhân viên hỗ trợ
+
+=== QUY TẮC QUAN TRỌNG ===
+1. Luôn trả lời bằng ngôn ngữ của khách (tiếng Việt hoặc tiếng Anh)
+2. Câu trả lời ngắn gọn, thân thiện, có emoji phù hợp
+3. KHÔNG tiết lộ thông tin nội bộ của hệ thống
+4. KHÔNG hứa hẹn điều không chắc chắn
+5. Nếu không biết câu trả lời → thành thật nói và đề nghị chờ admin hỗ trợ
+6. Nếu khách tức giận → bình tĩnh, đồng cảm, hứa chuyển cho admin xử lý ngay
+7. Khi cần chuyển admin hãy nói: "Tôi sẽ chuyển vấn đề này cho nhân viên hỗ trợ. Vui lòng chờ trong giây lát! 🙏"`
+
+function AiTab() {
+  const { toast } = useToast()
+  const qc = useQueryClient()
+
+  const [enabled,      setEnabled]      = useState(false)
+  const [model,        setModel]        = useState("gpt-4o-mini")
+  const [systemPrompt, setSystemPrompt] = useState("")
+  const [apiKey,       setApiKey]       = useState("")
+  const [showKey,      setShowKey]      = useState(false)
+  const [apiKeyMasked, setApiKeyMasked] = useState("")
+  const [apiKeySet,    setApiKeySet]    = useState(false)
+
+  const { isLoading, data } = useQuery({
+    queryKey: ["chat-ai-settings"],
+    queryFn:  () => apiFetch("GET", "/bot/chat-support/ai-settings"),
+  })
+
+  useEffect(() => {
+    if (!data) return
+    const d = data as any
+    setEnabled(d.enabled ?? false)
+    setModel(d.model ?? "gpt-4o-mini")
+    setSystemPrompt(d.systemPrompt || DEFAULT_SYSTEM_PROMPT)
+    setApiKeyMasked(d.apiKeyMasked ?? "")
+    setApiKeySet(d.apiKeySet ?? false)
+  }, [data])
+
+  const mutation = useMutation({
+    mutationFn: () => apiFetch("PUT", "/bot/chat-support/ai-settings", {
+      enabled, model, systemPrompt,
+      ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+    }),
+    onSuccess: (d: any) => {
+      toast({ title: "✅ Đã lưu cài đặt AI" })
+      setApiKey("")
+      setApiKeyMasked(d.apiKeyMasked ?? "")
+      setApiKeySet(d.apiKeySet ?? false)
+      qc.invalidateQueries({ queryKey: ["chat-ai-settings"] })
+    },
+    onError: (e: any) => toast({ title: "Lỗi", description: e.message, variant: "destructive" }),
+  })
+
+  if (isLoading) return <div className="p-8 text-center text-muted-foreground text-sm">Đang tải...</div>
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      {/* Toggle */}
+      <Card>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-yellow-500" />Trả lời tự động bằng AI
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Bật AI tự động trả lời</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                AI sẽ trả lời ngay khi khách gửi tin. Admin vẫn thấy và có thể tiếp quản bất kỳ lúc nào.
+              </p>
+            </div>
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
+          </div>
+          {enabled && !apiKeySet && (
+            <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-700 dark:text-yellow-400">
+              ⚠️ Chưa có API key — AI sẽ không hoạt động cho đến khi bạn thêm API key bên dưới.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* API Key */}
+      <Card>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-semibold">🔑 OpenAI API Key</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-3">
+          {apiKeySet && (
+            <div className="rounded-md bg-muted/50 border px-3 py-2 text-xs text-muted-foreground">
+              Key hiện tại: <code className="font-mono">{apiKeyMasked}</code>
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">{apiKeySet ? "Thay API key mới" : "Nhập API key"}</Label>
+            <div className="relative">
+              <Input
+                type={showKey ? "text" : "password"}
+                placeholder="sk-..."
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                className="pr-10 font-mono text-sm min-h-[44px]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Lấy API key tại <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="underline text-primary">platform.openai.com/api-keys</a>.
+              Key được lưu bảo mật, không hiển thị lại đầy đủ.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Model */}
+      <Card>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-semibold">🤖 Model</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-2">
+          <Select value={model} onValueChange={setModel}>
+            <SelectTrigger className="min-h-[44px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="gpt-4o-mini">gpt-4o-mini — Nhanh, rẻ, phù hợp chat support</SelectItem>
+              <SelectItem value="gpt-4o">gpt-4o — Thông minh hơn, tốn token hơn</SelectItem>
+              <SelectItem value="gpt-4-turbo">gpt-4-turbo — GPT-4 tốc độ cao</SelectItem>
+              <SelectItem value="gpt-3.5-turbo">gpt-3.5-turbo — Cũ hơn, rẻ nhất</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">Khuyến nghị: <strong>gpt-4o-mini</strong> — tốt nhất cho chat hỗ trợ khách hàng.</p>
+        </CardContent>
+      </Card>
+
+      {/* System Prompt */}
+      <Card>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-semibold">📝 System Prompt (huấn luyện AI)</CardTitle>
+            <Button
+              variant="ghost" size="sm"
+              className="text-xs h-7 px-2"
+              onClick={() => setSystemPrompt(DEFAULT_SYSTEM_PROMPT)}
+            >
+              Reset mặc định
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-2">
+          <Textarea
+            value={systemPrompt}
+            onChange={e => setSystemPrompt(e.target.value)}
+            rows={16}
+            className="font-mono text-xs resize-y"
+            placeholder="Nhập system prompt để dạy AI cách trả lời..."
+          />
+          <p className="text-xs text-muted-foreground">
+            Đây là nơi bạn dạy AI về sản phẩm, quy trình và cách xử lý tình huống. Càng chi tiết thì AI càng trả lời chính xác.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Button
+        onClick={() => mutation.mutate()}
+        disabled={mutation.isPending}
+        className="w-full min-h-[44px]"
+      >
+        {mutation.isPending
+          ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Đang lưu...</>
+          : <><Sparkles className="h-4 w-4 mr-2" />Lưu cài đặt AI</>
+        }
+      </Button>
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ChatSupport() {
@@ -917,11 +1122,13 @@ export default function ChatSupport() {
           <TabsTrigger value="history"  className="gap-1.5 text-xs sm:text-sm"><History   className="h-3.5 w-3.5" />Lịch sử</TabsTrigger>
           <TabsTrigger value="ban"      className="gap-1.5 text-xs sm:text-sm"><Ban       className="h-3.5 w-3.5" />Cấm chat</TabsTrigger>
           <TabsTrigger value="admins"   className="gap-1.5 text-xs sm:text-sm"><UserCog   className="h-3.5 w-3.5" />Admin</TabsTrigger>
+          <TabsTrigger value="ai"       className="gap-1.5 text-xs sm:text-sm"><Sparkles  className="h-3.5 w-3.5 text-yellow-500" />AI</TabsTrigger>
           <TabsTrigger value="settings" className="gap-1.5 text-xs sm:text-sm"><Settings  className="h-3.5 w-3.5" />Cài đặt</TabsTrigger>
         </TabsList>
         <TabsContent value="history"  className="mt-0"><HistoryTab /></TabsContent>
         <TabsContent value="ban"      className="mt-0"><BanTab /></TabsContent>
         <TabsContent value="admins"   className="mt-0"><AdminTab /></TabsContent>
+        <TabsContent value="ai"       className="mt-0"><AiTab /></TabsContent>
         <TabsContent value="settings" className="mt-0"><SettingsTab /></TabsContent>
       </Tabs>
     </div>
