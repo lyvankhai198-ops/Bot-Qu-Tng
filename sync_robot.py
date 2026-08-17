@@ -1664,6 +1664,49 @@ async def _open_orders_page(page) -> None:
         # Không raise — để _download_orders_xlsx tự xử lý/retry
 
 
+async def _click_all_orders_tab(page) -> bool:
+    """
+    Sau khi vào trang Đơn hàng, cố gắng click tab "Tất cả" (nếu có)
+    để XLSX bao gồm cả market_order type lẫn pre_order type.
+    Trả True nếu đã click thành công, False nếu không tìm thấy tab.
+    Lỗi không raise — chỉ log và return False.
+    """
+    TAB_SELECTORS = [
+        # Tab có text chính xác "Tất cả"
+        '[role="tab"]:has-text("Tất cả")',
+        'button.tab:has-text("Tất cả")',
+        'li[role="tab"]:has-text("Tất cả")',
+        # Các class tab phổ biến
+        '.tab-item:has-text("Tất cả")',
+        '.tab:has-text("Tất cả")',
+        '.nav-tab:has-text("Tất cả")',
+        '.tabs__item:has-text("Tất cả")',
+        # Fallback: bất kỳ button/link nào chứa text ngắn "Tất cả"
+        'button:has-text("Tất cả")',
+        'a:has-text("Tất cả")',
+    ]
+    for sel in TAB_SELECTORS:
+        try:
+            el = page.locator(sel).first
+            if await el.count() == 0:
+                continue
+            if not await el.is_visible():
+                continue
+            txt = (await el.inner_text()).strip()
+            # Chỉ click tab ngắn (tránh click button "Tất cả ... đơn hàng đã bị hủy" dài)
+            if len(txt) > 15:
+                continue
+            await el.click()
+            await asyncio.sleep(0.8)
+            logger.info(f"[SYNC] ✅ Đã click tab 'Tất cả' ({sel!r}) — text={txt!r}")
+            return True
+        except Exception as ex:
+            logger.debug(f"[SYNC] Tab selector {sel!r} failed: {ex}")
+            continue
+    logger.info("[SYNC] Không tìm thấy tab 'Tất cả' trên trang Đơn hàng — download tab hiện tại")
+    return False
+
+
 async def _download_orders_xlsx(page, download_dir: str) -> str:
     """
     Tìm nút 'Tải xuống' và tải file XLSX.
@@ -1924,6 +1967,15 @@ async def do_playwright_sync(config: dict) -> dict:
                 )
                 return {"login_ok": True, "download_ok": False, "path": None,
                         "dir": download_dir, "error": str(ex)}
+
+            # ════════════════════════════════════════════════════════
+            # STEP 3.5: Click tab "Tất cả" để XLSX bao gồm mọi loại đơn
+            # (pre_order + market_order + ...)
+            # ════════════════════════════════════════════════════════
+            tab_clicked = await _click_all_orders_tab(page)
+            logger.info(
+                f"[SYNC][STEP 3.5] Click tab 'Tất cả': {'OK' if tab_clicked else 'Bỏ qua (không tìm thấy)'}"
+            )
 
             # ════════════════════════════════════════════════════════
             # STEP 4: Download XLSX
