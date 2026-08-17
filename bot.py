@@ -1681,7 +1681,17 @@ async def handle_delivery_input(update: Update, context: ContextTypes.DEFAULT_TY
         db.clear_user_state(user.id, "_delivery_fail_until")
 
     # ── Kiểm tra mã đơn có tồn tại trong hệ thống không ─────────────────────
-    order = db.get_order(order_id) or db.get_market_order(order_id)
+    order = db.get_order(order_id)
+    if not order:
+        # Fuzzy fallback: O↔0, I↔1 ... (giống warranty flow)
+        fw = db.find_order_with_items(order_id)
+        if fw and fw.get("order"):
+            order = fw["order"]
+            order_id = order.get("orderId", order_id)  # dùng canonical ID
+        else:
+            order = db.get_market_order(order_id)
+            if order:
+                order_id = order.get("orderId", order_id)
     if not order:
         # Đặt cooldown 10 phút
         cooldown_until = (_utcnow() + timedelta(minutes=10)).isoformat()
