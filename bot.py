@@ -3430,31 +3430,44 @@ def _build_ai_order_context(uid_str: str, session_messages: list) -> str:
             items = items_data.get(oid, [])
 
             # Tính trạng thái bảo hành
-            w_expiry_str = (order.get("warrantyExpiry") or order.get("warrantyDate") or "")[:10]
             warranty_days = int(order.get("warrantyDays") or 0)
             product_name  = order.get("productName", "")
-            is_bhf  = "BHF" in product_name.upper()
-            is_kbh  = "KBH" in product_name.upper() or warranty_days == 0
+            pname_up      = product_name.upper()
+            is_bhf = "BHF" in pname_up
+            is_kbh = "KBH" in pname_up or warranty_days == 0
 
-            if is_bhf:
-                bh_status = "active (BHF - bảo hành toàn bộ thời gian)"
-            elif is_kbh:
-                bh_status = "no_warranty (KBH - không bảo hành)"
-            elif w_expiry_str:
-                try:
-                    w_date = _dt.strptime(w_expiry_str, "%Y-%m-%d").date()
-                    bh_status = "active" if w_date >= today else "expired"
-                except Exception:
-                    bh_status = "no_data"
+            # Ngày hết hạn SỬ DỤNG (luôn có)
+            usage_expiry = (order.get("expiryDate") or "")[:10]
+
+            # Ngày hết hạn BẢO HÀNH — chỉ dùng khi không phải KBH/BHF
+            # Lưu ý: với KBH, warrantyExpiry thường = expiryDate (ngày dùng), KHÔNG phải ngày BH
+            if is_kbh:
+                bh_expiry_str = ""  # Không có BH → không hiện ngày để tránh AI nhầm
+                bh_status     = "KBH (Không Bảo Hành) - sản phẩm này KHÔNG có bảo hành từ đầu"
+            elif is_bhf:
+                # BHF: bảo hành toàn bộ thời gian dùng → ngày BH = ngày hết hạn sử dụng
+                bh_expiry_str = usage_expiry
+                bh_status     = f"BHF - Bảo hành đến hết hạn sử dụng ({usage_expiry})"
             else:
-                bh_status = "no_data"
+                # Bảo hành thông thường: đọc warrantyExpiry
+                raw_w = (order.get("warrantyExpiry") or order.get("warrantyDate") or "")[:10]
+                bh_expiry_str = raw_w
+                if raw_w:
+                    try:
+                        w_date    = _dt.strptime(raw_w, "%Y-%m-%d").date()
+                        bh_status = f"CÒN BH đến {raw_w}" if w_date >= today else f"HẾT BH từ {raw_w}"
+                    except Exception:
+                        bh_status = "no_data"
+                else:
+                    bh_status = "no_data"
 
-            # Định dạng danh sách item (email, không lộ password)
+            # Định dạng danh sách item (email, không lộ password/2FA)
             item_lines = []
             for idx, it in enumerate(items[:5], 1):
-                i_email   = it.get("email") or it.get("credential") or ""
-                i_status  = it.get("item_status") or it.get("status") or "unknown"
-                i_wend    = (it.get("warranty_end_date") or "")[:10]
+                i_email  = it.get("email") or it.get("credential") or ""
+                i_status = it.get("item_status") or it.get("status") or "unknown"
+                # Chỉ hiện ngày BH item khi không phải KBH
+                i_wend   = "" if is_kbh else (it.get("warranty_end_date") or "")[:10]
                 item_lines.append(
                     f"  Item {idx}: {i_email} | status={i_status}"
                     + (f" | BH đến {i_wend}" if i_wend else "")
@@ -3465,14 +3478,14 @@ def _build_ai_order_context(uid_str: str, session_messages: list) -> str:
                 f"  Sản phẩm: {product_name}",
                 f"  Khách hàng: {order.get('customerName', '')}",
                 f"  Ngày mua: {order.get('purchaseDate', '')[:10]}",
-                f"  Hết hạn sử dụng: {(order.get('expiryDate') or '')[:10]}",
-                f"  Hết hạn BH: {w_expiry_str or 'N/A'}",
-                f"  Số ngày BH: {warranty_days}",
-                f"  BH_STATUS: {bh_status}",
+                f"  Hết hạn SỬ DỤNG: {usage_expiry or 'N/A'}",
+                f"  Bảo hành: {bh_status}",
                 f"  Trạng thái đơn: {order.get('status', '')}",
                 f"  Số lượng: {order.get('quantity', 1)}",
                 f"  Giá: {order.get('totalPrice', order.get('price', ''))} VNĐ",
             ]
+            if bh_expiry_str and not is_kbh and not is_bhf:
+                lines.append(f"  Ngày hết hạn BH: {bh_expiry_str}")
             if item_lines:
                 lines.append("  Tài khoản trong đơn:")
                 lines.extend(item_lines)
