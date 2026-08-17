@@ -3729,9 +3729,9 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
         "time": datetime.utcnow().isoformat(),
     })
 
-    # ── AI tự động trả lời (nếu bật và chưa có admin phụ tiếp nhận) ────────────
+    # ── AI tự động trả lời (nếu bật, chưa có admin tiếp nhận VÀ admin chưa reply) ──
     assigned = session.get("assigned_admin_id")
-    if not assigned:
+    if not assigned and not session.get("admin_engaged"):
         try:
             ai_reply = await _ai_chat_reply(session.get("messages", []), uid_str=uid_str)
             if ai_reply:
@@ -4023,7 +4023,8 @@ async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_
         logger.error(f"_route_admin_chat_reply error: {e}")
         return True
 
-    session["last_active"] = datetime.utcnow().isoformat()
+    session["last_active"]   = datetime.utcnow().isoformat()
+    session["admin_engaged"] = True   # Admin đã reply → tắt AI cho phiên này
     # Lưu reply support vào messages
     if uid_str:
         session.setdefault("messages", []).append({
