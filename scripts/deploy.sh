@@ -57,6 +57,11 @@ sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" "
   else
     sed -i '/Environment=NODE_ENV=production/a Environment=SESSION_SECRET=Admin123' /etc/systemd/system/bot-api.service
   fi
+
+  # Đảm bảo WorkingDirectory và ExecStart trỏ đúng vào Bot-Qu-Tng
+  sed -i 's|WorkingDirectory=.*|WorkingDirectory=${DEPLOY_PATH}|g' /etc/systemd/system/bot-api.service
+  sed -i 's|ExecStart=.*index.mjs|ExecStart=/usr/bin/node --enable-source-maps ${DEPLOY_PATH}/artifacts/api-server/dist/index.mjs|g' /etc/systemd/system/bot-api.service
+
   systemctl daemon-reload
   # ── Cài openpyxl + playwright Python (--break-system-packages cho Ubuntu mới) ─
   pip3 install --break-system-packages -q openpyxl playwright || \
