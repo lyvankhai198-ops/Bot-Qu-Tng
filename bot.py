@@ -3400,21 +3400,7 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
     data["sessions"][uid_str]["user_bot_msg_ids"].append(sent_start.message_id)
     _save_chat_sessions(data)
 
-    # Thông báo admin chính (ADMIN_ID) với nút Chuyển phiên
-    name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
-    notif = (
-        f"💬 <b>Phiên chat hỗ trợ mới</b>\n"
-        f"👤 {name} | <code>{user.id}</code>\n"
-        f"──────────────\n"
-        f"<i>Reply bất kỳ tin nhắn nào từ người dùng này để trả lời họ</i>"
-    )
-    transfer_markup = _build_transfer_markup(uid_str)  # nút đơn hoặc None
-    if ADMIN_ID:
-        mid = _tg_send_markup(TOKEN, ADMIN_ID, notif, markup=transfer_markup.to_dict() if transfer_markup else None)
-        if mid:
-            data["sessions"][uid_str].setdefault("admin_msg_ids", []).append(mid)
-            # Lưu message_id của thông báo phiên để cập nhật sau
-            data["sessions"][uid_str]["session_notif_mid"] = mid
+    # KHÔNG thông báo admin khi mới bắt đầu — chờ tin nhắn đầu tiên
     _save_chat_sessions(data)
 
 
@@ -3485,24 +3471,39 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
         except Exception as e:
             logger.error(f"handle_live_chat_message (assigned) send error: {e}")
     else:
-        # ── Chưa chuyển: forward đến admin chính với nút Chuyển phiên ───────
+        # ── Chưa chuyển: forward đến admin chính ────────────────────────────
         if not ADMIN_ID:
             await update.message.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
             _save_chat_sessions(data)
             return
         name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
-        msg_to_admin = (
-            f"💬 <b>{name}</b> (<code>{user.id}</code>):\n{text}\n"
-            f"──────────────\n"
-            f"<i>↩️ Reply tin này để trả lời</i>"
-        )
+        is_first = not session.get("admin_msg_ids")
+        if is_first:
+            # Tin đầu tiên: gộp header phiên mới + nội dung + nút Chuyển phiên
+            msg_to_admin = (
+                f"💬 <b>Phiên mới — {name}</b> (<code>{user.id}</code>)\n"
+                f"──────────────\n"
+                f"{text}\n"
+                f"──────────────\n"
+                f"<i>↩️ Reply tin này để trả lời</i>"
+            )
+            transfer_markup = _build_transfer_markup(uid_str)
+        else:
+            msg_to_admin = (
+                f"💬 <b>{name}</b>:\n{text}\n"
+                f"──────────────\n"
+                f"<i>↩️ Reply tin này để trả lời</i>"
+            )
+            transfer_markup = None
         try:
             sent = await context.bot.send_message(
                 chat_id=ADMIN_ID, text=msg_to_admin,
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML, reply_markup=transfer_markup
             )
             session.setdefault("admin_msg_ids", []).append(sent.message_id)
             data["msg_map"][str(sent.message_id)] = uid_str
+            if is_first:
+                session["session_notif_mid"] = sent.message_id
         except Exception as e:
             logger.error(f"handle_live_chat_message (main admin) send error: {e}")
 
@@ -3576,24 +3577,37 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.error(f"handle_live_chat_media (assigned) send error: {e}")
     else:
-        # ── Chưa chuyển: gửi ảnh đến admin chính (không kèm markup) ──────────
+        # ── Chưa chuyển: gửi ảnh đến admin chính ────────────────────────────
         if not ADMIN_ID:
             L = lang(user.id)
             await msg.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
             _save_chat_sessions(data)
             return
-        header = (
-            f"📷 <b>{name}</b> (<code>{user.id}</code>):\n"
-            + (u_cap + "\n" if u_cap else "")
-            + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
-        )
+        is_first = not session.get("admin_msg_ids")
+        if is_first:
+            header = (
+                f"📷 <b>Phiên mới — {name}</b> (<code>{user.id}</code>):\n"
+                + (u_cap + "\n" if u_cap else "")
+                + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
+            )
+            transfer_markup = _build_transfer_markup(uid_str)
+        else:
+            header = (
+                f"📷 <b>{name}</b>:\n"
+                + (u_cap + "\n" if u_cap else "")
+                + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
+            )
+            transfer_markup = None
         try:
             sent = await context.bot.send_photo(
                 chat_id=ADMIN_ID, photo=photo.file_id,
                 caption=header, parse_mode=ParseMode.HTML,
+                reply_markup=transfer_markup,
             )
             session.setdefault("admin_msg_ids", []).append(sent.message_id)
             data["msg_map"][str(sent.message_id)] = uid_str
+            if is_first:
+                session["session_notif_mid"] = sent.message_id
         except Exception as e:
             logger.error(f"handle_live_chat_media (main admin) send error: {e}")
 
@@ -3642,13 +3656,17 @@ async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _save_chat_sessions(data)
 
     if session:
-        admin_ids = _get_all_admin_ids()
         name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
         notif = (
             f"⧹ <b>{name}</b> (<code>{user.id}</code>) đã kết thúc phiên chat hỗ trợ.\n"
             f"🗑 Tin nhắn sẽ tự xoá sau 5 phút."
         )
-        for aid in admin_ids:
+        # Thông báo admin chính + admin phụ (nếu có)
+        notify_ids = set(_get_all_admin_ids())
+        assigned = session.get("assigned_admin_id")
+        if assigned:
+            notify_ids.add(int(assigned))
+        for aid in notify_ids:
             try:
                 mid = _tg_send(TOKEN, aid, notif)
                 if mid and uid_str in data.get("pending_deletions", {}):
@@ -4632,7 +4650,7 @@ async def callback_support_transfer_cancel(update: Update, context: ContextTypes
 
 
 async def callback_support_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Admin chính bấm nút Chuyển phiên → giao cho admin phụ xử lý ẩn danh."""
+    """Admin A chọn admin B → gửi yêu cầu Chấp nhận/Từ chối đến admin B."""
     query = update.callback_query
     await query.answer()
 
@@ -4645,57 +4663,173 @@ async def callback_support_transfer(update: Update, context: ContextTypes.DEFAUL
     data = _load_chat_sessions()
     session = data["sessions"].get(uid_str)
     if not session or session.get("status") != "active":
-        await query.answer("❌ Phiên này không còn active", show_alert=True)
+        await query.answer("❌ Phiên đã kết thúc", show_alert=True)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
         return
 
     if session.get("assigned_admin_id") == admin_id:
         await query.answer("Admin này đang xử lý phiên rồi", show_alert=True)
         return
 
-    # Lấy thông tin admin phụ
+    if session.get("transfer_pending"):
+        await query.answer("⏳ Đang chờ xác nhận từ admin khác", show_alert=True)
+        return
+
+    # Thông tin admin B
     sub_admins = _get_support_admins()
     admin_info = next((a for a in sub_admins if int(a.get("id", 0)) == admin_id), {})
     admin_name = admin_info.get("name") or f"Admin {admin_id}"
 
-    # Gán admin phụ
-    session["assigned_admin_id"] = admin_id
-
-    # Xây dựng lịch sử ẩn danh để gửi admin phụ
+    # Lịch sử ẩn danh gửi kèm yêu cầu
     messages = session.get("messages", [])
-    if messages:
-        history_lines = []
-        for m in messages[-15:]:
-            prefix = "👤 Khách" if m.get("role") == "user" else "🎧 Support"
-            history_lines.append(f"{prefix}: {m.get('text', '')}")
-        history_text = "\n".join(history_lines)
-    else:
-        history_text = "(Chưa có tin nhắn)"
+    history_lines = []
+    for m in messages[-10:]:
+        prefix = "👤 Khách" if m.get("role") == "user" else "🎧 Support"
+        history_lines.append(f"{prefix}: {m.get('text', '')}")
+    history_text = "\n".join(history_lines) if history_lines else "(Chưa có tin nhắn)"
 
-    notif = (
-        f"📨 <b>Phiên chat được chuyển cho bạn</b>\n"
+    req_msg = (
+        f"📨 <b>Yêu cầu chuyển phiên chat</b>\n"
         f"──────────────\n"
         f"<b>Lịch sử ({len(messages)} tin):</b>\n{history_text}\n"
         f"──────────────\n"
-        f"<i>↩️ Reply bất kỳ tin nhắn nào từ khách bên dưới để trả lời họ.</i>"
+        f"Bạn có muốn tiếp nhận phiên này không?"
     )
-    new_mid = _tg_send_markup(TOKEN, admin_id, notif, markup=None)
-    if new_mid:
-        data["msg_map"][str(new_mid)] = uid_str
-        session.setdefault("admin_msg_ids", []).append(new_mid)
+    accept_markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Chấp nhận", callback_data=f"spt_ok:{uid_str}"),
+        InlineKeyboardButton("❌ Từ chối",   callback_data=f"spt_no:{uid_str}"),
+    ]])
+    req_mid = _tg_send_markup(TOKEN, admin_id, req_msg, markup=accept_markup.to_dict())
 
+    # Lưu pending transfer
+    session["transfer_pending"] = {
+        "to_admin_id":        admin_id,
+        "to_admin_name":      admin_name,
+        "admin_a_id":         query.from_user.id,
+        "admin_a_chat_id":    query.message.chat_id,
+        "admin_a_msg_id":     query.message.message_id,
+        "request_msg_id":     req_mid,
+    }
     _save_chat_sessions(data)
 
-    # Xoá nút chuyển phiên khỏi tin nhắn gốc
+    # Cập nhật message admin A → đang chờ (nút mờ)
     try:
-        await query.edit_message_reply_markup(reply_markup=None)
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"⏳ Đang chờ {admin_name}...", callback_data="noop")
+        ]]))
     except Exception:
         pass
 
-    await query.answer(f"✅ Đã chuyển cho {admin_name}", show_alert=True)
 
-    # Thông báo cho admin chính
+async def callback_spt_ok(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin B chấp nhận tiếp nhận phiên chat."""
+    query = update.callback_query
+    await query.answer("✅ Bạn đã chấp nhận!")
+
+    try:
+        _, uid_str = query.data.split(":", 1)
+    except Exception:
+        return
+
+    data = _load_chat_sessions()
+    session = data["sessions"].get(uid_str)
+    if not session:
+        await query.answer("❌ Phiên đã kết thúc", show_alert=True)
+        return
+
+    pending = session.pop("transfer_pending", None)
+    if not pending:
+        await query.answer("⚠️ Không tìm thấy yêu cầu chuyển phiên", show_alert=True)
+        return
+
+    admin_id   = pending["to_admin_id"]
+    admin_name = pending.get("to_admin_name", f"Admin {admin_id}")
+
+    # Gán session
+    session["assigned_admin_id"] = admin_id
+
+    # Lịch sử đầy đủ cho admin B
+    messages = session.get("messages", [])
+    history_lines = []
+    for m in messages[-20:]:
+        prefix = "👤 Khách" if m.get("role") == "user" else "🎧 Support"
+        history_lines.append(f"{prefix}: {m.get('text', '')}")
+    history_text = "\n".join(history_lines) if history_lines else "(Chưa có tin nhắn)"
+
+    # Cập nhật tin nhắn admin B → lịch sử + hướng dẫn
+    history_notif = (
+        f"✅ <b>Bạn đã tiếp nhận phiên chat này</b>\n"
+        f"──────────────\n"
+        f"<b>Lịch sử ({len(messages)} tin):</b>\n{history_text}\n"
+        f"──────────────\n"
+        f"<i>↩️ Reply bất kỳ tin từ khách bên dưới để trả lời họ.</i>"
+    )
+    try:
+        await query.edit_message_text(history_notif, parse_mode=ParseMode.HTML, reply_markup=None)
+    except Exception:
+        pass
+
+    # Cập nhật message admin A → ✅ xanh lá
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=pending["admin_a_chat_id"],
+            message_id=pending["admin_a_msg_id"],
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(f"✅ {admin_name} Đã chấp nhận", callback_data="noop")
+            ]])
+        )
+    except Exception:
+        pass
+
+    _save_chat_sessions(data)
+
+
+async def callback_spt_no(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin B từ chối tiếp nhận phiên chat."""
+    query = update.callback_query
+    await query.answer("❌ Bạn đã từ chối.")
+
+    try:
+        _, uid_str = query.data.split(":", 1)
+    except Exception:
+        return
+
+    data = _load_chat_sessions()
+    session = data["sessions"].get(uid_str)
+    if not session:
+        return
+
+    pending = session.pop("transfer_pending", None)
+    if not pending:
+        return
+
+    admin_name = pending.get("to_admin_name", "Admin")
+
+    # Cập nhật tin admin B → từ chối
+    try:
+        await query.edit_message_text("❌ Bạn đã từ chối phiên chat này.", reply_markup=None)
+    except Exception:
+        pass
+
+    # Khôi phục danh sách chọn admin cho admin A
+    restore_markup = _build_transfer_select_markup(uid_str)
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=pending["admin_a_chat_id"],
+            message_id=pending["admin_a_msg_id"],
+            reply_markup=restore_markup,
+        )
+    except Exception:
+        pass
+
+    # Gửi thông báo riêng cho admin A
     if ADMIN_ID:
-        _tg_send(TOKEN, ADMIN_ID, f"✅ Đã chuyển phiên sang <b>{admin_name}</b>.")
+        _tg_send(TOKEN, ADMIN_ID, f"❌ <b>{admin_name}</b> đã từ chối. Chọn admin khác.")
+
+    _save_chat_sessions(data)
 
 
 def main():
@@ -4787,6 +4921,8 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_return_gift_cancel,  pattern=r"^return_gift_cancel$"))
     app.add_handler(CallbackQueryHandler(callback_support_transfer_menu,   pattern=r"^spt_menu:"))
     app.add_handler(CallbackQueryHandler(callback_support_transfer_cancel, pattern=r"^spt_cancel:"))
+    app.add_handler(CallbackQueryHandler(callback_spt_ok,                  pattern=r"^spt_ok:"))
+    app.add_handler(CallbackQueryHandler(callback_spt_no,                  pattern=r"^spt_no:"))
     app.add_handler(CallbackQueryHandler(callback_support_transfer,        pattern=r"^spt:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_live_chat_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
