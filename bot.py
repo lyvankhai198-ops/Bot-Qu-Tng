@@ -716,6 +716,36 @@ async def callback_check_community_join(update: Update, context: ContextTypes.DE
     # Hiện welcome → kênh bán hàng
     await _show_welcome_and_menu(context.bot, user, L)
 
+async def cmd_clean(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Xoá tất cả tin nhắn bot trong chat, sau đó hiện lại welcome."""
+    user = update.effective_user
+    msg  = update.message
+    chat_id    = user.id
+    current_id = msg.message_id
+
+    # Xoá lệnh /clean trước
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+    # Thử xoá 400 tin nhắn gần nhất (chỉ tin bot mới xoá được, tin khác sẽ báo lỗi — bỏ qua)
+    import asyncio as _aio
+
+    BATCH = 30  # max 30 request cùng lúc để tránh rate-limit
+    ids_to_try = list(range(current_id - 1, max(0, current_id - 401), -1))
+    for i in range(0, len(ids_to_try), BATCH):
+        batch = ids_to_try[i : i + BATCH]
+        await _aio.gather(
+            *[context.bot.delete_message(chat_id=chat_id, message_id=mid) for mid in batch],
+            return_exceptions=True,
+        )
+
+    # Hiện lại welcome
+    L = lang(user.id)
+    await _show_welcome_and_menu(context.bot, user, L)
+
+
 async def cmd_myid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"🆔 Your ID: <code>{update.effective_user.id}</code>", parse_mode=ParseMode.HTML)
 
@@ -784,7 +814,7 @@ GLOBAL_GATE_CACHE_TTL_HOURS = 1  # 1h cache cho global gate (phát hiện rời 
 
 # Callbacks/commands được miễn global gate (không chặn user)
 _GATE_EXEMPT_CALLBACKS = {"check_join", "check_community_join", "back_main", "warranty_noop"}
-_GATE_EXEMPT_COMMANDS  = {"start", "myid"}
+_GATE_EXEMPT_COMMANDS  = {"start", "myid", "clean"}
 
 def _channel_cache_key(ch: dict) -> str:
     """Stable cache key for a channel — mirrors data_manager.channel_cache_key."""
@@ -4877,6 +4907,7 @@ def main():
             BotCommand("gift",    "🎁 Nhận quà miễn phí"),
             BotCommand("orders",  "📦 Kiểm tra đơn hàng"),
             BotCommand("myid",    "🆔 ID Telegram của bạn"),
+            BotCommand("clean",   "🧹 Xoá tin nhắn rác & về trang chủ"),
         ]
         en_cmds = [
             BotCommand("start",   "🚀 Start / choose language"),
@@ -4884,6 +4915,7 @@ def main():
             BotCommand("gift",    "🎁 Claim free gift"),
             BotCommand("orders",  "📦 Check your order"),
             BotCommand("myid",    "🆔 Your Telegram ID"),
+            BotCommand("clean",   "🧹 Clear chat & go to home"),
         ]
         scope = BotCommandScopeAllPrivateChats()
         await application.bot.set_my_commands(vi_cmds, scope=scope)
@@ -4899,6 +4931,7 @@ def main():
 
     # ── Register handlers ─────────────────────────────────────────────────────
     app.add_handler(CommandHandler("start",   cmd_start))
+    app.add_handler(CommandHandler("clean",   cmd_clean))
     app.add_handler(CommandHandler("myid",    cmd_myid))
     app.add_handler(CommandHandler("support", cmd_support))
     app.add_handler(CommandHandler("gift",    cmd_gift))
