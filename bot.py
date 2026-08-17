@@ -1645,7 +1645,7 @@ async def handle_yeu_cau_giao_hang(update: Update, context: ContextTypes.DEFAULT
 
 
 async def handle_delivery_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Bước 2: Nhận mã đơn, tạo yêu cầu, thông báo admin."""
+    """Bước 2: Nhận mã đơn, kiểm tra tồn tại, tạo yêu cầu, thông báo admin."""
     user = update.effective_user
     L = lang(user.id)
     vi = L == "vi"
@@ -1657,6 +1657,48 @@ async def handle_delivery_input(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=back_keyboard(user.id)
         )
         return
+
+    # ── Kiểm tra cooldown 10 phút sau lần nhập sai ───────────────────────────
+    ustate = db.get_user_state(user.id)
+    fail_until_str = ustate.get("_delivery_fail_until")
+    if fail_until_str:
+        try:
+            fail_until = _parse_dt(fail_until_str)
+            if _utcnow() < fail_until:
+                remaining = fail_until - _utcnow()
+                mins = int(remaining.total_seconds() // 60) + 1
+                msg = (
+                    f"⏰ Bạn đã nhập sai mã đơn. Vui lòng thử lại sau <b>{mins} phút</b>."
+                    if vi else
+                    f"⏰ Invalid order code entered. Please try again in <b>{mins} minute(s)</b>."
+                )
+                await update.message.reply_text(msg, parse_mode=ParseMode.HTML,
+                                                reply_markup=back_keyboard(user.id))
+                return
+        except Exception:
+            pass
+        # Cooldown hết — xóa khỏi state
+        db.clear_user_state(user.id, "_delivery_fail_until")
+
+    # ── Kiểm tra mã đơn có tồn tại trong hệ thống không ─────────────────────
+    order = db.get_order(order_id)
+    if not order:
+        # Đặt cooldown 10 phút
+        cooldown_until = (_utcnow() + timedelta(minutes=10)).isoformat()
+        db.set_user_state(user.id, "_delivery_fail_until", cooldown_until)
+        msg = (
+            f"❌ Không tìm thấy mã đơn <code>{order_id}</code>.\n\n"
+            f"Vui lòng kiểm tra lại mã đơn hoặc thử lại sau <b>10 phút</b>."
+            if vi else
+            f"❌ Order code <code>{order_id}</code> not found.\n\n"
+            f"Please check your order code or try again in <b>10 minutes</b>."
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML,
+                                        reply_markup=back_keyboard(user.id))
+        return
+
+    # ── Xóa cooldown nếu nhập đúng ───────────────────────────────────────────
+    db.clear_user_state(user.id, "_delivery_fail_until")
 
     # Chặn yêu cầu trùng lặp — mỗi mã đơn chỉ được giao 1 lần
     existing = db.get_delivery_request_by_order(order_id)
