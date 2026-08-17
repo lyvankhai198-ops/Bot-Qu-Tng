@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -412,19 +412,23 @@ function SettingsTab() {
   const [spamWarnAt,         setSpamWarnAt]         = useState(8)
   const [sessionCooldownSec, setSessionCooldownSec] = useState(120)
 
-  const { isLoading } = useQuery({
+  // ✅ KHÔNG dùng select để gọi setState (anti-pattern React 18 concurrent mode)
+  const { isLoading, data: settingsData } = useQuery({
     queryKey: ["chat-support-settings"],
     queryFn: () => apiFetch("GET", "/bot/chat-support/settings"),
-    select: (d: any) => {
-      setTimeoutMinutes(d.timeoutMinutes     ?? 10)
-      setDeleteDelayMinutes(d.deleteDelayMinutes ?? 5)
-      setSpamMaxMsgs(d.spamMaxMsgs           ?? 10)
-      setSpamWindowSec(d.spamWindowSec       ?? 60)
-      setSpamWarnAt(d.spamWarnAt             ?? 8)
-      setSessionCooldownSec(d.sessionCooldownSec ?? 120)
-      return d
-    },
   })
+
+  // Sync form state khi data load xong — dùng useEffect thay vì select callback
+  useEffect(() => {
+    if (!settingsData) return
+    const d = settingsData as any
+    setTimeoutMinutes(d.timeoutMinutes        ?? 10)
+    setDeleteDelayMinutes(d.deleteDelayMinutes ?? 5)
+    setSpamMaxMsgs(d.spamMaxMsgs              ?? 10)
+    setSpamWindowSec(d.spamWindowSec          ?? 60)
+    setSpamWarnAt(d.spamWarnAt                ?? 8)
+    setSessionCooldownSec(d.sessionCooldownSec ?? 120)
+  }, [settingsData])
 
   // Validate warnAt < maxMsgs trước khi submit
   const warnAtError = spamWarnAt >= spamMaxMsgs
