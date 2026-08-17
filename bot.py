@@ -2639,7 +2639,11 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = update.effective_user
     text = update.message.text.strip()
 
-    # Admin chat reply detection — must come first
+    # Admin B có phiên được assign → bất kỳ tin nào đều route về khách (không cần reply-to)
+    if await _route_assigned_admin_direct(update, context):
+        return
+
+    # Admin chat reply detection (reply-to message)
     if update.message.reply_to_message and await _route_admin_chat_reply(update, context):
         return
 
@@ -4027,6 +4031,69 @@ async def _notify_admin_with_history(context, session: dict, uid_str: str, user)
         _save_chat_sessions(data)
     except Exception as e:
         logger.error(f"_notify_admin_with_history error: {e}")
+
+
+async def _route_assigned_admin_direct(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Admin B đang được assign một phiên → bất kỳ tin nhắn nào (không cần reply-to)
+    đều được forward thẳng về khách đó.
+    Trả về True nếu đã xử lý.
+    """
+    msg = update.message
+    if not msg or (not msg.text and not msg.photo):
+        return False
+
+    sender = update.effective_user
+    sub_admin_ids = {int(a.get("id", 0)) for a in _get_support_admins()}
+    if sender.id not in sub_admin_ids:
+        return False
+
+    # Tìm session mà assigned_admin_id == sender.id
+    data    = _load_chat_sessions()
+    aid_str = str(sender.id)
+    uid_str = None
+    session = None
+    for u, s in data["sessions"].items():
+        if str(s.get("assigned_admin_id", "")) == aid_str and s.get("status") == "active":
+            uid_str = u
+            session = s
+            break
+
+    if not uid_str or not session:
+        return False
+
+    user_id = int(uid_str)
+    try:
+        if msg.photo:
+            caption_header = "💬 <b>Support:</b>"
+            if msg.caption:
+                caption_header += "\n" + msg.caption
+            sent_photo = await context.bot.send_photo(
+                chat_id=user_id,
+                photo=msg.photo[-1].file_id,
+                caption=caption_header,
+                parse_mode=ParseMode.HTML,
+                reply_markup=_chat_keyboard(user_id),
+            )
+            session.setdefault("user_bot_msg_ids", []).append(sent_photo.message_id)
+        else:
+            kb = _chat_keyboard(user_id).to_dict()
+            sent_mid = _tg_send_markup(TOKEN, user_id, "💬 <b>Support:</b>\n" + msg.text, markup=kb)
+            if sent_mid:
+                session.setdefault("user_bot_msg_ids", []).append(sent_mid)
+    except Exception as e:
+        logger.error(f"_route_assigned_admin_direct error: {e}")
+        return True
+
+    session["last_active"]   = datetime.utcnow().isoformat()
+    session["admin_engaged"] = True
+    session.setdefault("messages", []).append({
+        "role": "support",
+        "text": msg.text if msg.text else "[Ảnh]",
+        "time": datetime.utcnow().isoformat(),
+    })
+    _save_chat_sessions(data)
+    return True
 
 
 async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
