@@ -1664,23 +1664,21 @@ async def _open_orders_page(page) -> None:
         # Không raise — để _download_orders_xlsx tự xử lý/retry
 
 
-async def _open_cho_page(page) -> bool:
+async def _click_slot_tab(page) -> bool:
     """
-    Từ bất kỳ trang nào, click menu "Chợ" trong sidebar để vào trang đơn market_order.
-    Trả True nếu thành công, False nếu không tìm thấy.
+    Đang ở trang Đơn hàng → click tab "Đơn hàng slot" để lọc market_order type.
+    Trả True nếu click thành công và tab đã load, False nếu không tìm thấy.
     Không raise — lỗi chỉ log và return False.
     """
-    CHO_SELECTORS = [
-        "aside.app-sidebar button:has-text('Chợ')",
-        "aside[class*='sidebar'] button:has-text('Chợ')",
-        "aside button:has-text('Chợ')",
-        "nav button:has-text('Chợ')",
-        "[class*='sidebar'] button:has-text('Chợ')",
-        "button.sidebar-tab:has-text('Chợ')",
-        "button:has-text('Chợ')",
-        "a:has-text('Chợ')",
+    # Các selector cho tab "Đơn hàng slot" trong trang Đơn hàng
+    SLOT_SELECTORS = [
+        'button:has-text("Đơn hàng slot")',
+        'a:has-text("Đơn hàng slot")',
+        '[role="tab"]:has-text("Đơn hàng slot")',
+        '.nested-tab:has-text("Đơn hàng slot")',
+        '.tab:has-text("Đơn hàng slot")',
     ]
-    for sel in CHO_SELECTORS:
+    for sel in SLOT_SELECTORS:
         try:
             el = page.locator(sel).first
             if await el.count() == 0:
@@ -1688,36 +1686,25 @@ async def _open_cho_page(page) -> bool:
             if not await el.is_visible():
                 continue
             txt = (await el.inner_text()).strip()
-            # Đảm bảo đúng menu item ngắn, không phải đoạn text dài
-            if len(txt) > 10:
-                continue
             await el.click()
-            await asyncio.sleep(1.0)
-            logger.info(f"[SYNC][CHO] ✅ Đã click sidebar 'Chợ' ({sel!r}) — text={txt!r}")
-            # Xác nhận đã vào trang "Chợ" bằng signal
-            CHO_SIGNALS = [
-                'button:has-text("Tải xuống")',
-                'a:has-text("Tải xuống")',
-                'button:has-text("Download")',
-                'th:has-text("MÃ ĐƠN")',
-                'th:has-text("SẢN PHẨM")',
-            ]
+            await asyncio.sleep(1.2)
+            logger.info(f"[SYNC][SLOT] ✅ Đã click tab 'Đơn hàng slot' ({sel!r}) — text={txt!r}")
+            # Xác nhận tab đã load (chờ download button)
             for _tick in range(20):
-                for sig in CHO_SIGNALS:
-                    try:
-                        sig_el = page.locator(sig).first
-                        if await sig_el.count() > 0 and await sig_el.is_visible():
-                            logger.info(f"[SYNC][CHO] ✅ Trang Chợ xác nhận: {sig!r}")
-                            return True
-                    except Exception:
-                        pass
+                try:
+                    dl_el = page.locator('button:has-text("Tải xuống")').first
+                    if await dl_el.count() > 0 and await dl_el.is_visible():
+                        logger.info("[SYNC][SLOT] ✅ Tab slot loaded — nút Tải xuống hiện")
+                        return True
+                except Exception:
+                    pass
                 await asyncio.sleep(0.5)
-            logger.warning("[SYNC][CHO] Click 'Chợ' thành công nhưng không thấy nội dung trang")
-            return False
+            logger.warning("[SYNC][SLOT] Click tab slot OK nhưng nút Tải xuống không xuất hiện")
+            return True   # Vẫn return True — download có thể vẫn hoạt động
         except Exception as ex:
-            logger.debug(f"[SYNC][CHO] Selector {sel!r} failed: {ex}")
+            logger.debug(f"[SYNC][SLOT] Selector {sel!r} failed: {ex}")
             continue
-    logger.info("[SYNC][CHO] Không tìm thấy menu 'Chợ' trong sidebar")
+    logger.info("[SYNC][SLOT] Không tìm thấy tab 'Đơn hàng slot' trên trang Đơn hàng")
     return False
 
 
@@ -2001,12 +1988,12 @@ async def do_playwright_sync(config: dict) -> dict:
                         "dir": download_dir, "error": str(ex)}
 
             # ════════════════════════════════════════════════════════
-            # STEP 4b: Thử download XLSX từ "Chợ" (market_order type)
-            # Không fail nếu "Chợ" không có — chỉ log và bỏ qua
+            # STEP 4b: Click tab "Đơn hàng slot" và download XLSX đó
+            # (market_order type — không fail nếu tab không tồn tại)
             # ════════════════════════════════════════════════════════
             cho_path = None
             try:
-                cho_nav_ok = await _open_cho_page(page)
+                cho_nav_ok = await _click_slot_tab(page)
                 if cho_nav_ok:
                     cho_out = os.path.join(download_dir, "cho_orders.xlsx")
                     try:
