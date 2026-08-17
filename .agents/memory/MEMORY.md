@@ -9,3 +9,4 @@
 - [Sync robot login & nav](sync-robot-login.md) — canboso.com SPA fixes: sec-ch-ua override, goto-root session check, wait_for_url after submit, no hamburger needed
 - [Warranty scan feature](warranty-scan.md) — warranty_scan.py + warrantySheets.ts + warranty-scan.tsx; Google Sheets 403 unresolved (SA permission issue)
 - [Start channel gate](start-channel-gate.md) — require_start_channel_check setting; callback_check_community_join callback; reuses required_channels.json; shows shop_channels after pass
+- [Sync robot API port](sync-robot-api-port.md) — API_BASE_URL must be port 3002 (not 8081); wrong port silently fails auth → 0 orders imported; canboso orders page XLSX always 1371 pre_order rows
