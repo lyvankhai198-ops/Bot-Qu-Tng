@@ -305,6 +305,22 @@ def get_orders() -> dict:
 def get_order(order_id: str):
     return load("orders", {}).get(order_id)
 
+def get_market_order(order_id: str):
+    """Tìm market order theo order_id (exact + fuzzy O↔0)."""
+    mo = load("market_orders", {})
+    if order_id in mo:
+        return mo[order_id]
+    # Fuzzy: normalize O↔0 I↔1
+    q_canon = _canon_order_id_mo(order_id.upper())
+    for k, v in mo.items():
+        if _canon_order_id_mo(k) == q_canon:
+            return v
+    return None
+
+def _canon_order_id_mo(s: str) -> str:
+    """Normalize order ID: 0→O, 1→I/L for fuzzy match."""
+    return s.upper().replace('0', 'O').replace('1', 'I')
+
 def add_order(order: dict) -> str:
     orders = load("orders", {})
     order_id = "ORD" + str(uuid.uuid4())[:6].upper()
@@ -548,6 +564,27 @@ def find_order_with_items(query: str) -> dict:
                 "order": order, "items": [], "lookupType": "email",
                 "matchedItem": None, "isMultiAccountOrder": False,
             }
+
+    # 4. Fallback: tìm trong market_orders.json (đơn hàng chợ canboso)
+    mo = load("market_orders", {})
+    query_upper = query.upper()
+    query_canon = _canon_order_id_mo(query_upper)
+    mo_match = None
+    if query_upper in mo:
+        mo_match = mo[query_upper]
+    else:
+        for k, v in mo.items():
+            if _canon_order_id_mo(k) == query_canon:
+                mo_match = v
+                break
+    if mo_match:
+        return {
+            "order": mo_match,
+            "items": [],
+            "lookupType": "market_order",
+            "matchedItem": None,
+            "isMultiAccountOrder": False,
+        }
 
     return {"order": None, "items": [], "lookupType": None, "matchedItem": None, "isMultiAccountOrder": False}
 

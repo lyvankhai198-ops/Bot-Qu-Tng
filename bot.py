@@ -1681,7 +1681,7 @@ async def handle_delivery_input(update: Update, context: ContextTypes.DEFAULT_TY
         db.clear_user_state(user.id, "_delivery_fail_until")
 
     # ── Kiểm tra mã đơn có tồn tại trong hệ thống không ─────────────────────
-    order = db.get_order(order_id)
+    order = db.get_order(order_id) or db.get_market_order(order_id)
     if not order:
         # Đặt cooldown 10 phút
         cooldown_until = (_utcnow() + timedelta(minutes=10)).isoformat()
@@ -2128,6 +2128,39 @@ async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(
             t(L, "order_not_found"),
             parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard(user.id),
+        )
+        return
+
+    # ── Market order: hiển thị riêng (đơn chợ canboso) ──────────────────────
+    if result.get("lookupType") == "market_order":
+        mo = result["order"]
+        oid  = mo.get("order_id", "")
+        name = mo.get("product_name", "")
+        qty  = mo.get("quantity", "1")
+        price = mo.get("sell_price") or mo.get("price", "")
+        status = mo.get("status", "")
+        content = mo.get("content", "")
+        created = mo.get("created_at_raw", "") or mo.get("created_at", "")[:16]
+        seller  = mo.get("seller", "")
+        vi = L == "vi"
+        status_emoji = "✅" if status in ("completed", "done") else "⏳"
+        lines = [
+            f"🛒 <b>{'Đơn hàng chợ' if vi else 'Market Order'}</b>",
+            f"🏷 {'Mã đơn' if vi else 'Order'}: <code>{oid}</code>",
+            f"📦 {'Sản phẩm' if vi else 'Product'}: {name}",
+            f"🔢 {'Số lượng' if vi else 'Qty'}: {qty}",
+            f"💰 {'Giá' if vi else 'Price'}: {price}",
+            f"{status_emoji} {'Trạng thái' if vi else 'Status'}: {status}",
+        ]
+        if seller:
+            lines.append(f"🏪 {'Người bán' if vi else 'Seller'}: {seller}")
+        if created:
+            lines.append(f"📅 {'Ngày mua' if vi else 'Date'}: {created}")
+        if content:
+            lines.append(f"\n📋 {'Nội dung giao' if vi else 'Delivery'}:\n<code>{content}</code>")
+        await update.message.reply_text(
+            "\n".join(lines), parse_mode=ParseMode.HTML,
             reply_markup=main_keyboard(user.id),
         )
         return
