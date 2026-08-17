@@ -50,6 +50,14 @@ sshpass -p "${VPS_PASSWORD}" ssh ${SSH_OPTS} "${VPS}" "
     sed -i '/Environment=NODE_ENV=production/a Environment=DATA_DIR=${DEPLOY_PATH}/data' /etc/systemd/system/bot-api.service
     systemctl daemon-reload
   fi
+
+  # Đồng bộ SESSION_SECRET vào bot-api.service (đây là mật khẩu admin panel)
+  if grep -q 'SESSION_SECRET' /etc/systemd/system/bot-api.service; then
+    sed -i 's|Environment=SESSION_SECRET=.*|Environment=SESSION_SECRET=Admin123|g' /etc/systemd/system/bot-api.service
+  else
+    sed -i '/Environment=NODE_ENV=production/a Environment=SESSION_SECRET=Admin123' /etc/systemd/system/bot-api.service
+  fi
+  systemctl daemon-reload
   # ── Cài openpyxl + playwright Python (--break-system-packages cho Ubuntu mới) ─
   pip3 install --break-system-packages -q openpyxl playwright || \
     pip3 install -q openpyxl playwright || true
