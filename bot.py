@@ -3296,17 +3296,25 @@ def _get_chat_ban(uid_str: str) -> dict | None:
 
 
 def _build_transfer_markup(uid_str: str) -> InlineKeyboardMarkup | None:
-    """Tạo inline keyboard với các admin phụ đang bật để admin chính chuyển phiên."""
-    sub_admins = _get_support_admins(enabled_only=True)
-    if not sub_admins:
+    """Nút đơn 'Chuyển phiên' — click sẽ hiện danh sách admin phụ."""
+    if not _get_support_admins(enabled_only=True):
         return None
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("↗️ Chuyển phiên", callback_data=f"spt_menu:{uid_str}")
+    ]])
+
+
+def _build_transfer_select_markup(uid_str: str) -> InlineKeyboardMarkup:
+    """Danh sách admin phụ để chọn + nút Huỷ."""
+    sub_admins = _get_support_admins(enabled_only=True)
     rows = []
     for admin in sub_admins:
         name = admin.get("name") or f"Admin {admin.get('id', '?')}"
         rows.append([InlineKeyboardButton(
-            f"↗️ Chuyển cho {name}",
+            f"👤 {name}",
             callback_data=f"spt:{uid_str}:{admin['id']}"
         )])
+    rows.append([InlineKeyboardButton("❌ Huỷ", callback_data=f"spt_cancel:{uid_str}")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -3392,8 +3400,7 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
     data["sessions"][uid_str]["user_bot_msg_ids"].append(sent_start.message_id)
     _save_chat_sessions(data)
 
-    # Thông báo admin(s)
-    admin_ids = _get_all_admin_ids()
+    # Thông báo admin chính (ADMIN_ID) với nút Chuyển phiên
     name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
     notif = (
         f"💬 <b>Phiên chat hỗ trợ mới</b>\n"
@@ -3401,10 +3408,13 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
         f"──────────────\n"
         f"<i>Reply bất kỳ tin nhắn nào từ người dùng này để trả lời họ</i>"
     )
-    for aid in admin_ids:
-        mid = _tg_send(TOKEN, aid, notif)
+    transfer_markup = _build_transfer_markup(uid_str)  # nút đơn hoặc None
+    if ADMIN_ID:
+        mid = _tg_send_markup(TOKEN, ADMIN_ID, notif, markup=transfer_markup.to_dict() if transfer_markup else None)
         if mid:
             data["sessions"][uid_str].setdefault("admin_msg_ids", []).append(mid)
+            # Lưu message_id của thông báo phiên để cập nhật sau
+            data["sessions"][uid_str]["session_notif_mid"] = mid
     _save_chat_sessions(data)
 
 
@@ -3486,11 +3496,10 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
             f"──────────────\n"
             f"<i>↩️ Reply tin này để trả lời</i>"
         )
-        markup = _build_transfer_markup(uid_str)
         try:
             sent = await context.bot.send_message(
                 chat_id=ADMIN_ID, text=msg_to_admin,
-                parse_mode=ParseMode.HTML, reply_markup=markup
+                parse_mode=ParseMode.HTML
             )
             session.setdefault("admin_msg_ids", []).append(sent.message_id)
             data["msg_map"][str(sent.message_id)] = uid_str
@@ -3567,7 +3576,7 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.error(f"handle_live_chat_media (assigned) send error: {e}")
     else:
-        # ── Chưa chuyển: gửi ảnh đến admin chính, kèm nút chuyển phiên ─────
+        # ── Chưa chuyển: gửi ảnh đến admin chính (không kèm markup) ──────────
         if not ADMIN_ID:
             L = lang(user.id)
             await msg.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
@@ -3578,12 +3587,10 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
             + (u_cap + "\n" if u_cap else "")
             + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
         )
-        markup = _build_transfer_markup(uid_str)
         try:
             sent = await context.bot.send_photo(
                 chat_id=ADMIN_ID, photo=photo.file_id,
                 caption=header, parse_mode=ParseMode.HTML,
-                reply_markup=markup,
             )
             session.setdefault("admin_msg_ids", []).append(sent.message_id)
             data["msg_map"][str(sent.message_id)] = uid_str
@@ -4581,6 +4588,49 @@ def run_flask():
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
+async def callback_support_transfer_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin bấm nút 'Chuyển phiên' → hiện danh sách admin phụ để chọn (2-step)."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, uid_str = query.data.split(":", 1)
+    except Exception:
+        return
+
+    data = _load_chat_sessions()
+    if uid_str not in data.get("sessions", {}):
+        await query.answer("❌ Phiên đã kết thúc", show_alert=True)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    select_markup = _build_transfer_select_markup(uid_str)
+    try:
+        await query.edit_message_reply_markup(reply_markup=select_markup)
+    except Exception:
+        pass
+
+
+async def callback_support_transfer_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin bấm Huỷ trong menu chọn admin → quay lại nút đơn."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, uid_str = query.data.split(":", 1)
+    except Exception:
+        return
+
+    restore_markup = _build_transfer_markup(uid_str)
+    try:
+        await query.edit_message_reply_markup(reply_markup=restore_markup)
+    except Exception:
+        pass
+
+
 async def callback_support_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin chính bấm nút Chuyển phiên → giao cho admin phụ xử lý ẩn danh."""
     query = update.callback_query
@@ -4735,7 +4785,9 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_return_gift_init,    pattern=r"^return_gift_init$"))
     app.add_handler(CallbackQueryHandler(callback_return_gift_confirm, pattern=r"^return_gift_confirm$"))
     app.add_handler(CallbackQueryHandler(callback_return_gift_cancel,  pattern=r"^return_gift_cancel$"))
-    app.add_handler(CallbackQueryHandler(callback_support_transfer,    pattern=r"^spt:"))
+    app.add_handler(CallbackQueryHandler(callback_support_transfer_menu,   pattern=r"^spt_menu:"))
+    app.add_handler(CallbackQueryHandler(callback_support_transfer_cancel, pattern=r"^spt_cancel:"))
+    app.add_handler(CallbackQueryHandler(callback_support_transfer,        pattern=r"^spt:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_live_chat_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
