@@ -1664,28 +1664,23 @@ async def _open_orders_page(page) -> None:
         # Không raise — để _download_orders_xlsx tự xử lý/retry
 
 
-async def _click_all_orders_tab(page) -> bool:
+async def _open_cho_page(page) -> bool:
     """
-    Sau khi vào trang Đơn hàng, cố gắng click tab "Tất cả" (nếu có)
-    để XLSX bao gồm cả market_order type lẫn pre_order type.
-    Trả True nếu đã click thành công, False nếu không tìm thấy tab.
-    Lỗi không raise — chỉ log và return False.
+    Từ bất kỳ trang nào, click menu "Chợ" trong sidebar để vào trang đơn market_order.
+    Trả True nếu thành công, False nếu không tìm thấy.
+    Không raise — lỗi chỉ log và return False.
     """
-    TAB_SELECTORS = [
-        # Tab có text chính xác "Tất cả"
-        '[role="tab"]:has-text("Tất cả")',
-        'button.tab:has-text("Tất cả")',
-        'li[role="tab"]:has-text("Tất cả")',
-        # Các class tab phổ biến
-        '.tab-item:has-text("Tất cả")',
-        '.tab:has-text("Tất cả")',
-        '.nav-tab:has-text("Tất cả")',
-        '.tabs__item:has-text("Tất cả")',
-        # Fallback: bất kỳ button/link nào chứa text ngắn "Tất cả"
-        'button:has-text("Tất cả")',
-        'a:has-text("Tất cả")',
+    CHO_SELECTORS = [
+        "aside.app-sidebar button:has-text('Chợ')",
+        "aside[class*='sidebar'] button:has-text('Chợ')",
+        "aside button:has-text('Chợ')",
+        "nav button:has-text('Chợ')",
+        "[class*='sidebar'] button:has-text('Chợ')",
+        "button.sidebar-tab:has-text('Chợ')",
+        "button:has-text('Chợ')",
+        "a:has-text('Chợ')",
     ]
-    for sel in TAB_SELECTORS:
+    for sel in CHO_SELECTORS:
         try:
             el = page.locator(sel).first
             if await el.count() == 0:
@@ -1693,17 +1688,36 @@ async def _click_all_orders_tab(page) -> bool:
             if not await el.is_visible():
                 continue
             txt = (await el.inner_text()).strip()
-            # Chỉ click tab ngắn (tránh click button "Tất cả ... đơn hàng đã bị hủy" dài)
-            if len(txt) > 15:
+            # Đảm bảo đúng menu item ngắn, không phải đoạn text dài
+            if len(txt) > 10:
                 continue
             await el.click()
-            await asyncio.sleep(0.8)
-            logger.info(f"[SYNC] ✅ Đã click tab 'Tất cả' ({sel!r}) — text={txt!r}")
-            return True
+            await asyncio.sleep(1.0)
+            logger.info(f"[SYNC][CHO] ✅ Đã click sidebar 'Chợ' ({sel!r}) — text={txt!r}")
+            # Xác nhận đã vào trang "Chợ" bằng signal
+            CHO_SIGNALS = [
+                'button:has-text("Tải xuống")',
+                'a:has-text("Tải xuống")',
+                'button:has-text("Download")',
+                'th:has-text("MÃ ĐƠN")',
+                'th:has-text("SẢN PHẨM")',
+            ]
+            for _tick in range(20):
+                for sig in CHO_SIGNALS:
+                    try:
+                        sig_el = page.locator(sig).first
+                        if await sig_el.count() > 0 and await sig_el.is_visible():
+                            logger.info(f"[SYNC][CHO] ✅ Trang Chợ xác nhận: {sig!r}")
+                            return True
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.5)
+            logger.warning("[SYNC][CHO] Click 'Chợ' thành công nhưng không thấy nội dung trang")
+            return False
         except Exception as ex:
-            logger.debug(f"[SYNC] Tab selector {sel!r} failed: {ex}")
+            logger.debug(f"[SYNC][CHO] Selector {sel!r} failed: {ex}")
             continue
-    logger.info("[SYNC] Không tìm thấy tab 'Tất cả' trên trang Đơn hàng — download tab hiện tại")
+    logger.info("[SYNC][CHO] Không tìm thấy menu 'Chợ' trong sidebar")
     return False
 
 
@@ -1969,16 +1983,7 @@ async def do_playwright_sync(config: dict) -> dict:
                         "dir": download_dir, "error": str(ex)}
 
             # ════════════════════════════════════════════════════════
-            # STEP 3.5: Click tab "Tất cả" để XLSX bao gồm mọi loại đơn
-            # (pre_order + market_order + ...)
-            # ════════════════════════════════════════════════════════
-            tab_clicked = await _click_all_orders_tab(page)
-            logger.info(
-                f"[SYNC][STEP 3.5] Click tab 'Tất cả': {'OK' if tab_clicked else 'Bỏ qua (không tìm thấy)'}"
-            )
-
-            # ════════════════════════════════════════════════════════
-            # STEP 4: Download XLSX
+            # STEP 4: Download XLSX từ tab "Đơn hàng" (pre_order)
             # ════════════════════════════════════════════════════════
             logger.info(
                 f"[SYNC][STEP 4] Bắt đầu tải XLSX — "
@@ -1994,6 +1999,42 @@ async def do_playwright_sync(config: dict) -> dict:
                 )
                 return {"login_ok": True, "download_ok": False, "path": None,
                         "dir": download_dir, "error": str(ex)}
+
+            # ════════════════════════════════════════════════════════
+            # STEP 4b: Thử download XLSX từ "Chợ" (market_order type)
+            # Không fail nếu "Chợ" không có — chỉ log và bỏ qua
+            # ════════════════════════════════════════════════════════
+            cho_path = None
+            try:
+                cho_nav_ok = await _open_cho_page(page)
+                if cho_nav_ok:
+                    cho_out = os.path.join(download_dir, "cho_orders.xlsx")
+                    try:
+                        async with page.expect_download(timeout=30_000) as dl_cho:
+                            dl_btn_cho = await _find_visible(page, [
+                                'button:has-text("Tải xuống")',
+                                'button:has-text("Tải Xuống")',
+                                'a:has-text("Tải xuống")',
+                                'button:has-text("Download")',
+                            ])
+                            if dl_btn_cho:
+                                await page.locator(dl_btn_cho).first.click()
+                            else:
+                                raise RuntimeError("Không tìm thấy nút Tải xuống trong trang Chợ")
+                        dl_cho_val = await dl_cho.value
+                        await dl_cho_val.save_as(cho_out)
+                        cho_size = os.path.getsize(cho_out)
+                        if cho_size >= 100:
+                            cho_path = cho_out
+                            logger.info(f"[SYNC][CHO] ✅ XLSX Chợ đã tải: {cho_out} ({cho_size} bytes)")
+                        else:
+                            logger.warning(f"[SYNC][CHO] File Chợ quá nhỏ ({cho_size}B) — bỏ qua")
+                    except Exception as ex_cho_dl:
+                        logger.warning(f"[SYNC][CHO] Không tải được XLSX Chợ: {ex_cho_dl}")
+                else:
+                    logger.info("[SYNC][CHO] Không vào được trang Chợ — bỏ qua")
+            except Exception as ex_cho:
+                logger.warning(f"[SYNC][CHO] Lỗi khi xử lý trang Chợ: {ex_cho}")
 
         finally:
             # ── Lưu cookies + orders API info cho watcher ─────────────────
@@ -2026,8 +2067,8 @@ async def do_playwright_sync(config: dict) -> dict:
     # ════════════════════════════════════════════════════════
     # STEP 5: Import XLSX (bên ngoài browser — xử lý trong run_sync_cycle)
     # ════════════════════════════════════════════════════════
-    logger.info(f"[SYNC][STEP 5] ✅ Sẵn sàng import XLSX — path={out_path}")
-    return {"login_ok": True, "download_ok": True, "path": out_path, "dir": download_dir, "error": ""}
+    logger.info(f"[SYNC][STEP 5] ✅ Sẵn sàng import XLSX — path={out_path} | cho_path={cho_path}")
+    return {"login_ok": True, "download_ok": True, "path": out_path, "cho_path": cho_path, "dir": download_dir, "error": ""}
 
 # ── One sync cycle ─────────────────────────────────────────────────────────────
 def run_sync_cycle(config: dict) -> dict:
@@ -2068,9 +2109,7 @@ def run_sync_cycle(config: dict) -> dict:
             return result
 
         xlsx_path = dl["path"]
-
-        # STEP 5: Import
-        logger.info(f"[SYNC][STEP 5] Bắt đầu import XLSX — path={xlsx_path}")
+        cho_path  = dl.get("cho_path")  # XLSX từ trang "Chợ" (market_order type), có thể None
 
         # Đọc chế độ đồng bộ từ config
         # "full"     → cập nhật mật khẩu cho đơn cũ + thêm đơn mới (mặc định)
@@ -2078,56 +2117,64 @@ def run_sync_cycle(config: dict) -> dict:
         sync_mode = config.get("sync_mode", "full")
         logger.info(f"[SYNC] sync_mode={sync_mode!r}")
 
-        # 2. Dedup sets
+        # 2. Dedup sets (dùng chung cho cả 2 XLSX)
         known_products = get_known_products(token)
         existing_order_ids, existing_item_emails = get_existing_sets(token)
 
-        # 3. Parse XLSX
-        rows = parse_xlsx_to_rows(xlsx_path, known_products, existing_order_ids, existing_item_emails)
-        logger.info(f"[SYNC][STEP 5] XLSX → {len(rows)} dòng cần xử lý")
-
-        # new_only: lọc sớm trước khi gửi API — chỉ giữ đơn chưa tồn tại
-        if sync_mode == "new_only":
-            total_parsed = len(rows)
-            rows = [r for r in rows if not r.get("dupOrderExists", False)]
-            skipped_existing = total_parsed - len(rows)
-            logger.info(
-                f"[SYNC] new_only: giữ {len(rows)}/{total_parsed} dòng "
-                f"({skipped_existing} đơn cũ bỏ qua)"
-            )
+        def _import_xlsx(label: str, path: str) -> dict:
+            """Parse + import một file XLSX, trả {'new', 'updated', 'skipped', 'failed'}."""
+            rows = parse_xlsx_to_rows(path, known_products, existing_order_ids, existing_item_emails)
+            logger.info(f"[SYNC][{label}] XLSX → {len(rows)} dòng")
+            if sync_mode == "new_only":
+                rows = [r for r in rows if not r.get("dupOrderExists", False)]
+                logger.info(f"[SYNC][{label}] new_only: còn {len(rows)} dòng mới")
             if not rows:
-                result["success"]        = True
-                result["import_ok"]      = True
-                result["skipped_orders"] = skipped_existing
-                result["message"]        = (
-                    f"✔ Không có đơn hàng mới (new_only mode, "
-                    f"{skipped_existing} đơn cũ đã bỏ qua)"
-                )
-                return result
+                return {"new": 0, "updated": 0, "skipped": 0, "failed": 0}
+            r = call_api(
+                "POST", "/bot/orders/xlsx-import",
+                body={"rows": rows, "syncMode": sync_mode},
+                token=token,
+            )
+            # Cập nhật dedup sets với đơn vừa import để tránh trùng khi import file tiếp theo
+            for row in rows:
+                if row.get("orderCode"):
+                    existing_order_ids.add(row["orderCode"])
+            return {
+                "new":     r.get("new", r.get("success", 0)),
+                "updated": r.get("updated", 0),
+                "skipped": r.get("skipped", 0) + r.get("unchanged", 0),
+                "failed":  r.get("failed", 0),
+            }
 
-        if not rows:
-            result["success"] = True
-            result["import_ok"] = True
-            result["message"] = "✔ File XLSX không có đơn hàng mới"
-            return result
+        # STEP 5: Import XLSX Đơn hàng (pre_order)
+        logger.info(f"[SYNC][STEP 5] Bắt đầu import XLSX Đơn hàng — path={xlsx_path}")
+        imp1 = _import_xlsx("STEP 5", xlsx_path)
 
-        # 4. Import via API — truyền syncMode để backend cập nhật password đơn cũ
-        resp = call_api(
-            "POST",
-            "/bot/orders/xlsx-import",
-            body={"rows": rows, "syncMode": sync_mode},
-            token=token,
-        )
+        # STEP 5b: Import XLSX Chợ (market_order type) nếu tải được
+        imp2 = {"new": 0, "updated": 0, "skipped": 0, "failed": 0}
+        if cho_path:
+            logger.info(f"[SYNC][STEP 5b] Bắt đầu import XLSX Chợ — path={cho_path}")
+            imp2 = _import_xlsx("STEP 5b", cho_path)
+            logger.info(
+                f"[SYNC][STEP 5b] Chợ: {imp2['new']} mới, {imp2['updated']} cập nhật, "
+                f"{imp2['skipped']} bỏ qua, {imp2['failed']} lỗi"
+            )
+        else:
+            logger.info("[SYNC][STEP 5b] Không có XLSX Chợ — bỏ qua")
+
         result["import_ok"]      = True
-        result["new_orders"]     = resp.get("new", resp.get("success", 0))
-        result["updated_orders"] = resp.get("updated", 0)
-        result["skipped_orders"] = resp.get("skipped", 0) + resp.get("unchanged", 0)
-        result["errors"]         = resp.get("failed", 0)
+        result["new_orders"]     = imp1["new"]     + imp2["new"]
+        result["updated_orders"] = imp1["updated"] + imp2["updated"]
+        result["skipped_orders"] = imp1["skipped"] + imp2["skipped"]
+        result["errors"]         = imp1["failed"]  + imp2["failed"]
         result["success"]        = True
         mode_label = "full" if sync_mode == "full" else "chỉ đơn mới"
+        cho_note = f" + {imp2['new']} mới từ Chợ" if cho_path and imp2["new"] > 0 else (
+                   " (Chợ: OK)" if cho_path else ""
+        )
         result["message"] = (
             f"✔ Đồng bộ [{mode_label}] lúc {datetime.now().strftime('%H:%M %d/%m/%Y')}: "
-            f"{result['new_orders']} đơn mới, "
+            f"{result['new_orders']} đơn mới{cho_note}, "
             f"{result['updated_orders']} cập nhật, "
             f"{result['skipped_orders']} bỏ qua, "
             f"{result['errors']} lỗi"
