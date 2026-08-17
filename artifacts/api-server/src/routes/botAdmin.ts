@@ -3321,15 +3321,15 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
   const { id } = req.params;
   const body = req.body ?? {};
 
-  // Hỗ trợ cả single {account,password,twoFA} lẫn mảng {accounts:[...]}
-  let accountList: Array<{ account: string; password: string; twoFA?: string }> = [];
+  // Hỗ trợ cả single {account,password,twoFA,type} lẫn mảng {accounts:[...]}
+  let accountList: Array<{ account: string; password?: string; twoFA?: string; type?: string }> = [];
   if (Array.isArray(body.accounts) && body.accounts.length > 0) {
     accountList = body.accounts;
   } else if (body.account) {
-    accountList = [{ account: body.account, password: body.password, twoFA: body.twoFA }];
+    accountList = [{ account: body.account, password: body.password, twoFA: body.twoFA, type: body.type }];
   }
-  if (accountList.length === 0 || !accountList[0].account || !accountList[0].password) {
-    res.status(400).json({ ok: false, message: "Cần ít nhất một tài khoản và mật khẩu" });
+  if (accountList.length === 0 || !accountList[0].account) {
+    res.status(400).json({ ok: false, message: "Cần ít nhất một nội dung cần giao (tài khoản / key / link)" });
     return;
   }
 
@@ -3360,7 +3360,7 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
   // ── Ghi order_items với unlocked=false (tất cả accounts) ─────────────────
   const existingItems: any[] = orderItems[dr.orderId] ?? [];
   for (const acc of accountList) {
-    const { account, password, twoFA } = acc;
+    const { account, password, twoFA, type: deliveryType } = acc;
     const existIdx = existingItems.findIndex(
       (it: any) => (it.original_account || it.email || "").toLowerCase() === account.toLowerCase()
     );
@@ -3369,6 +3369,7 @@ router.post("/bot/delivery/:id/send", requireAuth, async (req: any, res: any) =>
       email:    account,
       password: password || null,
       twoFA:    twoFA    || null,
+      delivery_type: deliveryType || "account",   // "account" | "key" | "link"
       unlocked: false,
       status:   "delivered",
       item_status: "active",

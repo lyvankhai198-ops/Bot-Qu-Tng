@@ -4409,6 +4409,28 @@ async def callback_unlock_delivery(update: Update, context: ContextTypes.DEFAULT
     product = (unlocked_items[0].get("productName") if unlocked_items else None) or dr.get("productName") or ""
     w_end   = (unlocked_items[0].get("warranty_end_date") if unlocked_items else None) or ""
 
+    def _format_item(item: dict, idx: int, total: int, vi: bool) -> list[str]:
+        """Render one delivered item dựa vào delivery_type."""
+        val      = item.get("email") or item.get("original_account") or ""
+        password = item.get("password") or ""
+        twofa    = item.get("twoFA") or ""
+        dtype    = item.get("delivery_type", "account")
+        out: list[str] = []
+        if total > 1:
+            out.append(f"\n<b>{'Tài khoản' if vi else 'Account'} {idx}:</b>")
+        else:
+            out.append("")
+        if dtype == "key":
+            out.append(f"🔑 {'Key' if vi else 'License Key'}: <code>{val}</code>")
+        elif dtype == "link":
+            out.append(f"🔗 Link: {val}")
+        else:
+            out.append(f"📧 {'Tài khoản' if vi else 'Account'}: <code>{val}</code>")
+            out.append(f"🔒 {'Mật khẩu' if vi else 'Password'}: <code>{password}</code>")
+            if twofa:
+                out.append(f"🛡 2FA: <code>{twofa}</code>")
+        return out
+
     if vi:
         lines = [
             f"✅ <b>Tài khoản của bạn</b>",
@@ -4419,15 +4441,7 @@ async def callback_unlock_delivery(update: Update, context: ContextTypes.DEFAULT
         if w_end:
             lines.append(f"🛡 Bảo hành đến: <b>{w_end}</b>")
         for idx, item in enumerate(unlocked_items, 1):
-            email    = item.get("email") or item.get("original_account") or ""
-            password = item.get("password") or ""
-            twofa    = item.get("twoFA") or ""
-            prefix = f"\n<b>Tài khoản {idx}:</b>" if len(unlocked_items) > 1 else "\n"
-            lines.append(prefix)
-            lines.append(f"📧 Tài khoản: <code>{email}</code>")
-            lines.append(f"🔒 Mật khẩu: <code>{password}</code>")
-            if twofa:
-                lines.append(f"🛡 2FA: <code>{twofa}</code>")
+            lines.extend(_format_item(item, idx, len(unlocked_items), True))
     else:
         lines = [
             f"✅ <b>Your Account{'s' if len(unlocked_items) > 1 else ''}</b>",
@@ -4438,15 +4452,7 @@ async def callback_unlock_delivery(update: Update, context: ContextTypes.DEFAULT
         if w_end:
             lines.append(f"🛡 Warranty until: <b>{w_end}</b>")
         for idx, item in enumerate(unlocked_items, 1):
-            email    = item.get("email") or item.get("original_account") or ""
-            password = item.get("password") or ""
-            twofa    = item.get("twoFA") or ""
-            prefix = f"\n<b>Account {idx}:</b>" if len(unlocked_items) > 1 else "\n"
-            lines.append(prefix)
-            lines.append(f"📧 Account: <code>{email}</code>")
-            lines.append(f"🔒 Password: <code>{password}</code>")
-            if twofa:
-                lines.append(f"🛡 2FA: <code>{twofa}</code>")
+            lines.extend(_format_item(item, idx, len(unlocked_items), False))
 
     try:
         await query.edit_message_text(

@@ -78,6 +78,7 @@ export default function Delivery() {
   const [twoFA, setTwoFA] = useState("")
   const [rawLine, setRawLine] = useState("")
   const [useRaw, setUseRaw] = useState(false)
+  const [deliveryType, setDeliveryType] = useState<"account" | "key" | "link">("account")
 
   // --- Refund dialog ---
   const [refundTarget, setRefundTarget] = useState<DeliveryRequest | null>(null)
@@ -108,7 +109,7 @@ export default function Delivery() {
 
   function openSendModal(req: DeliveryRequest) {
     setSelected(req)
-    setAccount(""); setPassword(""); setTwoFA(""); setRawLine(""); setUseRaw(false)
+    setAccount(""); setPassword(""); setTwoFA(""); setRawLine(""); setUseRaw(false); setDeliveryType("account")
   }
   function closeSendModal() { setSelected(null) }
 
@@ -124,9 +125,14 @@ export default function Delivery() {
 
   async function handleSend() {
     if (!selected) return
-    let accounts: Array<{ account: string; password: string; twoFA?: string }> = []
+    let accounts: Array<{ account: string; password?: string; twoFA?: string; type: string }> = []
     if (useRaw) {
-      accounts = parseAccountLines(rawLine).map(p => ({ account: p.account, password: p.password, twoFA: p.twoFA || undefined }))
+      if (deliveryType === "account") {
+        accounts = parseAccountLines(rawLine).map(p => ({ account: p.account, password: p.password || undefined, twoFA: p.twoFA || undefined, type: "account" }))
+      } else {
+        // Key hoặc Link: mỗi dòng một giá trị
+        accounts = rawLine.split("\n").map(l => l.trim()).filter(l => l.length > 0).map(l => ({ account: l, type: deliveryType }))
+      }
       if (accounts.length === 0) {
         toast({ title: "Thiếu thông tin", description: "Vui lòng nhập ít nhất một dòng nội dung", variant: "destructive" })
         return
@@ -134,10 +140,10 @@ export default function Delivery() {
     } else {
       const acc = account.trim(), pwd = password.trim(), tfa = twoFA.trim()
       if (!acc) {
-        toast({ title: "Thiếu thông tin", description: "Vui lòng nhập tài khoản / nội dung cần giao", variant: "destructive" })
+        toast({ title: "Thiếu thông tin", description: "Vui lòng nhập nội dung cần giao", variant: "destructive" })
         return
       }
-      accounts = [{ account: acc, password: pwd || undefined, twoFA: tfa || undefined }]
+      accounts = [{ account: acc, password: deliveryType === "account" ? (pwd || undefined) : undefined, twoFA: deliveryType === "account" ? (tfa || undefined) : undefined, type: deliveryType }]
     }
     setSending(true)
     try {
@@ -384,6 +390,29 @@ export default function Delivery() {
           </DialogHeader>
 
           <div className="space-y-4 py-2">
+            {/* Loại giao */}
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Loại nội dung giao</Label>
+              <div className="flex gap-2">
+                {([
+                  { value: "account", label: "📧 Tài khoản" },
+                  { value: "key",     label: "🔑 Key / License" },
+                  { value: "link",    label: "🔗 Link" },
+                ] as const).map(opt => (
+                  <Button
+                    key={opt.value}
+                    size="sm"
+                    variant={deliveryType === opt.value ? "default" : "outline"}
+                    onClick={() => { setDeliveryType(opt.value); setAccount(""); setPassword(""); setTwoFA(""); setRawLine("") }}
+                    className="flex-1 text-xs"
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {/* Cách nhập */}
             <div className="flex gap-2">
               <Button size="sm" variant={!useRaw ? "default" : "outline"} onClick={() => setUseRaw(false)} className="flex-1">
                 Nhập riêng từng ô
@@ -396,46 +425,71 @@ export default function Delivery() {
             {useRaw ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label>Mỗi dòng một tài khoản: email|password|2FA</Label>
+                  <Label className="text-sm">
+                    {deliveryType === "account" ? "Mỗi dòng: email|password|2FA" :
+                     deliveryType === "key"     ? "Mỗi dòng một Key / License" :
+                                                  "Mỗi dòng một Link / URL"}
+                  </Label>
                   {rawLine && (
                     <span className="text-xs text-muted-foreground">
-                      {parseAccountLines(rawLine).length} tài khoản
+                      {rawLine.split("\n").filter(l => l.trim()).length} mục
                     </span>
                   )}
                 </div>
                 <Textarea
-                  placeholder={"abc@email.com|password123|123456\nxyz@gmail.com|pass456|654321"}
+                  placeholder={
+                    deliveryType === "account" ? "abc@email.com|password123|123456\nxyz@gmail.com|pass456"  :
+                    deliveryType === "key"     ? "XXXX-YYYY-ZZZZ-1234\nAAAA-BBBB-CCCC-5678" :
+                                                 "https://example.com/link1\nhttps://example.com/link2"
+                  }
                   value={rawLine}
                   onChange={e => setRawLine(e.target.value)}
                   className="font-mono text-sm min-h-[120px] resize-y"
                 />
-                {rawLine && parseAccountLines(rawLine).length > 0 && (
-                  <div className="text-xs text-muted-foreground bg-muted rounded p-2 font-mono space-y-2 max-h-40 overflow-y-auto">
-                    {parseAccountLines(rawLine).map((p, i) => (
-                      <div key={i} className="space-y-0.5">
-                        {parseAccountLines(rawLine).length > 1 && <div className="font-semibold text-foreground/70">#{i + 1}</div>}
-                        <div>📧 {p.account}</div>
-                        <div>🔒 {p.password}</div>
-                        {p.twoFA && <div>🛡 {p.twoFA}</div>}
-                      </div>
-                    ))}
+                {rawLine && rawLine.split("\n").filter(l => l.trim()).length > 0 && (
+                  <div className="text-xs text-muted-foreground bg-muted rounded p-2 font-mono space-y-1.5 max-h-40 overflow-y-auto">
+                    {deliveryType === "account"
+                      ? parseAccountLines(rawLine).map((p, i) => (
+                          <div key={i} className="space-y-0.5">
+                            {parseAccountLines(rawLine).length > 1 && <div className="font-semibold text-foreground/70">#{i + 1}</div>}
+                            <div>📧 {p.account}</div>
+                            {p.password && <div>🔒 {p.password}</div>}
+                            {p.twoFA && <div>🛡 {p.twoFA}</div>}
+                          </div>
+                        ))
+                      : rawLine.split("\n").map(l => l.trim()).filter(l => l).map((l, i) => (
+                          <div key={i}>{deliveryType === "key" ? "🔑" : "🔗"} {l}</div>
+                        ))
+                    }
                   </div>
                 )}
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="space-y-1">
-                  <Label htmlFor="del-account">📧 Tài khoản</Label>
-                  <Input id="del-account" placeholder="email@example.com" value={account} onChange={e => setAccount(e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="del-password">🔒 Mật khẩu</Label>
-                  <Input id="del-password" placeholder="Mật khẩu" value={password} onChange={e => setPassword(e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="del-2fa">🛡 2FA (tuỳ chọn)</Label>
-                  <Input id="del-2fa" placeholder="Để trống nếu không có" value={twoFA} onChange={e => setTwoFA(e.target.value)} />
-                </div>
+                {deliveryType === "account" ? (<>
+                  <div className="space-y-1">
+                    <Label htmlFor="del-account">📧 Tài khoản (email)</Label>
+                    <Input id="del-account" placeholder="email@example.com" value={account} onChange={e => setAccount(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="del-password">🔒 Mật khẩu</Label>
+                    <Input id="del-password" placeholder="Mật khẩu" value={password} onChange={e => setPassword(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="del-2fa">🛡 2FA (tuỳ chọn)</Label>
+                    <Input id="del-2fa" placeholder="Để trống nếu không có" value={twoFA} onChange={e => setTwoFA(e.target.value)} />
+                  </div>
+                </>) : deliveryType === "key" ? (
+                  <div className="space-y-1">
+                    <Label htmlFor="del-key">🔑 Key / License Key</Label>
+                    <Input id="del-key" placeholder="XXXX-YYYY-ZZZZ-1234" value={account} onChange={e => setAccount(e.target.value)} className="font-mono" />
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <Label htmlFor="del-link">🔗 Link / URL</Label>
+                    <Input id="del-link" placeholder="https://..." value={account} onChange={e => setAccount(e.target.value)} className="font-mono text-sm" />
+                  </div>
+                )}
               </div>
             )}
           </div>
