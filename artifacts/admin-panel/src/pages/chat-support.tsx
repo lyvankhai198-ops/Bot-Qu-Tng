@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/hooks/use-toast"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -18,6 +19,7 @@ import {
 import {
   MessageSquare, Clock, User, Search, History,
   Settings, RefreshCw, XCircle, Timer, Trash2, ShieldAlert,
+  Ban, UserCog, Plus, ArrowRightLeft, CheckCircle2,
 } from "lucide-react"
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -63,6 +65,20 @@ function userName(row: any) {
   return `User ${row.userId}`
 }
 
+function computeExpiresAt(duration: string): string | null {
+  if (duration === "permanent") return null
+  const ms: Record<string, number> = {
+    "1h":  1 * 3600 * 1000,
+    "3h":  3 * 3600 * 1000,
+    "8h":  8 * 3600 * 1000,
+    "24h": 24 * 3600 * 1000,
+    "3d":  3 * 86400 * 1000,
+    "7d":  7 * 86400 * 1000,
+    "30d": 30 * 86400 * 1000,
+  }
+  return new Date(Date.now() + (ms[duration] ?? 0)).toISOString()
+}
+
 function EndReasonBadge({ reason }: { reason: string }) {
   if (reason === "timeout") {
     return (
@@ -96,7 +112,7 @@ function ChatBubble({ msg }: { msg: { role: string; text: string; time: string }
   )
 }
 
-// ─── Detail Dialog ────────────────────────────────────────────────────────────
+// ─── Session Detail Dialog ────────────────────────────────────────────────────
 
 function SessionDetailDialog({
   row, open, onClose, onDelete,
@@ -247,7 +263,6 @@ function HistoryTab() {
 
       <Card>
         <CardContent className="p-0">
-          {/* Mobile */}
           <div className="md:hidden divide-y divide-border/50">
             {isLoading
               ? Array(5).fill(0).map((_, i) => (
@@ -283,7 +298,6 @@ function HistoryTab() {
             }
           </div>
 
-          {/* Desktop */}
           <div className="hidden md:block overflow-x-auto">
             <Table>
               <TableHeader className="bg-muted/50">
@@ -377,6 +391,368 @@ function HistoryTab() {
   )
 }
 
+// ─── Ban tab ──────────────────────────────────────────────────────────────────
+
+const DURATION_OPTIONS = [
+  { value: "1h",        label: "1 giờ" },
+  { value: "3h",        label: "3 giờ" },
+  { value: "8h",        label: "8 giờ" },
+  { value: "24h",       label: "1 ngày" },
+  { value: "3d",        label: "3 ngày" },
+  { value: "7d",        label: "7 ngày" },
+  { value: "30d",       label: "30 ngày" },
+  { value: "permanent", label: "Vĩnh viễn" },
+]
+
+function BanTab() {
+  const [userId,   setUserId]   = useState("")
+  const [note,     setNote]     = useState("")
+  const [duration, setDuration] = useState("permanent")
+  const [unbanTarget, setUnbanTarget] = useState<any | null>(null)
+
+  const qc = useQueryClient()
+  const { toast } = useToast()
+
+  const { data: bannedList = [], isLoading, refetch, isFetching } = useQuery({
+    queryKey: ["chat-banned"],
+    queryFn:  () => apiFetch("GET", "/bot/chat-support/banned"),
+    refetchInterval: 30000,
+  })
+
+  const banMutation = useMutation({
+    mutationFn: () => apiFetch("POST", `/bot/chat-support/banned/${userId.trim()}`, {
+      note,
+      expiresAt: computeExpiresAt(duration),
+    }),
+    onSuccess: () => {
+      toast({ title: "✅ Đã cấm user" })
+      qc.invalidateQueries({ queryKey: ["chat-banned"] })
+      setUserId(""); setNote(""); setDuration("permanent")
+    },
+    onError: (e: any) => toast({ title: "Lỗi", description: e.message, variant: "destructive" }),
+  })
+
+  const unbanMutation = useMutation({
+    mutationFn: (uid: string) => apiFetch("DELETE", `/bot/chat-support/banned/${uid}`),
+    onSuccess: () => {
+      toast({ title: "✅ Đã bỏ cấm" })
+      qc.invalidateQueries({ queryKey: ["chat-banned"] })
+      setUnbanTarget(null)
+    },
+    onError: (e: any) => toast({ title: "Lỗi", description: e.message, variant: "destructive" }),
+  })
+
+  const rows = bannedList as any[]
+
+  function banLabel(row: any) {
+    if (!row.expiresAt) return "Vĩnh viễn"
+    const exp = new Date(row.expiresAt)
+    const now = new Date()
+    const diff = exp.getTime() - now.getTime()
+    if (diff <= 0) return "Hết hạn"
+    const h = Math.floor(diff / 3600000)
+    const d = Math.floor(h / 24)
+    if (d >= 1) return `Còn ${d} ngày`
+    return `Còn ${h}h`
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Form cấm mới */}
+      <Card>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Ban className="h-4 w-4 text-destructive" />Cấm user khỏi Chat Support
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-sm">ID Telegram</Label>
+            <Input
+              type="number" placeholder="VD: 123456789"
+              value={userId} onChange={e => setUserId(e.target.value)}
+              className="min-h-[44px]"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-sm">Thời hạn</Label>
+              <select
+                value={duration}
+                onChange={e => setDuration(e.target.value)}
+                className="w-full h-11 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+              >
+                {DURATION_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Lý do (tuỳ chọn)</Label>
+              <Input
+                placeholder="Spam, quấy rối..."
+                value={note} onChange={e => setNote(e.target.value)}
+                className="min-h-[44px]"
+              />
+            </div>
+          </div>
+          <Button
+            onClick={() => banMutation.mutate()}
+            disabled={!userId.trim() || banMutation.isPending}
+            variant="destructive" className="w-full min-h-[44px]"
+          >
+            {banMutation.isPending ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Đang xử lý...</> : <><Ban className="h-4 w-4 mr-2" />Cấm Chat</>}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Danh sách đang cấm */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium">Đang cấm ({rows.length} user)</p>
+        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => refetch()}>
+          <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          {isLoading
+            ? <div className="p-8 text-center text-muted-foreground text-sm">Đang tải...</div>
+            : rows.length === 0
+              ? <div className="p-8 text-center text-muted-foreground text-sm">Chưa có user nào bị cấm chat.</div>
+              : <div className="divide-y divide-border/50">
+                  {rows.map((row: any, i: number) => (
+                    <div key={i} className="p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <code className="text-sm font-mono font-medium">{row.userId}</code>
+                          <Badge
+                            variant={row.expiresAt ? "outline" : "destructive"}
+                            className="text-xs"
+                          >
+                            {row.expiresAt ? <><Clock className="h-3 w-3 mr-1" />{banLabel(row)}</> : "Vĩnh viễn"}
+                          </Badge>
+                        </div>
+                        {row.note && <p className="text-xs text-muted-foreground truncate">{row.note}</p>}
+                        <p className="text-xs text-muted-foreground">Cấm từ {fmtDate(row.bannedAt)}</p>
+                        {row.expiresAt && <p className="text-xs text-muted-foreground">Đến {fmtDate(row.expiresAt)}</p>}
+                      </div>
+                      <Button
+                        variant="outline" size="sm"
+                        className="shrink-0 text-xs"
+                        onClick={() => setUnbanTarget(row)}
+                      >
+                        Bỏ cấm
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+          }
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={!!unbanTarget} onOpenChange={v => !v && setUnbanTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Bỏ cấm chat?</AlertDialogTitle>
+            <AlertDialogDescription>
+              User <strong>{unbanTarget?.userId}</strong> sẽ có thể sử dụng chat support trở lại ngay.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Huỷ</AlertDialogCancel>
+            <AlertDialogAction onClick={() => unbanTarget && unbanMutation.mutate(String(unbanTarget.userId))}>
+              Bỏ cấm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+// ─── Admin tab ────────────────────────────────────────────────────────────────
+
+function AdminTab() {
+  const [newId,       setNewId]       = useState("")
+  const [newName,     setNewName]     = useState("")
+  const [newUsername, setNewUsername] = useState("")
+  const [removeTarget, setRemoveTarget] = useState<any | null>(null)
+
+  const qc = useQueryClient()
+  const { toast } = useToast()
+
+  const { data: admins = [], isLoading, refetch, isFetching } = useQuery({
+    queryKey: ["chat-admins"],
+    queryFn:  () => apiFetch("GET", "/bot/chat-support/admins"),
+  })
+
+  const addMutation = useMutation({
+    mutationFn: () => apiFetch("POST", "/bot/chat-support/admins", {
+      id:       Number(newId.trim()),
+      name:     newName.trim(),
+      username: newUsername.trim(),
+    }),
+    onSuccess: () => {
+      toast({ title: "✅ Đã thêm admin phụ" })
+      qc.invalidateQueries({ queryKey: ["chat-admins"] })
+      setNewId(""); setNewName(""); setNewUsername("")
+    },
+    onError: (e: any) => toast({ title: "Lỗi", description: e.message, variant: "destructive" }),
+  })
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
+      apiFetch("PUT", `/bot/chat-support/admins/${id}`, { enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["chat-admins"] }),
+    onError: (e: any) => toast({ title: "Lỗi", description: e.message, variant: "destructive" }),
+  })
+
+  const removeMutation = useMutation({
+    mutationFn: (id: number) => apiFetch("DELETE", `/bot/chat-support/admins/${id}`),
+    onSuccess: () => {
+      toast({ title: "✅ Đã xoá admin phụ" })
+      qc.invalidateQueries({ queryKey: ["chat-admins"] })
+      setRemoveTarget(null)
+    },
+    onError: (e: any) => toast({ title: "Lỗi", description: e.message, variant: "destructive" }),
+  })
+
+  const rows = admins as any[]
+
+  return (
+    <div className="space-y-5">
+      {/* Thông tin cơ chế */}
+      <div className="rounded-lg border bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 p-3 text-xs text-blue-800 dark:text-blue-300 space-y-1">
+        <p className="font-semibold flex items-center gap-1.5"><ArrowRightLeft className="h-3.5 w-3.5" />Cơ chế chuyển phiên</p>
+        <p>• Khi khách nhắn tin, bạn (Admin chính) sẽ nhận được với nút <strong>↗️ Chuyển phiên</strong>.</p>
+        <p>• Bấm nút để chuyển cho Admin phụ — họ tiếp tục trò chuyện mà không thấy thông tin khách.</p>
+        <p>• Admin phụ chỉ nhận được nội dung hội thoại, không thấy tên/ID khách.</p>
+      </div>
+
+      {/* Form thêm admin */}
+      <Card>
+        <CardHeader className="pb-3 pt-4 px-4">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <UserCog className="h-4 w-4 text-primary" />Thêm Admin Phụ
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-sm">ID Telegram <span className="text-destructive">*</span></Label>
+              <Input
+                type="number" placeholder="VD: 123456789"
+                value={newId} onChange={e => setNewId(e.target.value)}
+                className="min-h-[44px]"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Tên hiển thị <span className="text-destructive">*</span></Label>
+              <Input
+                placeholder="VD: Admin B"
+                value={newName} onChange={e => setNewName(e.target.value)}
+                className="min-h-[44px]"
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Username (tuỳ chọn)</Label>
+            <Input
+              placeholder="VD: @admin_b"
+              value={newUsername} onChange={e => setNewUsername(e.target.value)}
+              className="min-h-[44px]"
+            />
+          </div>
+          <Button
+            onClick={() => addMutation.mutate()}
+            disabled={!newId.trim() || !newName.trim() || addMutation.isPending}
+            className="w-full min-h-[44px]"
+          >
+            {addMutation.isPending
+              ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Đang thêm...</>
+              : <><Plus className="h-4 w-4 mr-2" />Thêm Admin Phụ</>
+            }
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Danh sách admin phụ */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium">Admin phụ ({rows.length})</p>
+        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => refetch()}>
+          <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          {isLoading
+            ? <div className="p-8 text-center text-muted-foreground text-sm">Đang tải...</div>
+            : rows.length === 0
+              ? <div className="p-8 text-center text-muted-foreground text-sm">
+                  <UserCog className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+                  Chưa có admin phụ nào. Thêm để có thể chuyển phiên chat.
+                </div>
+              : <div className="divide-y divide-border/50">
+                  {rows.map((admin: any) => (
+                    <div key={admin.id} className="p-4 flex items-center gap-3">
+                      <div className="flex-1 min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-sm">{admin.name}</span>
+                          {admin.enabled
+                            ? <Badge variant="outline" className="text-xs text-emerald-600 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 gap-1">
+                                <CheckCircle2 className="h-3 w-3" />Hoạt động
+                              </Badge>
+                            : <Badge variant="outline" className="text-xs text-muted-foreground gap-1">
+                                <XCircle className="h-3 w-3" />Tắt
+                              </Badge>
+                          }
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <code className="text-xs text-muted-foreground font-mono">{admin.id}</code>
+                          {admin.username && <span className="text-xs text-muted-foreground">{admin.username}</span>}
+                        </div>
+                        <p className="text-xs text-muted-foreground">Thêm {fmtDate(admin.addedAt)}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Switch
+                          checked={admin.enabled}
+                          onCheckedChange={enabled => toggleMutation.mutate({ id: admin.id, enabled })}
+                        />
+                        <Button
+                          variant="ghost" size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => setRemoveTarget(admin)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+          }
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={!!removeTarget} onOpenChange={v => !v && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Xoá admin phụ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Xoá <strong>{removeTarget?.name}</strong> ({removeTarget?.id}) khỏi danh sách admin phụ? Họ sẽ không còn nhận được phiên chat được chuyển.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Huỷ</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => removeTarget && removeMutation.mutate(removeTarget.id)}>Xoá</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
 // ─── Settings tab ─────────────────────────────────────────────────────────────
 
 function NumberField({
@@ -402,23 +778,18 @@ function NumberField({
 function SettingsTab() {
   const { toast } = useToast()
 
-  // Phiên chat
   const [timeoutMinutes,     setTimeoutMinutes]     = useState(10)
   const [deleteDelayMinutes, setDeleteDelayMinutes] = useState(5)
-
-  // Chống spam
   const [spamMaxMsgs,        setSpamMaxMsgs]        = useState(10)
   const [spamWindowSec,      setSpamWindowSec]      = useState(60)
   const [spamWarnAt,         setSpamWarnAt]         = useState(8)
   const [sessionCooldownSec, setSessionCooldownSec] = useState(120)
 
-  // ✅ KHÔNG dùng select để gọi setState (anti-pattern React 18 concurrent mode)
   const { isLoading, data: settingsData } = useQuery({
     queryKey: ["chat-support-settings"],
     queryFn: () => apiFetch("GET", "/bot/chat-support/settings"),
   })
 
-  // Sync form state khi data load xong — dùng useEffect thay vì select callback
   useEffect(() => {
     if (!settingsData) return
     const d = settingsData as any
@@ -430,7 +801,6 @@ function SettingsTab() {
     setSessionCooldownSec(d.sessionCooldownSec ?? 120)
   }, [settingsData])
 
-  // Validate warnAt < maxMsgs trước khi submit
   const warnAtError = spamWarnAt >= spamMaxMsgs
     ? `Cảnh báo (${spamWarnAt}) phải nhỏ hơn giới hạn chặn (${spamMaxMsgs})`
     : null
@@ -448,7 +818,6 @@ function SettingsTab() {
 
   return (
     <div className="space-y-5 max-w-sm">
-      {/* ── Phiên chat ── */}
       <Card>
         <CardHeader className="pb-3 pt-4 px-4">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -474,7 +843,6 @@ function SettingsTab() {
         </CardContent>
       </Card>
 
-      {/* ── Chống spam tin nhắn ── */}
       <Card>
         <CardHeader className="pb-3 pt-4 px-4">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -509,8 +877,6 @@ function SettingsTab() {
                 </p>
             }
           </div>
-
-          {/* Summary box */}
           <div className="rounded-md bg-muted/50 border p-3 text-xs text-muted-foreground space-y-1">
             <p>📊 <strong>Tóm tắt:</strong></p>
             <p>• Cảnh báo khi gửi tin thứ <strong>{spamWarnAt}</strong> trong <strong>{spamWindowSec}s</strong></p>
@@ -544,14 +910,18 @@ export default function ChatSupport() {
     <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
         <h1 className="text-xl md:text-2xl font-bold tracking-tight">Chat Support</h1>
-        <p className="text-muted-foreground mt-1 text-sm">Lịch sử phiên hỗ trợ trực tiếp và cài đặt tự động</p>
+        <p className="text-muted-foreground mt-1 text-sm">Lịch sử phiên, cấm chat và quản lý admin phụ</p>
       </div>
       <Tabs defaultValue="history">
-        <TabsList className="mb-4">
-          <TabsTrigger value="history" className="gap-2"><History className="h-4 w-4" />Lịch sử</TabsTrigger>
-          <TabsTrigger value="settings" className="gap-2"><Settings className="h-4 w-4" />Cài đặt</TabsTrigger>
+        <TabsList className="mb-4 flex-wrap h-auto gap-1">
+          <TabsTrigger value="history"  className="gap-1.5 text-xs sm:text-sm"><History   className="h-3.5 w-3.5" />Lịch sử</TabsTrigger>
+          <TabsTrigger value="ban"      className="gap-1.5 text-xs sm:text-sm"><Ban       className="h-3.5 w-3.5" />Cấm chat</TabsTrigger>
+          <TabsTrigger value="admins"   className="gap-1.5 text-xs sm:text-sm"><UserCog   className="h-3.5 w-3.5" />Admin</TabsTrigger>
+          <TabsTrigger value="settings" className="gap-1.5 text-xs sm:text-sm"><Settings  className="h-3.5 w-3.5" />Cài đặt</TabsTrigger>
         </TabsList>
-        <TabsContent value="history" className="mt-0"><HistoryTab /></TabsContent>
+        <TabsContent value="history"  className="mt-0"><HistoryTab /></TabsContent>
+        <TabsContent value="ban"      className="mt-0"><BanTab /></TabsContent>
+        <TabsContent value="admins"   className="mt-0"><AdminTab /></TabsContent>
         <TabsContent value="settings" className="mt-0"><SettingsTab /></TabsContent>
       </Tabs>
     </div>

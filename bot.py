@@ -3252,6 +3252,64 @@ def _save_chat_sessions(data: dict) -> None:
         logger.error(f"_save_chat_sessions error: {e}")
 
 
+# ─── Chat Support Helpers ─────────────────────────────────────────────────────
+
+def _get_support_admins(enabled_only: bool = False) -> list:
+    """Đọc danh sách admin phụ từ support_chat_admins.json."""
+    try:
+        p = os.path.join(os.path.dirname(__file__), "data", "support_chat_admins.json")
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                admins = _json.load(f)
+            if enabled_only:
+                return [a for a in admins if a.get("enabled", True)]
+            return admins
+    except Exception as e:
+        logger.error(f"_get_support_admins error: {e}")
+    return []
+
+
+def _get_chat_ban(uid_str: str) -> dict | None:
+    """Kiểm tra user có bị cấm chat không. Xoá tự động nếu đã hết hạn."""
+    try:
+        p = os.path.join(os.path.dirname(__file__), "data", "support_chat_banned.json")
+        if not os.path.exists(p):
+            return None
+        with open(p, encoding="utf-8") as f:
+            ban_list = _json.load(f)
+        entry = next((b for b in ban_list if str(b.get("userId")) == uid_str), None)
+        if not entry:
+            return None
+        expires_at = entry.get("expiresAt")
+        if expires_at is None:
+            return entry  # vĩnh viễn
+        if datetime.utcnow() < datetime.fromisoformat(expires_at):
+            return entry  # còn hiệu lực
+        # Hết hạn → tự xoá
+        new_list = [b for b in ban_list if str(b.get("userId")) != uid_str]
+        with open(p, "w", encoding="utf-8") as f:
+            _json.dump(new_list, f, ensure_ascii=False, indent=2)
+        return None
+    except Exception as e:
+        logger.error(f"_get_chat_ban error: {e}")
+    return None
+
+
+def _build_transfer_markup(uid_str: str) -> InlineKeyboardMarkup | None:
+    """Tạo inline keyboard với các admin phụ đang bật để admin chính chuyển phiên."""
+    sub_admins = _get_support_admins(enabled_only=True)
+    if not sub_admins:
+        return None
+    rows = []
+    for admin in sub_admins:
+        name = admin.get("name") or f"Admin {admin.get('id', '?')}"
+        rows.append([InlineKeyboardButton(
+            f"↗️ Chuyển cho {name}",
+            callback_data=f"spt:{uid_str}:{admin['id']}"
+        )])
+    return InlineKeyboardMarkup(rows)
+
+
 def _chat_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     L = lang(user_id)
     return ReplyKeyboardMarkup([[t(L, "btn_end_chat")]], resize_keyboard=True)
@@ -3263,6 +3321,21 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
     L = lang(user.id)
     data = _load_chat_sessions()
     uid_str = str(user.id)
+
+    # ── Kiểm tra bị cấm chat ────────────────────────────────────────────────
+    ban_entry = _get_chat_ban(uid_str)
+    if ban_entry:
+        expires_at = ban_entry.get("expiresAt")
+        if expires_at:
+            exp_str = datetime.fromisoformat(expires_at).strftime("%d/%m/%Y %H:%M")
+            msg = f"🚫 Bạn bị cấm sử dụng chat hỗ trợ đến <b>{exp_str}</b>."
+        else:
+            msg = "🚫 Bạn đã bị cấm vĩnh viễn khỏi chat hỗ trợ."
+        if ban_entry.get("note"):
+            msg += f"\nLý do: {ban_entry['note']}"
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id))
+        return
+    # ────────────────────────────────────────────────────────────────────────
 
     # Đã có phiên mở
     if uid_str in data["sessions"] and data["sessions"][uid_str].get("status") == "active":
@@ -3378,35 +3451,52 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
     session["last_active"] = datetime.utcnow().isoformat()
     session["msg_count"] = session.get("msg_count", 0) + 1
 
-    admin_ids = _get_all_admin_ids()
-    if not admin_ids:
-        await update.message.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
-        return
-
-    name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
-    msg_to_admin = (
-        f"💬 <b>{name}</b> (<code>{user.id}</code>):\n"
-        f"{text}\n"
-        f"──────────────\n"
-        f"<i>↩️ Reply tin này để trả lời</i>"
-    )
-    for aid in admin_ids:
-        try:
-            sent = await context.bot.send_message(
-                chat_id=aid, text=msg_to_admin,
-                parse_mode=ParseMode.HTML
-            )
-            session.setdefault("admin_msg_ids", []).append(sent.message_id)
-            data["msg_map"][str(sent.message_id)] = uid_str
-        except Exception as e:
-            logger.error(f"handle_live_chat_message send error: {e}")
-
     # Lưu nội dung tin vào session để ghi lịch sử
     session.setdefault("messages", []).append({
         "role": "user",
         "text": text,
         "time": datetime.utcnow().isoformat(),
     })
+
+    assigned = session.get("assigned_admin_id")
+    if assigned:
+        # ── Đã chuyển phiên: forward ẩn danh cho admin phụ ──────────────────
+        msg_anon = (
+            f"💬 <b>Khách</b>:\n{text}\n"
+            f"──────────────\n"
+            f"<i>↩️ Reply tin này để trả lời</i>"
+        )
+        try:
+            sent = await context.bot.send_message(
+                chat_id=assigned, text=msg_anon, parse_mode=ParseMode.HTML
+            )
+            session.setdefault("admin_msg_ids", []).append(sent.message_id)
+            data["msg_map"][str(sent.message_id)] = uid_str
+        except Exception as e:
+            logger.error(f"handle_live_chat_message (assigned) send error: {e}")
+    else:
+        # ── Chưa chuyển: forward đến admin chính với nút Chuyển phiên ───────
+        if not ADMIN_ID:
+            await update.message.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
+            _save_chat_sessions(data)
+            return
+        name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+        msg_to_admin = (
+            f"💬 <b>{name}</b> (<code>{user.id}</code>):\n{text}\n"
+            f"──────────────\n"
+            f"<i>↩️ Reply tin này để trả lời</i>"
+        )
+        markup = _build_transfer_markup(uid_str)
+        try:
+            sent = await context.bot.send_message(
+                chat_id=ADMIN_ID, text=msg_to_admin,
+                parse_mode=ParseMode.HTML, reply_markup=markup
+            )
+            session.setdefault("admin_msg_ids", []).append(sent.message_id)
+            data["msg_map"][str(sent.message_id)] = uid_str
+        except Exception as e:
+            logger.error(f"handle_live_chat_message (main admin) send error: {e}")
+
     _save_chat_sessions(data)
 
 
@@ -3448,33 +3538,9 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
     session["last_active"] = datetime.utcnow().isoformat()
     session["msg_count"] = session.get("msg_count", 0) + 1
 
-    admin_ids = _get_all_admin_ids()
-    if not admin_ids:
-        L = lang(user.id)
-        await msg.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
-        return
-
     name   = f"@{user.username}" if user.username else (user.first_name or str(user.id))
-    photo  = msg.photo[-1]  # lấy ảnh độ phân giải cao nhất
+    photo  = msg.photo[-1]
     u_cap  = msg.caption or ""
-    header = (
-        f"📷 <b>{name}</b> (<code>{user.id}</code>):\n"
-        + (u_cap + "\n" if u_cap else "")
-        + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
-    )
-
-    for aid in admin_ids:
-        try:
-            sent = await context.bot.send_photo(
-                chat_id=aid,
-                photo=photo.file_id,
-                caption=header,
-                parse_mode=ParseMode.HTML,
-            )
-            session.setdefault("admin_msg_ids", []).append(sent.message_id)
-            data["msg_map"][str(sent.message_id)] = uid_str
-        except Exception as e:
-            logger.error(f"handle_live_chat_media send error: {e}")
 
     # Lưu ảnh vào messages
     session.setdefault("messages", []).append({
@@ -3482,6 +3548,48 @@ async def handle_live_chat_media(update: Update, context: ContextTypes.DEFAULT_T
         "text": "[Ảnh]",
         "time": datetime.utcnow().isoformat(),
     })
+
+    assigned = session.get("assigned_admin_id")
+    if assigned:
+        # ── Đã chuyển phiên: gửi ảnh ẩn danh cho admin phụ ─────────────────
+        anon_header = (
+            f"📷 <b>Khách</b>:\n"
+            + (u_cap + "\n" if u_cap else "")
+            + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
+        )
+        try:
+            sent = await context.bot.send_photo(
+                chat_id=assigned, photo=photo.file_id,
+                caption=anon_header, parse_mode=ParseMode.HTML,
+            )
+            session.setdefault("admin_msg_ids", []).append(sent.message_id)
+            data["msg_map"][str(sent.message_id)] = uid_str
+        except Exception as e:
+            logger.error(f"handle_live_chat_media (assigned) send error: {e}")
+    else:
+        # ── Chưa chuyển: gửi ảnh đến admin chính, kèm nút chuyển phiên ─────
+        if not ADMIN_ID:
+            L = lang(user.id)
+            await msg.reply_text(t(L, "chat_support_no_admin"), reply_markup=_chat_keyboard(user.id))
+            _save_chat_sessions(data)
+            return
+        header = (
+            f"📷 <b>{name}</b> (<code>{user.id}</code>):\n"
+            + (u_cap + "\n" if u_cap else "")
+            + f"──────────────\n<i>↩️ Reply tin này để trả lời</i>"
+        )
+        markup = _build_transfer_markup(uid_str)
+        try:
+            sent = await context.bot.send_photo(
+                chat_id=ADMIN_ID, photo=photo.file_id,
+                caption=header, parse_mode=ParseMode.HTML,
+                reply_markup=markup,
+            )
+            session.setdefault("admin_msg_ids", []).append(sent.message_id)
+            data["msg_map"][str(sent.message_id)] = uid_str
+        except Exception as e:
+            logger.error(f"handle_live_chat_media (main admin) send error: {e}")
+
     _save_chat_sessions(data)
 
 async def handle_end_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3554,7 +3662,9 @@ async def _route_admin_chat_reply(update: Update, context: ContextTypes.DEFAULT_
 
     sender = update.effective_user
     admin_ids = _get_all_admin_ids()
-    if sender.id not in admin_ids:
+    sub_admin_ids = [int(a.get("id", 0)) for a in _get_support_admins()]
+    all_allowed = set(admin_ids) | set(sub_admin_ids)
+    if sender.id not in all_allowed:
         return False
 
     replied_mid = str(msg.reply_to_message.message_id)
@@ -4471,6 +4581,73 @@ def run_flask():
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
+async def callback_support_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin chính bấm nút Chuyển phiên → giao cho admin phụ xử lý ẩn danh."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, uid_str, admin_id_str = query.data.split(":", 2)
+        admin_id = int(admin_id_str)
+    except Exception:
+        return
+
+    data = _load_chat_sessions()
+    session = data["sessions"].get(uid_str)
+    if not session or session.get("status") != "active":
+        await query.answer("❌ Phiên này không còn active", show_alert=True)
+        return
+
+    if session.get("assigned_admin_id") == admin_id:
+        await query.answer("Admin này đang xử lý phiên rồi", show_alert=True)
+        return
+
+    # Lấy thông tin admin phụ
+    sub_admins = _get_support_admins()
+    admin_info = next((a for a in sub_admins if int(a.get("id", 0)) == admin_id), {})
+    admin_name = admin_info.get("name") or f"Admin {admin_id}"
+
+    # Gán admin phụ
+    session["assigned_admin_id"] = admin_id
+
+    # Xây dựng lịch sử ẩn danh để gửi admin phụ
+    messages = session.get("messages", [])
+    if messages:
+        history_lines = []
+        for m in messages[-15:]:
+            prefix = "👤 Khách" if m.get("role") == "user" else "🎧 Support"
+            history_lines.append(f"{prefix}: {m.get('text', '')}")
+        history_text = "\n".join(history_lines)
+    else:
+        history_text = "(Chưa có tin nhắn)"
+
+    notif = (
+        f"📨 <b>Phiên chat được chuyển cho bạn</b>\n"
+        f"──────────────\n"
+        f"<b>Lịch sử ({len(messages)} tin):</b>\n{history_text}\n"
+        f"──────────────\n"
+        f"<i>↩️ Reply bất kỳ tin nhắn nào từ khách bên dưới để trả lời họ.</i>"
+    )
+    new_mid = _tg_send_markup(TOKEN, admin_id, notif, markup=None)
+    if new_mid:
+        data["msg_map"][str(new_mid)] = uid_str
+        session.setdefault("admin_msg_ids", []).append(new_mid)
+
+    _save_chat_sessions(data)
+
+    # Xoá nút chuyển phiên khỏi tin nhắn gốc
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    await query.answer(f"✅ Đã chuyển cho {admin_name}", show_alert=True)
+
+    # Thông báo cho admin chính
+    if ADMIN_ID:
+        _tg_send(TOKEN, ADMIN_ID, f"✅ Đã chuyển phiên sang <b>{admin_name}</b>.")
+
+
 def main():
     if not TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN not set. Exiting.")
@@ -4558,6 +4735,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_return_gift_init,    pattern=r"^return_gift_init$"))
     app.add_handler(CallbackQueryHandler(callback_return_gift_confirm, pattern=r"^return_gift_confirm$"))
     app.add_handler(CallbackQueryHandler(callback_return_gift_cancel,  pattern=r"^return_gift_cancel$"))
+    app.add_handler(CallbackQueryHandler(callback_support_transfer,    pattern=r"^spt:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_live_chat_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))   # catch-all for unknown /commands
