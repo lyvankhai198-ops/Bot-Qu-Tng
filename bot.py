@@ -3775,12 +3775,6 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
         )
         return
     _tss.append(_now_ts)
-    if len(_tss) >= _spam_warn:
-        _rem = _spam_max - len(_tss)
-        await update.message.reply_text(
-            "⚠️ Còn " + str(_rem) + " tin trước khi bị tạm dừng.",
-            reply_markup=_chat_keyboard(user.id)
-        )
     # ───────────────────────────────────────────────────────────
     session["last_active"] = datetime.utcnow().isoformat()
     session["msg_count"] = session.get("msg_count", 0) + 1
