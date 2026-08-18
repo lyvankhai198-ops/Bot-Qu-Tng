@@ -86,6 +86,10 @@ function applyAbbrevs(s: string): string {
 // ─── Warranty extraction ──────────────────────────────────────────────────────
 
 // Order matters — longer patterns first to avoid partial matches
+// Warranty tokens to extract and strip.
+// RULE: Only strip tokens that are UNAMBIGUOUSLY warranty-related.
+// Bare "\d+M/D/H/Y" are NOT stripped — they may be product specs (e.g. "10M Token" = 10 million).
+// Duration words (ngày, tháng, năm) ARE stripped because product names rarely use them alone.
 const WARRANTY_RULES: Array<{ regex: RegExp; label: (m: RegExpMatchArray) => string }> = [
   { regex: /\bBHF\b/i,                                        label: () => 'BHF' },
   { regex: /\bbảo\s*hành\s*forever\b/i,                       label: () => 'BHF' },
@@ -93,18 +97,18 @@ const WARRANTY_RULES: Array<{ regex: RegExp; label: (m: RegExpMatchArray) => str
   { regex: /\bforever\b/i,                                     label: () => 'BHF' },
   { regex: /\bKBH\b/i,                                         label: () => 'KBH' },
   { regex: /\bkhông\s*bảo\s*hành\b/i,                         label: () => 'KBH' },
+  // BH-prefixed — clearly warranty
   { regex: /\bBH\s*(\d+)\s*(giờ|gio|h(?:ours?)?)\b/i,        label: m => `${m[1]}H` },
+  { regex: /\bBH\s*(\d+[dD])\b/,                              label: m => m[1].toUpperCase() },
   { regex: /\bBH\s*(\d+)\s*(ngày|ngay|days?|d)\b/i,          label: m => `${m[1]}D` },
   { regex: /\bBH\s*(\d+)\s*(tháng|thang|months?|m)\b/i,      label: m => `${m[1]}M` },
   { regex: /\bBH\s*(\d+)\s*(năm|nam|years?|y)\b/i,           label: m => `${m[1]}Y` },
-  { regex: /\b(\d+)\s*(giờ|gio|hours?)\b/i,                   label: m => `${m[1]}H` },
+  // Duration words (without BH prefix) — strip because they denote duration, not product identity
+  { regex: /\b(\d+)\s*(giờ|hours?)\b/i,                       label: m => `${m[1]}H` },
   { regex: /\b(\d+)\s*(ngày|ngay|days?)\b/i,                  label: m => `${m[1]}D` },
   { regex: /\b(\d+)\s*(tháng|thang|months?)\b/i,              label: m => `${m[1]}M` },
   { regex: /\b(\d+)\s*(năm|nam|years?)\b/i,                   label: m => `${m[1]}Y` },
-  { regex: /\b(\d+)\s*D\b/i,                                  label: m => `${m[1]}D` },
-  { regex: /\b(\d+)\s*M\b/i,                                  label: m => `${m[1]}M` },
-  { regex: /\b(\d+)\s*Y\b/i,                                  label: m => `${m[1]}Y` },
-  { regex: /\b(\d+)\s*H\b/i,                                  label: m => `${m[1]}H` },
+  // Bare BH suffix (fallback — must come after BH+digit patterns)
   { regex: /\bbảo\s*hành\b/i,                                 label: () => 'BH' },
   { regex: /\bBH\b/i,                                          label: () => 'BH' },
 ];
@@ -121,7 +125,14 @@ function extractWarranty(name: string): { pattern: string; base: string } {
     }
   }
 
-  return { pattern: found.join('/'), base: remaining || name };
+  // Clean up trailing/leading punctuation left after warranty extraction
+  const cleaned = remaining
+    .replace(/[\s\-–—_|,;:]+$/, '')   // trailing punctuation
+    .replace(/^[\s\-–—_|,;:]+/, '')   // leading punctuation
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return { pattern: found.join('/'), base: cleaned || name };
 }
 
 // ─── Garbage detection ────────────────────────────────────────────────────────
