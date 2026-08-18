@@ -3610,6 +3610,7 @@ def _find_product_guide_from_messages(session_messages: list) -> str:
     Fallback: quét các tin nhắn gần nhất để tìm tên sản phẩm.
     Nếu tìm thấy guide phù hợp → trả về context string để inject vào system prompt.
     Chỉ lấy guide đầu tiên khớp (tiết kiệm token).
+    Hỗ trợ trường aliases (từ scan feature).
     """
     guides = db.get_product_guides()
     if not guides:
@@ -3624,12 +3625,8 @@ def _find_product_guide_from_messages(session_messages: list) -> str:
     if not recent_text:
         return ""
     recent_norm = _n(recent_text)
-    for g in guides:
-        if not g.get("enabled", True):
-            continue
-        gp = _n(g.get("product", ""))
-        if not gp or gp not in recent_norm:
-            continue
+
+    def _build_guide_ctx(g: dict) -> str:
         parts = [f"[HƯỚNG DẪN SẢN PHẨM: {g.get('product', '')}]"]
         if g.get("activation_guide"):
             parts.append(f"Kích hoạt:\n{g['activation_guide']}")
@@ -3642,6 +3639,19 @@ def _find_product_guide_from_messages(session_messages: list) -> str:
         if g.get("refund_note"):
             parts.append(f"Hoàn tiền:\n{g['refund_note']}")
         return "\n".join(parts)
+
+    for g in guides:
+        if not g.get("enabled", True):
+            continue
+        # Check product name
+        gp = _n(g.get("product", ""))
+        if gp and gp in recent_norm:
+            return _build_guide_ctx(g)
+        # Check aliases (from scan feature)
+        for alias in g.get("aliases", []):
+            ga = _n(alias)
+            if ga and ga in recent_norm:
+                return _build_guide_ctx(g)
     return ""
 
 

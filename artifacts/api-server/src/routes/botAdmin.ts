@@ -4,6 +4,7 @@ import path from "path";
 import crypto from "crypto";
 import { execFile } from "child_process";
 import { requireAuth, verifyPassword, generateToken, revokeToken, loginRateLimiter } from "../lib/auth";
+import { scanProductFamilies, applyScanResult } from "../lib/productScanner";
 
 const router = Router();
 
@@ -3765,6 +3766,35 @@ router.patch("/bot/product-guides/:id/toggle", requireAuth, (req: any, res: any)
     guides[idx].updated_at = now();
     writeJson("product_guides", guides);
     res.json(guides[idx]);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Product Guide Scan ───────────────────────────────────────────────────────
+// DATA_DIR already defined above — reuse it for scan
+
+// POST /bot/product-guides/scan  — dry run: read + analyse, no writes
+router.post("/bot/product-guides/scan", requireAuth, (_req: any, res: any) => {
+  try {
+    const result = scanProductFamilies(DATA_DIR);
+    addLog("PRODUCT_GUIDE_SCAN", `orders=${result.stats.ordersScanned}`, "admin");
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /bot/product-guides/scan/apply  — apply selected suggestions (write)
+router.post("/bot/product-guides/scan/apply", requireAuth, (req: any, res: any) => {
+  try {
+    const { items } = req.body as { items: any[] };
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "items là bắt buộc và phải là mảng không rỗng" });
+    }
+    const result = applyScanResult(DATA_DIR, items, "admin");
+    addLog("PRODUCT_GUIDE_SCAN_APPLY", `created=${result.created} updated=${result.updated}`, "admin");
+    res.json(result);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

@@ -1606,29 +1606,46 @@ def save_product_guides(guides: list) -> None:
 def get_product_guide_by_name(product_name: str) -> dict | None:
     """
     Tìm product guide phù hợp với tên sản phẩm.
-    Ưu tiên: exact match → partial match (case-insensitive, Unicode-normalized).
+    Ưu tiên: exact match (product + aliases) → partial match → alias partial match.
     Chỉ trả về guide đang enabled=True.
+    Hỗ trợ trường aliases (list[str]) được tạo bởi scan feature.
     """
     if not product_name:
         return None
     import unicodedata as _ud
     def _norm(s: str) -> str:
         return _ud.normalize("NFC", s).lower().strip()
-    norm = _norm(product_name)
+
+    norm_input = _norm(product_name)
     guides = get_product_guides()
-    # 1. Exact match
+
+    # 1. Exact match on product name OR any alias
     for g in guides:
         if not g.get("enabled", True):
             continue
-        if _norm(g.get("product", "")) == norm:
+        if _norm(g.get("product", "")) == norm_input:
             return g
-    # 2. Partial match: tên guide ngắn hơn nằm trong productName (hoặc ngược lại)
+        for alias in g.get("aliases", []):
+            if _norm(alias) == norm_input:
+                return g
+
+    # 2. Partial match: product name partial containment
     for g in guides:
         if not g.get("enabled", True):
             continue
         gp = _norm(g.get("product", ""))
-        if gp and (gp in norm or norm in gp):
+        if gp and (gp in norm_input or norm_input in gp):
             return g
+
+    # 3. Partial match on aliases
+    for g in guides:
+        if not g.get("enabled", True):
+            continue
+        for alias in g.get("aliases", []):
+            ga = _norm(alias)
+            if ga and (ga in norm_input or norm_input in ga):
+                return g
+
     return None
 
 def get_secret_codes() -> list:
