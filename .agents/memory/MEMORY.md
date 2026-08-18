@@ -1,12 +1,1 @@
-- [Bot architecture](bot-architecture.md) — bot.py (5 buttons, no admin info exposed), api-server (Node.js REST), admin-panel (React), share data/ JSON files
-- [Zod codegen fix](zod-codegen-fix.md) — after codegen, patch lib/api-zod/src/generated/api.ts: replace zod.looseObject → zod.object (Zod v3 compat)
-- [Broadcast targeting](broadcast-targeting.md) — pending_broadcasts.json supports target: "all"|"has_received"|"no_received"|"user:<id>"; bot worker polls every 30s
-- [Multi-account warranty](multi-account-warranty.md) — group warranty flow: mw:* callbacks, state keys _mw_found/_mw_sel, type:"group" in warranty_requests.json, sub-account endpoints in botAdmin.ts
-- [Channel membership cache](channel-membership-cache.md) — user_channel_memberships.json, 6h TTL, chatId required for getChatMember; callback_check_join always calls fresh API
-- [VPS Auto-Deploy Workflow](vps-deploy.md) — sau mỗi lần cập nhật PHẢI tự push GitHub + deploy VPS qua scripts/deploy.sh
-- [OCR image import](ocr-image-import.md) — OpenAI vision integration for order creation from screenshots; uses gpt-5.6-luna, endpoint POST /bot/orders/ocr-extract, body limit 20mb
-- [Admin panel fetch pattern](admin-panel-fetch-pattern.md) — pages dùng raw fetch() + authHeader(), KHÔNG dùng apiClient.get/put/post
-- [Sync robot login & nav](sync-robot-login.md) — canboso.com SPA fixes: sec-ch-ua override, goto-root session check, wait_for_url after submit, no hamburger needed
-- [Warranty scan feature](warranty-scan.md) — warranty_scan.py + warrantySheets.ts + warranty-scan.tsx; Google Sheets 403 unresolved (SA permission issue)
-- [Start channel gate](start-channel-gate.md) — require_start_channel_check setting; callback_check_community_join callback; reuses required_channels.json; shows shop_channels after pass
-- [Sync robot API port](sync-robot-api-port.md) — API_BASE_URL must be port 3002 (not 8081); wrong port silently fails auth → 0 orders imported; canboso orders page XLSX always 1371 pre_order rows
+- [Nginx admin-panel API routing](nginx-admin-panel-api-routing.md) — POST to /admin-panel/api/ returns 405 unless explicit proxy location added before /admin-panel/ static block
