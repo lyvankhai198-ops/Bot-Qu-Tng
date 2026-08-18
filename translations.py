@@ -31,12 +31,12 @@ LANG = {
         "chat_support_start": (
             "🟢 <b>Đã kết nối với Support!</b>\n\n"
             "Gõ tin nhắn của bạn, admin sẽ phản hồi sớm nhất.\n"
-            "⏱ Phiên chat tự đóng sau 30 phút không có hoạt động."
+            "⏱ Phiên chat tự đóng sau {timeout} phút không có hoạt động."
         ),
         "chat_support_user_end": "✅ Phiên chat đã kết thúc. Cảm ơn bạn đã liên hệ!",
         "chat_support_reply": "💬 <b>Support:</b>\n{msg}",
         "chat_support_timeout": (
-            "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau 30 phút.\n"
+            "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau {timeout} phút.\n"
             "Nhấn <b>Chat với Support</b> nếu bạn cần hỗ trợ thêm."
         ),
         "chat_support_no_admin": "⚠️ Hiện tại không có admin trực. Vui lòng thử lại sau hoặc báo lỗi qua mục Hỗ Trợ.",
@@ -393,12 +393,12 @@ LANG = {
         "chat_support_start": (
             "🟢 <b>Connected to Support!</b>\n\n"
             "Type your message and our admin will reply shortly.\n"
-            "⏱ Session auto-closes after 30 minutes of inactivity."
+            "⏱ Session auto-closes after {timeout} minutes of inactivity."
         ),
         "chat_support_user_end": "✅ Chat session ended. Thank you for contacting us!",
         "chat_support_reply": "💬 <b>Support:</b>\n{msg}",
         "chat_support_timeout": (
-            "⏱ Your support chat closed automatically after 30 minutes of inactivity.\n"
+            "⏱ Your support chat closed automatically after {timeout} minutes of inactivity.\n"
             "Press <b>Chat with Support</b> if you need more help."
         ),
         "chat_support_no_admin": "⚠️ No admin is available right now. Please try again later or use the Support menu.",

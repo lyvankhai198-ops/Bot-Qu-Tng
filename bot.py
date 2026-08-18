@@ -3706,18 +3706,6 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
     # Tạo phiên mới
     # ── Anti-spam: cooldown giữa các phiên ─────────────────────────────
     _, _, _, _sess_cd = _spam_cfg()
-    _ended = _chat_session_ended_at.get(uid_str, 0)
-    _elapsed = time.time() - _ended
-    if _sess_cd > 0 and _elapsed < _sess_cd:
-        _wait = int(_sess_cd - _elapsed) + 1
-        await update.message.reply_text(
-            "Vi vui lòng chờ " + str(_wait) + "s trước khi bắt đầu phiên mới.",
-            reply_markup=main_keyboard(user.id)
-        )
-        return
-    # ───────────────────────────────────────────────────────────
-    # ── Anti-spam: cooldown giữa các phiên ─────────────────────────────
-    _, _, _, _sess_cd = _spam_cfg()
     _ended_at = _chat_session_ended_at.get(uid_str, 0)
     _elapsed  = time.time() - _ended_at
     if _sess_cd > 0 and _elapsed < _sess_cd:
@@ -3741,8 +3729,9 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
     _save_chat_sessions(data)
     db.set_user_state(user.id, "conv_state", "live_chat")
 
+    _timeout_min_start = _get_chat_settings()["timeout_minutes"]
     sent_start = await update.message.reply_text(
-        t(L, "chat_support_start"),
+        t(L, "chat_support_start").format(timeout=_timeout_min_start),
         parse_mode=ParseMode.HTML,
         reply_markup=_chat_keyboard(user.id)
     )
@@ -3781,7 +3770,7 @@ async def handle_live_chat_message(update: Update, context: ContextTypes.DEFAULT
     if len(_tss) >= _spam_max:
         _wait = int(_spam_win - (_now_ts - _tss[0])) + 1
         await update.message.reply_text(
-            "🚫 Bạn gử i quá nhiều tin. Vui lòng chờ " + str(_wait) + "s trước khi tiếp tục.",
+            "🚫 Bạn gửi quá nhiều tin. Vui lòng chờ " + str(_wait) + "s trước khi tiếp tục.",
             reply_markup=_chat_keyboard(user.id)
         )
         return
@@ -4274,8 +4263,9 @@ def _chat_timeout_worker() -> None:
                 }
 
                 try:
+                    _timeout_min = _get_chat_settings()["timeout_minutes"]
                     timeout_notif_id = _tg_send(TOKEN, user_id,
-                             "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau 10 phút.\n"
+                             f"⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau {_timeout_min} phút.\n"
                              "Nhấn <b>Chat với Support</b> nếu bạn cần hỗ trợ thêm.\n\n"
                              "🗑 Tin nhắn trong phiên chat sẽ tự xoá sau 5 phút.",
                              )
@@ -4292,7 +4282,7 @@ def _chat_timeout_worker() -> None:
                 name_str = f"@{sname}" if session.get("username") else sname
                 notif = (
                     f"⏱ Phiên chat với <b>{name_str}</b> (<code>{uid_str}</code>) "
-                    f"đã tự đóng (timeout {_CHAT_TIMEOUT_MINUTES} phút)."
+                    f"đã tự đóng (timeout {_timeout_min} phút)."
                 )
                 for aid in admin_ids:
                     try:
