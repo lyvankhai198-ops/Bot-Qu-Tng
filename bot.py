@@ -3559,6 +3559,32 @@ def _build_ai_order_context(uid_str: str, session_messages: list) -> str:
 
             context_parts.append("\n".join(lines))
 
+            # ── Inject Product Guide cho sản phẩm này ──────────────────────
+            if product_name:
+                try:
+                    guide = db.get_product_guide_by_name(product_name)
+                    if guide:
+                        g_parts = [f"[HƯỚNG DẪN SẢN PHẨM: {guide.get('product', product_name)}]"]
+                        if guide.get("activation_guide"):
+                            g_parts.append(f"Kích hoạt:\n{guide['activation_guide']}")
+                        if guide.get("usage_guide"):
+                            g_parts.append(f"Sử dụng:\n{guide['usage_guide']}")
+                        if guide.get("error_guide"):
+                            g_parts.append(f"Xử lý lỗi:\n{guide['error_guide']}")
+                        if guide.get("warranty_guide"):
+                            g_parts.append(f"Bảo hành:\n{guide['warranty_guide']}")
+                        if guide.get("refund_note"):
+                            g_parts.append(f"Hoàn tiền:\n{guide['refund_note']}")
+                        context_parts.append("\n".join(g_parts))
+                    else:
+                        context_parts.append(
+                            f"[HƯỚNG DẪN SẢN PHẨM: {product_name}]\n"
+                            f"Chưa có hướng dẫn tự động. Nếu khách hỏi chi tiết hướng dẫn/kích hoạt, "
+                            f"hãy nói: 'Sản phẩm này chưa có hướng dẫn tự động, mình chuyển Admin hỗ trợ bạn nhé.'"
+                        )
+                except Exception as _ge:
+                    logger.warning(f"Product guide inject error: {_ge}")
+
     # ── 3. Lấy lịch sử warranty_requests của user này ──────────────────────
     try:
         all_wrs = db.load("warranty_requests", [])
@@ -3577,6 +3603,46 @@ def _build_ai_order_context(uid_str: str, session_messages: list) -> str:
         pass
 
     return "\n\n".join(context_parts)
+
+
+def _find_product_guide_from_messages(session_messages: list) -> str:
+    """
+    Fallback: quét các tin nhắn gần nhất để tìm tên sản phẩm.
+    Nếu tìm thấy guide phù hợp → trả về context string để inject vào system prompt.
+    Chỉ lấy guide đầu tiên khớp (tiết kiệm token).
+    """
+    guides = db.get_product_guides()
+    if not guides:
+        return ""
+    import unicodedata as _ud2
+    def _n(s: str) -> str:
+        return _ud2.normalize("NFC", s).lower().strip()
+    recent_text = " ".join(
+        m.get("text", "") for m in session_messages[-10:]
+        if m.get("text") and m.get("text") != "[Ảnh]"
+    )
+    if not recent_text:
+        return ""
+    recent_norm = _n(recent_text)
+    for g in guides:
+        if not g.get("enabled", True):
+            continue
+        gp = _n(g.get("product", ""))
+        if not gp or gp not in recent_norm:
+            continue
+        parts = [f"[HƯỚNG DẪN SẢN PHẨM: {g.get('product', '')}]"]
+        if g.get("activation_guide"):
+            parts.append(f"Kích hoạt:\n{g['activation_guide']}")
+        if g.get("usage_guide"):
+            parts.append(f"Sử dụng:\n{g['usage_guide']}")
+        if g.get("error_guide"):
+            parts.append(f"Xử lý lỗi:\n{g['error_guide']}")
+        if g.get("warranty_guide"):
+            parts.append(f"Bảo hành:\n{g['warranty_guide']}")
+        if g.get("refund_note"):
+            parts.append(f"Hoàn tiền:\n{g['refund_note']}")
+        return "\n".join(parts)
+    return ""
 
 
 async def _ai_chat_reply(session_messages: list, uid_str: str | None = None) -> str | None:
@@ -3600,6 +3666,7 @@ async def _ai_chat_reply(session_messages: list, uid_str: str | None = None) -> 
     system_prompt = cfg.get("systemPrompt") or _DEFAULT_AI_SYSTEM_PROMPT
 
     # ── Inject dữ liệu đơn hàng thực tế vào system prompt ─────────────────
+    order_ctx = ""
     if uid_str:
         try:
             order_ctx = _build_ai_order_context(uid_str, session_messages)
@@ -3607,6 +3674,15 @@ async def _ai_chat_reply(session_messages: list, uid_str: str | None = None) -> 
                 system_prompt = system_prompt + "\n\n" + order_ctx
         except Exception as e:
             logger.warning(f"AI order context error: {e}")
+
+    # ── Inject Product Guide từ tên SP trong messages (fallback khi không có ORDER ID) ──
+    if "[HƯỚNG DẪN SẢN PHẨM" not in order_ctx:
+        try:
+            guide_ctx = _find_product_guide_from_messages(session_messages)
+            if guide_ctx:
+                system_prompt = system_prompt + "\n\n" + guide_ctx
+        except Exception as e:
+            logger.warning(f"Product guide fallback error: {e}")
 
     messages = [{"role": "system", "content": system_prompt}]
     for m in session_messages[-20:]:

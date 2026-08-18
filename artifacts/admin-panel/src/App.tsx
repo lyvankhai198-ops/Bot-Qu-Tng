@@ -28,6 +28,7 @@ import MarketOrders from "@/pages/market-orders";
 import ExportSheet  from "@/pages/export-sheet";
 import ReturnQueue from "@/pages/return-queue";
 import ChatSupport from "@/pages/chat-support";
+import ProductGuides from "@/pages/product-guides";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -93,6 +94,7 @@ function Router() {
       <Route path="/export-sheet"><ProtectedRoute component={ExportSheet} /></Route>
       <Route path="/return-queue"><ProtectedRoute component={ReturnQueue} /></Route>
       <Route path="/chat-support"><ProtectedRoute component={ChatSupport} /></Route>
+      <Route path="/product-guides"><ProtectedRoute component={ProductGuides} /></Route>
       <Route component={NotFound} />
     </Switch>
   );

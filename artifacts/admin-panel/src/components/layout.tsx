@@ -10,7 +10,7 @@ import {
   Activity, Send, FileText, CalendarCheck,
   Gift, PackageOpen, Target, Settings as SettingsIcon, ArrowLeftRight,
   LogOut, Bot, Menu, X, ChevronDown, ChevronRight,
-  PanelLeftClose, PanelLeftOpen, FileSpreadsheet, MessageSquare,
+  PanelLeftClose, PanelLeftOpen, FileSpreadsheet, MessageSquare, BookOpen,
 } from "lucide-react"
 import { Button } from "./ui/button"
 import {
@@ -74,7 +74,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/broadcast", label: "Gửi tin nhắn",   icon: Send },
       { href: "/intro",     label: "Cấu hình Intro", icon: FileText },
-      { href: "/chat-support", label: "Chat Support",   icon: MessageSquare },
+      { href: "/chat-support",    label: "Chat Support",       icon: MessageSquare },
+      { href: "/product-guides", label: "Product Guides",     icon: BookOpen },
     ],
   },
   {

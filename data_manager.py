@@ -1593,6 +1593,44 @@ def add_voucher(user_id: int, code: str, label: str, value: str) -> None:
 
 # ─── Secret codes (Săn mã bí mật) ───────────────────────────────────────────
 
+# ─── Product Guides ──────────────────────────────────────────────────────────
+
+def get_product_guides() -> list:
+    """Trả về toàn bộ product guides từ data/product_guides.json."""
+    return load("product_guides", [])
+
+def save_product_guides(guides: list) -> None:
+    """Ghi toàn bộ product guides vào data/product_guides.json."""
+    save("product_guides", guides)
+
+def get_product_guide_by_name(product_name: str) -> dict | None:
+    """
+    Tìm product guide phù hợp với tên sản phẩm.
+    Ưu tiên: exact match → partial match (case-insensitive, Unicode-normalized).
+    Chỉ trả về guide đang enabled=True.
+    """
+    if not product_name:
+        return None
+    import unicodedata as _ud
+    def _norm(s: str) -> str:
+        return _ud.normalize("NFC", s).lower().strip()
+    norm = _norm(product_name)
+    guides = get_product_guides()
+    # 1. Exact match
+    for g in guides:
+        if not g.get("enabled", True):
+            continue
+        if _norm(g.get("product", "")) == norm:
+            return g
+    # 2. Partial match: tên guide ngắn hơn nằm trong productName (hoặc ngược lại)
+    for g in guides:
+        if not g.get("enabled", True):
+            continue
+        gp = _norm(g.get("product", ""))
+        if gp and (gp in norm or norm in gp):
+            return g
+    return None
+
 def get_secret_codes() -> list:
     return load("secret_codes", [])
 

@@ -3662,6 +3662,114 @@ router.post("/bot/reset-data", requireAuth, (_req: any, res: any) => {
   }
 });
 
+// ─── Product Guides CRUD ────────────────────────────────────────────────────
+
+const SENSITIVE_PATTERNS = [
+  /sk-[a-zA-Z0-9]{20,}/,              // OpenAI API key
+  /bot[0-9]+:[a-zA-Z0-9_\-]{35,}/,   // Telegram bot token
+  /password\s*[:=]/i,
+  /api[_-]?key\s*[:=]/i,
+];
+
+function hasSensitiveData(obj: unknown): boolean {
+  const str = JSON.stringify(obj);
+  return SENSITIVE_PATTERNS.some(p => p.test(str));
+}
+
+// GET all guides
+router.get("/bot/product-guides", requireAuth, (_req: any, res: any) => {
+  try {
+    const guides = readJson("product_guides", []) ?? [];
+    res.json(guides);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST create or update a guide (id in body = update, no id = create)
+router.post("/bot/product-guides", requireAuth, (req: any, res: any) => {
+  try {
+    const body = req.body as Record<string, unknown>;
+
+    // Validation
+    const product = (String(body.product ?? "")).trim();
+    if (!product) return res.status(400).json({ error: "product là bắt buộc" });
+    if (product.length > 200) return res.status(400).json({ error: "Tên sản phẩm quá dài (tối đa 200 ký tự)" });
+
+    const fieldMaxLen = 5000;
+    for (const f of ["activation_guide", "usage_guide", "error_guide", "warranty_guide", "refund_note"]) {
+      const val = String(body[f] ?? "");
+      if (val.length > fieldMaxLen) return res.status(400).json({ error: `Trường ${f} quá dài (tối đa ${fieldMaxLen} ký tự)` });
+    }
+
+    if (hasSensitiveData(body)) {
+      return res.status(400).json({ error: "Nội dung chứa thông tin nhạy cảm (API key, token...)" });
+    }
+
+    const guides: any[] = readJson("product_guides", []) ?? [];
+    const id: string = (String(body.id ?? "")).trim() || crypto.randomUUID().slice(0, 8);
+    const idx = guides.findIndex((g: any) => g.id === id);
+
+    const entry: any = {
+      id,
+      product,
+      title:            (String(body.title            ?? "")).trim(),
+      activation_guide: (String(body.activation_guide ?? "")).trim(),
+      usage_guide:      (String(body.usage_guide      ?? "")).trim(),
+      error_guide:      (String(body.error_guide      ?? "")).trim(),
+      warranty_guide:   (String(body.warranty_guide   ?? "")).trim(),
+      refund_note:      (String(body.refund_note      ?? "")).trim(),
+      enabled:          body.enabled !== false,
+      updated_at:       now(),
+    };
+
+    if (idx >= 0) {
+      entry.created_at = guides[idx].created_at ?? now();
+      guides[idx] = entry;
+    } else {
+      entry.created_at = now();
+      guides.push(entry);
+    }
+
+    writeJson("product_guides", guides);
+    addLog("PRODUCT_GUIDE_SAVE", product, "admin");
+    res.json(entry);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE a guide by id
+router.delete("/bot/product-guides/:id", requireAuth, (req: any, res: any) => {
+  try {
+    const { id } = req.params as { id: string };
+    const guides: any[] = readJson("product_guides", []) ?? [];
+    const filtered = guides.filter((g: any) => g.id !== id);
+    if (filtered.length === guides.length) return res.status(404).json({ error: "Không tìm thấy guide" });
+    writeJson("product_guides", filtered);
+    addLog("PRODUCT_GUIDE_DELETE", id, "admin");
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH toggle enabled
+router.patch("/bot/product-guides/:id/toggle", requireAuth, (req: any, res: any) => {
+  try {
+    const { id } = req.params as { id: string };
+    const guides: any[] = readJson("product_guides", []) ?? [];
+    const idx = guides.findIndex((g: any) => g.id === id);
+    if (idx < 0) return res.status(404).json({ error: "Không tìm thấy guide" });
+    guides[idx].enabled = !guides[idx].enabled;
+    guides[idx].updated_at = now();
+    writeJson("product_guides", guides);
+    res.json(guides[idx]);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get("/bot/backup", requireAuth, (_req: any, res: any) => {
   const files = ["users", "accounts", "settings", "claimed_users", "banned_users", "logs", "orders", "warranty_requests", "intro", "pending_broadcasts"];
   const backup: any = { exportedAt: now() };
