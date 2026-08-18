@@ -1,1 +1,2 @@
 - [Nginx admin-panel API routing](nginx-admin-panel-api-routing.md) — POST to /admin-panel/api/ returns 405 unless explicit proxy location added before /admin-panel/ static block
+- [Sync robot port mismatch](sync-robot-port.md) — sync-robot.service dùng API_BASE_URL=8081 nhưng API server chạy ở 3002 → import silent fail, new_orders=0 mãi
