@@ -91,6 +91,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     key: "he-thong", label: "HỆ THỐNG",
     items: [
+      { href: "/ai-usage", label: "AI Usage / Budget", icon: Bot },
       { href: "/settings", label: "Cài đặt", icon: SettingsIcon },
     ],
   },

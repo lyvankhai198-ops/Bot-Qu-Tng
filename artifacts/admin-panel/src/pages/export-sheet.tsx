@@ -38,6 +38,11 @@ interface PreviewRow {
   expiry:    string
   remaining: number
   refund:    number
+  accountKey: string
+  status: string
+  statusLabel: string
+  statusUpdatedAt: string
+  note: string
 }
 
 interface Suggestion {
@@ -80,6 +85,14 @@ function fmtVND(n: number) {
   return n ? n.toLocaleString("vi-VN") : "—"
 }
 
+const ACCOUNT_STATUS_OPTIONS = [
+  { value: "pending", label: "⏳ Chưa xử lý" },
+  { value: "in_progress", label: "🔄 Đang yêu cầu" },
+  { value: "warranted", label: "✅ Đã bảo hành" },
+  { value: "refunded", label: "💰 Đã hoàn tiền" },
+  { value: "rejected", label: "❌ Từ chối" },
+]
+
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function ExportSheet() {
   const { toast }  = useToast()
@@ -93,6 +106,8 @@ export default function ExportSheet() {
   const [loadingPreview, setLoadingPreview] = useState<string | null>(null)
   const [downloading, setDownloading]       = useState<string | null>(null)
   const [copied, setCopied]                 = useState(false)
+  const [savingStatus, setSavingStatus]       = useState<string | null>(null)
+  const [previewSearch, setPreviewSearch]     = useState("")
   const copyTextareaRef                     = useRef<HTMLTextAreaElement>(null)
 
   // Suggestions state
@@ -127,6 +142,16 @@ export default function ExportSheet() {
       return terms.every(t => haystack.includes(t))
     })
   }, [suggData, suggSearch])
+
+  const filteredPreviewRows = useMemo(() => {
+    const rows = preview?.rows ?? []
+    const query = previewSearch.trim().toLowerCase()
+    if (!query) return rows
+    return rows.filter(row => [
+      row.seller, row.email, row.password, row.twofa,
+      row.status, row.statusLabel, row.note,
+    ].join(" ").toLowerCase().includes(query))
+  }, [preview, previewSearch])
 
   // ── Save config ──────────────────────────────────────────────────────────────
   const saveMut = useMutation({
@@ -183,11 +208,34 @@ export default function ExportSheet() {
         toast({ title: "Không có đơn nào khớp rule này.", variant: "destructive" })
         return
       }
+      setPreviewSearch("")
       setPreview({ rule, rows: d.rows })
     } catch (e: any) {
       toast({ title: "❌ Lỗi preview", description: e?.message, variant: "destructive" })
     } finally {
       setLoadingPreview(null)
+    }
+  }
+
+  async function handleStatusChange(row: PreviewRow, status: string) {
+    if (!row.accountKey) return
+    setSavingStatus(row.accountKey)
+    try {
+      const d = await apiFetch("PUT", "/bot/export-sheet/status", {
+        accountKey: row.accountKey,
+        status,
+      })
+      setPreview(prev => prev ? {
+        ...prev,
+        rows: prev.rows.map(r => r.accountKey === row.accountKey
+          ? { ...r, status: d.status, statusLabel: d.statusLabel, statusUpdatedAt: d.statusUpdatedAt }
+          : r),
+      } : prev)
+      toast({ title: "✅ Đã cập nhật trạng thái tài khoản" })
+    } catch (e: any) {
+      toast({ title: "❌ Không thể cập nhật trạng thái", description: e?.message, variant: "destructive" })
+    } finally {
+      setSavingStatus(null)
     }
   }
 
@@ -597,7 +645,7 @@ export default function ExportSheet() {
 
       {/* ── Preview Dialog ─────────────────────────────────────────────────────── */}
       <Dialog open={!!preview} onOpenChange={open => { if (!open) { setPreview(null); setCopied(false) } }}>
-        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-0 gap-0">
+        <DialogContent className="max-w-6xl max-h-[90vh] flex flex-col p-0 gap-0">
           {/* Header */}
           <DialogHeader className="px-4 pt-4 pb-3 border-b">
             <DialogTitle className="flex items-center gap-2 text-base">
@@ -606,6 +654,33 @@ export default function ExportSheet() {
               <Badge className="ml-auto flex-shrink-0">{preview?.rows.length ?? 0} dòng</Badge>
             </DialogTitle>
           </DialogHeader>
+
+          <div className="px-4 py-2 border-b bg-background">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                value={previewSearch}
+                onChange={e => setPreviewSearch(e.target.value)}
+                placeholder="Tìm email, mật khẩu, 2FA hoặc trạng thái..."
+                className="h-9 pl-9 pr-9 text-sm"
+              />
+              {previewSearch && (
+                <button
+                  type="button"
+                  aria-label="Xóa tìm kiếm"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setPreviewSearch("")}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            {previewSearch && (
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Hiển thị {filteredPreviewRows.length}/{preview?.rows.length ?? 0} tài khoản
+              </div>
+            )}
+          </div>
 
           {/* Table — chỉ email / pass / 2fa, hiện full không ẩn */}
           <div className="flex-1 overflow-auto">
@@ -616,10 +691,12 @@ export default function ExportSheet() {
                   <th className="px-2 py-2 text-left font-semibold">Email</th>
                   <th className="px-2 py-2 text-left font-semibold">Mật khẩu</th>
                   <th className="px-2 py-2 text-left font-semibold">2FA</th>
+                  <th className="px-2 py-2 text-left font-semibold">Trạng thái xử lý</th>
+                  <th className="px-2 py-2 text-left font-semibold">Ngày cập nhật</th>
                 </tr>
               </thead>
               <tbody>
-                {preview?.rows.map((row, i) => (
+                {filteredPreviewRows.map((row, i) => (
                   <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-muted/30"}>
                     <td className="px-2 py-1.5 text-muted-foreground text-[10px]">{i + 1}</td>
                     <td className="px-2 py-1.5 font-mono text-[11px] break-all">
@@ -630,6 +707,22 @@ export default function ExportSheet() {
                     </td>
                     <td className="px-2 py-1.5 font-mono text-[11px] break-all text-muted-foreground">
                       {row.twofa || <span className="italic">—</span>}
+                    </td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      <select
+                        value={row.status || "pending"}
+                        disabled={!row.accountKey || savingStatus === row.accountKey}
+                        onChange={e => handleStatusChange(row, e.target.value)}
+                        className="h-7 rounded border bg-background px-1.5 text-[11px]"
+                        title="Cập nhật trạng thái tài khoản"
+                      >
+                        {ACCOUNT_STATUS_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1.5 text-[11px] text-muted-foreground whitespace-nowrap">
+                      {row.statusUpdatedAt ? new Date(row.statusUpdatedAt).toLocaleDateString("vi-VN") : "—"}
                     </td>
                   </tr>
                 ))}

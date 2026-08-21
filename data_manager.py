@@ -699,6 +699,10 @@ def _infer_bhf_days(product_name: str) -> int:
     if m: return int(m.group(1))
     m = re.search(r'(\d+)\s*DAY[S]?\b', norm)       # Day / Days (English, e.g. 30DAY)
     if m: return int(m.group(1))
+    # A bare BHF means full warranty for the standard 30-day product.
+    # Explicit durations above (30D, 90D, 1 month, etc.) always win.
+    if re.search(r'\bBHF\b', norm):
+        return 30
     return 0
 
 def calc_item_warranty(item: dict, order: dict, settings: dict) -> dict:

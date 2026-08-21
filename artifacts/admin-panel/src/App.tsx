@@ -29,6 +29,7 @@ import ExportSheet  from "@/pages/export-sheet";
 import ReturnQueue from "@/pages/return-queue";
 import ChatSupport from "@/pages/chat-support";
 import ProductGuides from "@/pages/product-guides";
+import AiUsage from "@/pages/ai-usage";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -95,6 +96,7 @@ function Router() {
       <Route path="/return-queue"><ProtectedRoute component={ReturnQueue} /></Route>
       <Route path="/chat-support"><ProtectedRoute component={ChatSupport} /></Route>
       <Route path="/product-guides"><ProtectedRoute component={ProductGuides} /></Route>
+      <Route path="/ai-usage"><ProtectedRoute component={AiUsage} /></Route>
       <Route component={NotFound} />
     </Switch>
   );

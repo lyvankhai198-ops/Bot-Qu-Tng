@@ -29,11 +29,28 @@ LANG = {
         "btn_chat_support": "💬 Chat với Support",
         "btn_end_chat": "🔚 Kết thúc chat",
         "chat_support_start": (
-            "🟢 <b>Đã kết nối với Support!</b>\n\n"
-            "Gõ tin nhắn của bạn, admin sẽ phản hồi sớm nhất.\n"
-            "⏱ Phiên chat tự đóng sau {timeout} phút không có hoạt động."
+            "🟢 <b>Đã kết nối hỗ trợ</b>\n"
+            "💬 Bạn có thể gửi tin nhắn. Nhân viên hỗ trợ sẽ phản hồi sớm nhất.\n"
+            "⏱️ Phiên hỗ trợ tự đóng sau {timeout} phút không hoạt động."
+        ),
+        "chat_support_existing": "🟢 Bạn đang có phiên chat đang mở. Tiếp tục gõ tin nhắn.",
+        "chat_support_cooldown": "⏱ Vui lòng chờ {wait}s trước khi bắt đầu phiên mới.",
+        "chat_support_connected": "🟢 <b>Đã kết nối hỗ trợ</b>",
+        "chat_support_disclaimer": "ℹ️ <b>Lưu ý:</b> Thông tin từ AI chỉ mang tính tham khảo. Vui lòng kiểm tra điều kiện sản phẩm trước khi sử dụng.",
+        "chat_support_disclaimer_button": "✕ Đã hiểu",
+        "chat_support_message_guide": "💬 Bạn có thể gửi tin nhắn. Nhân viên hỗ trợ sẽ phản hồi sớm nhất.\n⏱️ Phiên hỗ trợ tự động kết thúc sau {timeout} phút không hoạt động.",
+        "chat_support_order_report_guide": (
+            "📦 <b>Đã nhận mã đơn {order_id}</b>\n\n"
+            "Để tạo lệnh báo lỗi/bảo hành, bạn vui lòng:\n"
+            "1️⃣ Nhấn <b>🔚 Kết thúc chat</b>.\n"
+            "2️⃣ Chọn <b>⚠️ Báo lỗi bảo hành</b>.\n"
+            "3️⃣ Nhập mã đơn này và nhấn nút <b>Báo Lỗi</b>.\n"
+            "4️⃣ Mô tả lỗi để gửi yêu cầu cho Admin.\n\n"
+            "Lệnh báo lỗi cần tạo trong mục Báo lỗi bảo hành để hệ thống kiểm tra thời hạn và chuyển đúng yêu cầu cho Admin."
         ),
         "chat_support_user_end": "✅ Phiên chat đã kết thúc. Cảm ơn bạn đã liên hệ!",
+        "chat_support_delete_warning": "🗑 Tin nhắn trong phiên chat sẽ tự xoá sau 5 phút.",
+        "chat_support_deleted_notice": "🗑 <b>Tin nhắn chat đã được xoá.</b>\nBạn có thể bắt đầu phiên hỗ trợ mới bất cứ lúc nào.",
         "chat_support_reply": "💬 <b>Support:</b>\n{msg}",
         "chat_support_timeout": (
             "⏱ Phiên chat hỗ trợ đã tự đóng do không có hoạt động sau {timeout} phút.\n"
@@ -67,7 +84,7 @@ LANG = {
         ),
         "order_not_found": (
             "❌ <b>Không tìm thấy đơn hàng.</b>\n\n"
-            "Vui lòng kiểm tra lại mã đơn hoặc email và thử lại."
+            "Vui lòng kiểm tra lại mã đơn hoặc email và thử lại sau <b>10 phút</b>."
         ),
         "order_display": (
             "📦 <b>THÔNG TIN ĐƠN HÀNG</b>\n\n"
@@ -391,11 +408,28 @@ LANG = {
         "btn_chat_support": "💬 Chat with Support",
         "btn_end_chat": "🔚 End Chat",
         "chat_support_start": (
-            "🟢 <b>Connected to Support!</b>\n\n"
-            "Type your message and our admin will reply shortly.\n"
-            "⏱ Session auto-closes after {timeout} minutes of inactivity."
+            "🟢 <b>Connected to Support</b>\n"
+            "💬 Send your message. Our team will reply as soon as possible.\n"
+            "⏱️ Session auto-closes after {timeout} minutes of inactivity."
+        ),
+        "chat_support_existing": "🟢 You already have an open support session. Continue typing your message.",
+        "chat_support_cooldown": "⏱ Please wait {wait}s before starting a new session.",
+        "chat_support_connected": "🟢 <b>Connected to Support</b>",
+        "chat_support_disclaimer": "ℹ️ <b>Note:</b> Information from AI is for reference only. Please check the product terms before use.",
+        "chat_support_disclaimer_button": "✕ Got it",
+        "chat_support_message_guide": "💬 You can send a message. Our Support team will reply as soon as possible.\n⏱️ Your support session automatically ends after {timeout} minutes of inactivity.",
+        "chat_support_order_report_guide": (
+            "📦 <b>Order code received: {order_id}</b>\n\n"
+            "To create an error/warranty report:\n"
+            "1️⃣ Tap <b>🔚 End Chat</b>.\n"
+            "2️⃣ Choose <b>⚠️ Report Warranty Issue</b>.\n"
+            "3️⃣ Enter this order code and tap <b>Report Issue</b>.\n"
+            "4️⃣ Describe the problem to send the request to Admin.\n\n"
+            "Please create the report from the warranty issue menu so the system can check the warranty period and route the request correctly."
         ),
         "chat_support_user_end": "✅ Chat session ended. Thank you for contacting us!",
+        "chat_support_delete_warning": "🗑 Messages from this chat session will be deleted after 5 minutes.",
+        "chat_support_deleted_notice": "🗑 <b>Chat messages have been deleted.</b>\nYou can start a new support session at any time.",
         "chat_support_reply": "💬 <b>Support:</b>\n{msg}",
         "chat_support_timeout": (
             "⏱ Your support chat closed automatically after {timeout} minutes of inactivity.\n"
@@ -429,7 +463,7 @@ LANG = {
         ),
         "order_not_found": (
             "❌ <b>Order not found.</b>\n\n"
-            "Please check your order ID or email and try again."
+            "Please check your order ID or email and try again in <b>10 minutes</b>."
         ),
         "order_display": (
             "📦 <b>ORDER DETAILS</b>\n\n"

@@ -25,6 +25,42 @@ function writeJson(name: string, data: unknown) {
   fs.writeFileSync(dataFile(name), JSON.stringify(data, null, 2), "utf-8");
 }
 
+
+const ACCOUNT_STATUS_FILE = "market_account_status";
+const VALID_ACCOUNT_STATUSES = ["pending", "in_progress", "warranted", "refunded", "rejected"] as const;
+type AccountStatus = typeof VALID_ACCOUNT_STATUSES[number];
+
+function normalizeAccountKey(email: string): string {
+  return String(email ?? "").trim().toLowerCase();
+}
+
+function accountStatusLabel(status: string): string {
+  return ({
+    pending: "⏳ Chưa xử lý",
+    in_progress: "🔄 Đang yêu cầu",
+    warranted: "✅ Đã bảo hành",
+    refunded: "💰 Đã hoàn tiền",
+    rejected: "❌ Từ chối",
+  } as Record<string, string>)[status] ?? "⏳ Chưa xử lý";
+}
+
+function accountStatuses(): Record<string, { status: AccountStatus; updatedAt: string; note: string }> {
+  return readJson(ACCOUNT_STATUS_FILE, {}) ?? {};
+}
+
+function accountStatusFor(email: string, statuses: Record<string, any>) {
+  const accountKey = normalizeAccountKey(email);
+  const saved = accountKey ? statuses[accountKey] : null;
+  const status = VALID_ACCOUNT_STATUSES.includes(saved?.status) ? saved.status : "pending";
+  return {
+    accountKey,
+    status,
+    statusLabel: accountStatusLabel(status),
+    statusUpdatedAt: saved?.updatedAt ?? "",
+    note: saved?.note ?? "",
+  };
+}
+
 // ── Helpers: lọc ──────────────────────────────────────────────────────────────
 
 function normName(s: string): string {
@@ -141,6 +177,11 @@ interface RowData {
   adjPrice:      number;
   remaining:     number;
   refund:        number;
+  accountKey:    string;
+  status:        AccountStatus;
+  statusLabel:   string;
+  statusUpdatedAt: string;
+  note:          string;
 }
 
 // ── Lọc + build rows ──────────────────────────────────────────────────────────
@@ -150,6 +191,7 @@ function filterAndBuild(rule: {
 }): RowData[] {
   const warrantyDays = (rule.warranty_days && rule.warranty_days > 0) ? rule.warranty_days : 30;
   const allOrders: Record<string, any> = readJson("market_orders", {}) ?? {};
+  const statuses = accountStatuses();
 
   const matched = Object.values(allOrders).filter((o: any) => {
     if (!sellerMatches(o.seller ?? "", rule.sellers ?? [])) return false;
@@ -193,11 +235,13 @@ function filterAndBuild(rule: {
 
     if (!accounts.length) {
       rows.push({ seller, email: "", password: "", twofa: "", purchaseDate, expiryDate,
-        adjPrice: pricePerAcct, remaining, refund: refundPerAcct });
+        adjPrice: pricePerAcct, remaining, refund: refundPerAcct,
+        ...accountStatusFor("", statuses) });
     } else {
       for (const { email, password, twofa } of accounts) {
         rows.push({ seller, email, password, twofa, purchaseDate, expiryDate,
-          adjPrice: pricePerAcct, remaining, refund: refundPerAcct });
+          adjPrice: pricePerAcct, remaining, refund: refundPerAcct,
+          ...accountStatusFor(email, statuses) });
       }
     }
   }
@@ -211,8 +255,8 @@ function buildXlsx(rows: RowData[]): Buffer {
 
   // Gộp dữ liệu: header + blank + data
   const wsData: any[][] = [
-    ["Tên seller", "Email", "Mật khẩu", "2FA", "Giá mua", "Ngày mua", "Hết hạn BH", "Tiền hoàn"],
-    ["", "", "", "", "", "", "", ""],
+    ["Tên seller", "Email", "Mật khẩu", "2FA", "Giá mua", "Ngày mua", "Hết hạn BH", "Tiền hoàn", "Trạng thái xử lý", "Ngày cập nhật", "Ghi chú"],
+    ["", "", "", "", "", "", "", "", "", "", ""],
   ];
 
   // Theo dõi nhóm seller để merge cells
@@ -237,6 +281,9 @@ function buildXlsx(rows: RowData[]): Buffer {
       fmtDate(r.purchaseDate),
       fmtDate(r.expiryDate),
       r.refund,
+      r.statusLabel,
+      r.statusUpdatedAt ? fmtDate(new Date(r.statusUpdatedAt)) : "",
+      r.note,
     ]);
   });
   if (rows.length > 0) sellerGroups.push({ start: curStart, end: DATA_START + rows.length - 1 });
@@ -254,6 +301,9 @@ function buildXlsx(rows: RowData[]): Buffer {
     { wch: 14 }, // Ngày mua
     { wch: 14 }, // Hết hạn BH
     { wch: 14 }, // Tiền hoàn
+    { wch: 20 }, // Trạng thái xử lý
+    { wch: 16 }, // Ngày cập nhật
+    { wch: 28 }, // Ghi chú
   ];
 
   // ── Chiều cao dòng header ─────────────────────────────────────────────────
@@ -273,7 +323,7 @@ function buildXlsx(rows: RowData[]): Buffer {
   const THIN   = (rgb = "AAAAAA") => ({ style: "thin" as const, color: { rgb } });
   const BORDER = { top: THIN(), bottom: THIN(), left: THIN(), right: THIN() };
 
-  const totalCols = 8;
+  const totalCols = 11;
   const totalRows = wsData.length;
 
   for (let r = 0; r < totalRows; r++) {
@@ -511,6 +561,30 @@ router.put("/bot/export-sheet/config", requireAuth, (req: any, res: any) => {
   res.json({ ok: true });
 });
 
+// GET /bot/export-sheet/statuses
+router.get("/bot/export-sheet/statuses", requireAuth, (_req: any, res: any) => {
+  res.json(accountStatuses());
+});
+
+// PUT /bot/export-sheet/status — mark an account without removing it from exports.
+router.put("/bot/export-sheet/status", requireAuth, (req: any, res: any) => {
+  const body = req.body ?? {};
+  const accountKey = normalizeAccountKey(body.accountKey ?? "");
+  const status = String(body.status ?? "");
+  if (!accountKey) return res.status(400).json({ error: "Thiếu mã tài khoản" });
+  if (!(VALID_ACCOUNT_STATUSES as readonly string[]).includes(status)) {
+    return res.status(400).json({ error: "Trạng thái tài khoản không hợp lệ" });
+  }
+  const statuses = accountStatuses();
+  statuses[accountKey] = {
+    status: status as AccountStatus,
+    updatedAt: new Date().toISOString(),
+    note: String(body.note ?? "").trim().slice(0, 500),
+  };
+  writeJson(ACCOUNT_STATUS_FILE, statuses);
+  res.json({ ok: true, ...accountStatusFor(accountKey, statuses) });
+});
+
 // POST /bot/export-sheet/preview
 router.post("/bot/export-sheet/preview", requireAuth, (req: any, res: any) => {
   const rule = req.body ?? {};
@@ -527,6 +601,11 @@ router.post("/bot/export-sheet/preview", requireAuth, (req: any, res: any) => {
       expiry:    fmtDate(r.expiryDate),
       remaining: r.remaining,
       refund:    r.refund,
+      accountKey: r.accountKey,
+      status: r.status,
+      statusLabel: r.statusLabel,
+      statusUpdatedAt: r.statusUpdatedAt,
+      note: r.note,
     })),
   });
 });

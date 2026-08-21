@@ -387,8 +387,9 @@ def parse_symbols_from_name(name: str) -> dict:
     # 2. Parse warranty days
     warranty_days = 0
     if is_bhf:
-        # BHF = bảo hành suốt thời hạn sử dụng
-        warranty_days = usage_days if usage_days else 0
+        # BHF = bảo hành suốt thời hạn sử dụng. A bare BHF follows the
+        # standard 30-day product; explicit 30D/90D/1 month values win.
+        warranty_days = usage_days if usage_days else 30
     else:
         # "BH 2 Ngày", "BH 7D", "BH2D" ...
         bh = re.search(r'BH\s*(\d+)\s*(?:NGÀY\b|D\b|H\b)', n)
@@ -1780,7 +1781,15 @@ async def _download_orders_xlsx(page, download_dir: str) -> str:
                 return out_path
             raise RuntimeError(f"File tải xuống quá nhỏ ({size} bytes)")
         except Exception as ex:
-            raise RuntimeError(f"Tải XLSX qua dropdown thất bại: {ex}")
+            # A stale menu item or a transient download event must not abort
+            # the whole sync. Close the menu and continue with the direct
+            # button retry below; the next run can also recover automatically.
+            logger.warning(f"[SYNC] Dropdown XLSX thất bại: {ex} — chuyển sang retry trực tiếp")
+            try:
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(500)
+            except Exception:
+                pass
 
     # Thử lại lần 2 với timeout dài hơn (nút click lần trước có thể cần kích hoạt thêm)
     try:
