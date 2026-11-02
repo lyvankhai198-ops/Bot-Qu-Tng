@@ -3694,15 +3694,65 @@ async def _translate_admin_reply_for_customer(session: dict, text: str) -> str |
 def _format_customer_message_for_admin(
     original: str, translated: str | None, translation_failed: bool = False
 ) -> str:
-    """Build safe Telegram HTML while keeping the original visible."""
+    """Put readable Vietnamese first, keeping a distinct original as quiet context."""
     import html as _html
 
+    original = str(original or "")
+    translated = str(translated or "")
+    same_text = " ".join(original.split()).casefold() == " ".join(translated.split()).casefold()
+    if translated.strip() and not same_text:
+        return _html.escape(translated) + "\n<i>Gốc: " + _html.escape(original) + "</i>"
     lines = [_html.escape(original)]
-    if translated:
-        lines.append("🇻🇳 <b>Bản dịch:</b>\n" + _html.escape(translated))
-    elif translation_failed:
-        lines.append("⚠️ <i>Chưa dịch được; nội dung gốc được giữ nguyên.</i>")
+    if translation_failed and not translated.strip():
+        lines.append("<i>Chưa dịch được · hiển thị bản gốc</i>")
     return "\n".join(lines)
+
+
+def _compact_support_history_for_admin(messages: list, max_chars: int = 3000) -> str:
+    """Build whole, escaped message blocks, never truncate Telegram HTML mid-tag."""
+    import html as _html
+
+    def excerpt(value) -> str:
+        text = str(value or "").strip()
+        limit = min(480, max(40, (max_chars - 200) // 3))
+        result, size = [], 0
+        for char in text:
+            size += len(_html.escape(char).encode("utf-16-le")) // 2
+            if size > limit:
+                return "".join(result).rstrip() + "…"
+            result.append(char)
+        return text
+
+    visible = [m for m in messages if m.get("role", "user") in ("user", "assistant")]
+    if not visible:
+        return "<i>Chưa có tin nhắn.</i>"
+    dates = {str(m.get("time") or "")[:10] for m in visible if m.get("time")}
+    blocks, used = [], 100  # Reserve room for the short preview/date note.
+    for message in reversed(visible[-8:]):
+        who = "Khách" if message.get("role", "user") == "user" else "AI"
+        timestamp = str(message.get("time") or "")[:16].replace("T", " ")
+        stamp = timestamp[-5:] if len(dates) <= 1 and len(timestamp) >= 16 else timestamp
+        label = who + (" · " + stamp if stamp else "")
+        original, translated = str(message.get("text") or ""), str(message.get("translation_vi") or "")
+        if " ".join(original.split()).casefold() == " ".join(translated.split()).casefold():
+            translated = ""
+        body = _format_customer_message_for_admin(
+            excerpt(original), excerpt(translated), message.get("translation_status") == "failed",
+        )
+        block = "<b>" + _html.escape(label) + "</b>\n" + body
+        block_size = len(block.encode("utf-16-le")) // 2
+        if used + block_size + 2 > max_chars:
+            break
+        blocks.append(block)
+        used += block_size + 2
+    blocks.reverse()
+    notes = []
+    if len(dates) == 1:
+        notes.append(_html.escape(next(iter(dates))))
+    if len(blocks) < len(visible):
+        notes.append(f"{len(blocks)}/{len(visible)} tin gần nhất")
+    prefix = "<i>" + " · ".join(notes) + "</i>\n\n" if notes else ""
+    return prefix + "\n\n".join(blocks)
 
 
 def _order_belongs_to_user(order: dict, uid_str: str) -> bool:
@@ -5124,29 +5174,24 @@ async def _notify_admin_with_history(
     context, data: dict, session: dict, uid_str: str, user
 ) -> None:
     """
-    Gửi toàn bộ lịch sử chat lên ADMIN_ID kèm nút Chuyển phiên.
+    Gửi bản xem nhanh lịch sử chat lên ADMIN_ID kèm nút Chuyển phiên.
     Gọi khi AI quyết định chuyển sang nhân viên hỗ trợ.
     """
     if not ADMIN_ID:
         return
 
-    name = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+    import html as _html
+    name = _html.escape((f"@{user.username}" if user.username else (user.first_name or str(user.id)))[:80])
     messages = session.get("messages", [])
 
-    # Dựng chuỗi lịch sử chat
-    history_lines = []
+    # Keep translation/storage unchanged; render the admin preview separately.
     for m in messages:
         role = m.get("role", "user")
         txt  = m.get("text", "")
-        ts   = (m.get("time", "") or "")[:16].replace("T", " ")
         if role == "user":
             translated = m.get("translation_vi")
             if not translated:
                 translated = await _prepare_customer_message_for_admin(session, m)
-            display = _format_customer_message_for_admin(
-                txt, translated, m.get("translation_status") == "failed",
-            )
-            history_lines.append(f"👤 <b>Khách</b> [{ts}]: {display}")
         elif role == "assistant":
             translated = m.get("translation_vi")
             if not translated and txt and txt not in ("[Ảnh]", "[Anh]"):
@@ -5154,34 +5199,23 @@ async def _notify_admin_with_history(
                 if result and result["source_language"].casefold() not in ("vietnamese", "vi", "tiếng việt"):
                     translated = result["translation"]
                     m["translation_vi"] = translated
-            assistant_display = txt
-            if translated:
-                import html as _html
-                assistant_display += "\n🇻🇳 <b>Bản dịch:</b>\n" + _html.escape(translated)
-            history_lines.append(f"🤖 <b>AI</b> [{ts}]: {assistant_display}")
         # bỏ qua role "support" — chưa có ở giai đoạn này
 
-    history_str = "\n".join(history_lines) if history_lines else "(chưa có tin nhắn)"
+    history_str = _compact_support_history_for_admin(messages)
 
     # Lấy vị trí hàng chờ thực tế
     try:
         _nah_pos = _queue_position(data, uid_str)
-        _nah_pos_str = f" | 📋 Hàng chờ #{_nah_pos}" if _nah_pos > 0 else ""
+        _nah_pos_str = f" · Chờ #{_nah_pos}" if _nah_pos > 0 else ""
     except Exception:
         _nah_pos_str = ""
 
     header = (
-        f"🔔 <b>Khách cần hỗ trợ — {name}</b> (<code>{user.id}</code>){_nah_pos_str}\n"
-        f"──────────────\n"
-        f"📋 <b>Lịch sử chat với AI:</b>\n"
-        f"{history_str}\n"
-        f"──────────────\n"
-        f"<i>↩️ Reply tin này để trả lời khách</i>"
+        f"<b>HỖ TRỢ KHÁCH HÀNG</b>\n"
+        f"{name} · ID <code>{user.id}</code>{_nah_pos_str}\n\n"
+        f"<b>Trao đổi gần đây</b>\n{history_str}\n\n"
+        f"<i>Reply tin này để trả lời khách.</i>"
     )
-
-    # Cắt nếu quá dài (Telegram limit 4096)
-    if len(header) > 4000:
-        header = header[:3900] + "\n...(cắt bớt)\n──────────────\n<i>↩️ Reply tin này để trả lời khách</i>"
 
     transfer_markup = _build_accept_transfer_markup(uid_str)
     try:
