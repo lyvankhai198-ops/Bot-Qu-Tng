@@ -28,6 +28,7 @@ LANG = {
         "btn_gift_box": "🎁 Ô Quà Bí Mật",
         "btn_chat_support": "💬 Chat với Support",
         "btn_end_chat": "🔚 Kết thúc chat",
+        "btn_resume_chat": "↩️ Tiếp tục chat",
         "chat_support_start": (
             "🟢 <b>Đã kết nối hỗ trợ</b>\n"
             "💬 Bạn có thể gửi tin nhắn. Nhân viên hỗ trợ sẽ phản hồi sớm nhất.\n"
@@ -407,6 +408,7 @@ LANG = {
         "btn_gift_box": "🎁 Mystery Gift Box",
         "btn_chat_support": "💬 Chat with Support",
         "btn_end_chat": "🔚 End Chat",
+        "btn_resume_chat": "↩️ Continue chat",
         "chat_support_start": (
             "🟢 <b>Connected to Support</b>\n"
             "💬 Send your message. Our team will reply as soon as possible.\n"

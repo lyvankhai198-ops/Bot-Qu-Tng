@@ -4,6 +4,7 @@ on:
     paths:
       - bot.py
       - data_manager.py
+      - translations.py
       - artifacts/admin-panel/src/pages/settings.tsx
       - artifacts/api-server/src/routes/botAdmin.ts
       - artifacts/api-server/src/routes/settings.ts

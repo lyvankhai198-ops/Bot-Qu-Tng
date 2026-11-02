@@ -5,7 +5,6 @@ import path from "node:path";
 import vm from "node:vm";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
 
 const root = path.resolve(process.env.GIFT_SOURCE_ROOT);
 const localRequire = createRequire(path.resolve("package.json"));
@@ -71,6 +70,7 @@ tree=ast.parse((Path(sys.argv[1])/"bot.py").read_text())
 fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=="main_keyboard")
 fn.returns=None
 ns={"db":SimpleNamespace(get_settings=lambda:settings),"lang":lambda _:"en","t":lambda L,key:key,
+    "_load_chat_sessions":lambda:{"sessions":{}},
     "ReplyKeyboardMarkup":lambda rows,**_:sum(rows,[]),"ReplyKeyboardRemove":lambda:[]}
 exec(compile(ast.Module(body=[fn],type_ignores=[]),"bot.py","exec"),ns)
 assert (sys.argv[3] in ns["main_keyboard"](1))==(sys.argv[4]=="true")

@@ -202,6 +202,52 @@ class MenuTests(unittest.TestCase):
         ns["db"].set_user_state.assert_not_called()
         ns["_save_chat_sessions"].assert_not_called()
 
+    def test_visible_home_keyboard_resumes_active_chat_with_switch_off(self):
+        for language in ("vi", "en"):
+            settings = {"chat_support_enabled": False}
+            sessions = {"sessions": {"123": {"status": "active", "messages": ["preserve"]}}}
+            ns = namespace(settings, language, state="live_chat", sessions=sessions)
+            home = update(ns["t"](language, "btn_home"))
+            asyncio.run(ns["menu_router"](home, None))
+            keyboard = home.message.reply_text.await_args.kwargs["reply_markup"].keyboard
+            visible = sum(keyboard, [])
+            self.assertNotIn(ns["t"](language, "btn_chat_support"), visible)
+            self.assertIn(ns["t"](language, "btn_resume_chat"), visible)
+            # Select a button actually returned to Telegram, not an invented
+            # press of the now-hidden new-chat menu entry.
+            button = next(label for row in keyboard for label in row
+                          if label == ns["t"](language, "btn_resume_chat"))
+            resume = update(button)
+            asyncio.run(ns["menu_router"](resume, None))
+            self.assertEqual(ns["db"].get_user_state(123)["conv_state"], "live_chat")
+            self.assertEqual(resume.message.reply_text.await_args.args[0],
+                             ns["t"](language, "chat_support_existing"))
+            self.assertEqual(sessions["sessions"]["123"]["messages"], ["preserve"])
+            ns["_save_chat_sessions"].assert_not_called()
+
+    def test_start_menu_has_visible_continue_button_for_active_chat(self):
+        for language in ("vi", "en"):
+            ns = namespace(
+                {"chat_support_enabled": False}, language,
+                sessions={"sessions": {"123": {"status": "active"}}},
+            )
+            bot = SimpleNamespace(send_message=AsyncMock())
+            asyncio.run(ns["_show_welcome_and_menu"](bot, update().effective_user, language))
+            keyboard = bot.send_message.await_args_list[0].kwargs["reply_markup"].keyboard
+            self.assertIn(ns["t"](language, "btn_resume_chat"), sum(keyboard, []))
+
+    def test_stale_continue_button_never_creates_new_session(self):
+        for status in (None, "closed"):
+            sessions = {"sessions": {} if status is None else {"123": {"status": status}}}
+            # The continue action cannot create a session even if the ordinary
+            # new-chat switch has since been enabled again.
+            ns = namespace({"chat_support_enabled": True}, sessions=sessions)
+            u = update(ns["t"]("vi", "btn_resume_chat"))
+            asyncio.run(ns["menu_router"](u, None))
+            self.assertEqual(u.message.reply_text.await_args.args[0], ns["t"]("vi", "feature_disabled"))
+            ns["db"].set_user_state.assert_not_called()
+            ns["_save_chat_sessions"].assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

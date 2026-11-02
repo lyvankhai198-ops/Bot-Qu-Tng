@@ -68,6 +68,11 @@ def main_keyboard(user_id: int) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
         for row in rows
     ]
     keyboard = [row for row in keyboard if row]
+    if (not settings.get("chat_support_enabled", True)
+            and _load_chat_sessions().get("sessions", {}).get(str(user_id), {}).get("status") == "active"):
+        # A separate continuation action preserves an existing chat without
+        # exposing the disabled entry point for creating new conversations.
+        keyboard.append([t(L, "btn_resume_chat")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True) if keyboard else ReplyKeyboardRemove()
 
 def back_keyboard(user_id: int) -> ReplyKeyboardMarkup:
@@ -2648,7 +2653,7 @@ async def handle_intro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 # All button keys used in menus — used to auto-detect language from button press
 _MENU_KEYS = ["btn_home", "btn_support", "btn_gift", "btn_check_order", "btn_shop", "btn_intro", "btn_gift_box",
-              "btn_bao_loi", "btn_yeu_cau_giao", "btn_chat_support", "btn_end_chat"]
+              "btn_bao_loi", "btn_yeu_cau_giao", "btn_chat_support", "btn_end_chat", "btn_resume_chat"]
 
 def detect_lang_from_text(text: str) -> str | None:
     """Return 'vi' or 'en' if text matches a known menu button, else None."""
@@ -2687,6 +2692,16 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Maintenance check (after home button)
     if await maintenance_reply(update, L):
+        return
+
+    if text in (t("vi", "btn_resume_chat"), t("en", "btn_resume_chat")):
+        if _load_chat_sessions().get("sessions", {}).get(str(user.id), {}).get("status") == "active":
+            await handle_chat_support_start(update, context)
+        else:
+            # A stale continuation button must never create a new session.
+            await update.message.reply_text(
+                t(L, "feature_disabled"), reply_markup=main_keyboard(user.id),
+            )
         return
 
     # Replace stale Telegram keyboards when a customer presses a disabled button.
