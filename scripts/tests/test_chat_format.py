@@ -69,7 +69,7 @@ class ChatFormatTests(unittest.TestCase):
         self.assertIn("Chưa dịch được", fn("<nội dung>", None, True))
         self.assertNotIn("<nội dung>", fn("<nội dung>", None, True))
 
-    def test_user_and_ai_text_are_escaped_and_complete_html(self):
+    def test_customer_text_is_escaped_and_ai_is_not_forwarded(self):
         msgs = [{"role": role, "text": '<script>& "text"</script>',
                  "translation_vi": "<b>không phải HTML</b>", "time": "2026-11-02T15:36:00"}
                 for role in ("user", "assistant")]
@@ -78,7 +78,8 @@ class ChatFormatTests(unittest.TestCase):
         self.assertNotIn("<script>", result)
         self.assertIn("&lt;b&gt;không phải HTML&lt;/b&gt;", result)
         self.assertIn("<b>Khách · 15:36</b>", result)
-        self.assertIn("<b>AI · 15:36</b>", result)
+        self.assertNotIn("<b>AI", result)
+        self.assertEqual(result.count("&lt;b&gt;không phải HTML&lt;/b&gt;"), 1)
         self.assertEqual(result.count("2026-11-02"), 1)
 
     def test_recent_preview_keeps_latest_messages_and_preserves_session(self):
@@ -92,7 +93,7 @@ class ChatFormatTests(unittest.TestCase):
 
     def test_long_and_emoji_text_stays_within_telegram_budget(self):
         for text in ["<&>" * 4000, "😀" * 8000, "Nội dung " * 8000]:
-            msgs = [{"role": "assistant", "text": text, "translation_vi": text + " khác",
+            msgs = [{"role": "user", "text": text, "translation_vi": text + " khác",
                      "time": "2026-11-02T15:36:00"} for _ in range(30)]
             result = functions()["_compact_support_history_for_admin"](msgs)
             self.assertLessEqual(len(result.encode("utf-16-le")) // 2, 3000)
@@ -103,7 +104,7 @@ class ChatFormatTests(unittest.TestCase):
         fn = functions()["_compact_support_history_for_admin"]
         self.assertIn("Chưa có", fn([]))
         result = fn([{"role": "user", "text": "One", "time": "2026-11-01T15:36:00"},
-                     {"role": "assistant", "text": "Two", "time": "2026-11-02T15:37:00"}])
+                     {"role": "user", "text": "Two", "time": "2026-11-02T15:37:00"}])
         self.assertIn("2026-11-01 15:36", result)
         self.assertIn("2026-11-02 15:37", result)
 
@@ -123,6 +124,8 @@ class ChatFormatTests(unittest.TestCase):
         self.assertIn("Chờ #2", params["text"])
         self.assertIn("&lt;Unsafe &amp; name&gt;", params["text"])
         self.assertNotIn("🇻🇳", params["text"])
+        self.assertNotIn("<b>AI", params["text"])
+        self.assertNotIn("Admin", params["text"])
         ValidHTML().validate(params["text"])
         self.assertEqual(data["msg_map"]["88"], "123")
         self.assertEqual(session["session_notif_mid"], 88)
@@ -130,6 +133,34 @@ class ChatFormatTests(unittest.TestCase):
         self.assertEqual(messages, before)
         ns["_save_chat_sessions"].assert_called_once_with(data)
         ns["logger"].error.assert_not_called()
+
+    def test_ai_messages_are_neither_translated_nor_sent_or_deleted(self):
+        ns = functions()
+        messages = [
+            {"role": "assistant", "text": f"PRIVATE_AI_REPLY_{i}", "time": "2026-11-02T15:36:00"}
+            for i in range(30)
+        ]
+        messages.insert(0, {"role": "user", "text": "Customer question", "translation_vi": "Câu hỏi của khách", "time": "2026-11-02T15:35:00"})
+        before = copy.deepcopy(messages)
+        context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(message_id=11))))
+        asyncio.run(ns["_notify_admin_with_history"](
+            context, {"msg_map": {}}, {"messages": messages}, "123",
+            SimpleNamespace(id=123, username="customer", first_name=None),
+        ))
+        text = context.bot.send_message.await_args.kwargs["text"]
+        self.assertIn("Câu hỏi của khách", text)
+        self.assertIn("Customer question", text)
+        self.assertNotIn("PRIVATE_AI_REPLY", text)
+        self.assertNotIn("tin gần nhất", text)
+        self.assertEqual(messages, before)
+        ns["_translate_support_text"].assert_not_awaited()
+        ns["_prepare_customer_message_for_admin"].assert_not_awaited()
+
+    def test_ai_only_and_support_only_history_never_leaks_to_preview(self):
+        fn = functions()["_compact_support_history_for_admin"]
+        result = fn([{"role": "assistant", "text": "PRIVATE_AI"}, {"role": "support", "text": "PRIVATE_ADMIN"}])
+        self.assertIn("Chưa có tin nhắn từ khách", result)
+        self.assertNotIn("PRIVATE", result)
 
     def test_notification_long_history_does_not_cut_html_or_reply_footer(self):
         ns = functions()

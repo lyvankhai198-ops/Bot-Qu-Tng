@@ -3723,16 +3723,15 @@ def _compact_support_history_for_admin(messages: list, max_chars: int = 3000) ->
             result.append(char)
         return text
 
-    visible = [m for m in messages if m.get("role", "user") in ("user", "assistant")]
+    visible = [m for m in messages if m.get("role", "user") == "user"]
     if not visible:
-        return "<i>Chưa có tin nhắn.</i>"
+        return "<i>Chưa có tin nhắn từ khách.</i>"
     dates = {str(m.get("time") or "")[:10] for m in visible if m.get("time")}
     blocks, used = [], 100  # Reserve room for the short preview/date note.
     for message in reversed(visible[-8:]):
-        who = "Khách" if message.get("role", "user") == "user" else "AI"
         timestamp = str(message.get("time") or "")[:16].replace("T", " ")
         stamp = timestamp[-5:] if len(dates) <= 1 and len(timestamp) >= 16 else timestamp
-        label = who + (" · " + stamp if stamp else "")
+        label = "Khách" + (" · " + stamp if stamp else "")
         original, translated = str(message.get("text") or ""), str(message.get("translation_vi") or "")
         if " ".join(original.split()).casefold() == " ".join(translated.split()).casefold():
             translated = ""
@@ -5184,22 +5183,14 @@ async def _notify_admin_with_history(
     name = _html.escape((f"@{user.username}" if user.username else (user.first_name or str(user.id)))[:80])
     messages = session.get("messages", [])
 
-    # Keep translation/storage unchanged; render the admin preview separately.
+    # Only customer messages belong in the handoff preview. Keep the full AI
+    # conversation stored, but do not translate or forward AI replies to admin.
     for m in messages:
         role = m.get("role", "user")
-        txt  = m.get("text", "")
         if role == "user":
             translated = m.get("translation_vi")
             if not translated:
                 translated = await _prepare_customer_message_for_admin(session, m)
-        elif role == "assistant":
-            translated = m.get("translation_vi")
-            if not translated and txt and txt not in ("[Ảnh]", "[Anh]"):
-                result = await _translate_support_text(txt, "Vietnamese")
-                if result and result["source_language"].casefold() not in ("vietnamese", "vi", "tiếng việt"):
-                    translated = result["translation"]
-                    m["translation_vi"] = translated
-        # bỏ qua role "support" — chưa có ở giai đoạn này
 
     history_str = _compact_support_history_for_admin(messages)
 
@@ -5213,7 +5204,7 @@ async def _notify_admin_with_history(
     header = (
         f"<b>HỖ TRỢ KHÁCH HÀNG</b>\n"
         f"{name} · ID <code>{user.id}</code>{_nah_pos_str}\n\n"
-        f"<b>Trao đổi gần đây</b>\n{history_str}\n\n"
+        f"<b>Tin khách gần đây</b>\n{history_str}\n\n"
         f"<i>Reply tin này để trả lời khách.</i>"
     )
 
