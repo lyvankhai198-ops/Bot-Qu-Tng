@@ -57,11 +57,17 @@ def is_admin(user_id: int) -> bool:
 
 def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     L = lang(user_id)
-    return ReplyKeyboardMarkup([
-        [t(L, "btn_support"), t(L, "btn_gift")],
-        [t(L, "btn_check_order"), t(L, "btn_shop")],
-        [t(L, "btn_chat_support"), t(L, "btn_intro")],
-    ], resize_keyboard=True)
+    settings = db.get_settings()
+    rows = [
+        [("btn_support", "support_enabled"), ("btn_gift", "gift_enabled")],
+        [("btn_check_order", None), ("btn_shop", None)],
+        [("btn_chat_support", None), ("btn_intro", "intro_enabled")],
+    ]
+    keyboard = [
+        [t(L, key) for key, flag in row if flag is None or settings.get(flag, True)]
+        for row in rows
+    ]
+    return ReplyKeyboardMarkup([row for row in keyboard if row], resize_keyboard=True)
 
 def back_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     L = lang(user_id)
@@ -1650,6 +1656,11 @@ async def handle_support_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Hiển thị sub-menu hỗ trợ: Yêu cầu giao hàng | Báo lỗi | Quay lại."""
     user = update.effective_user
     L = lang(user.id)
+    if not db.get_settings().get("support_enabled", True):
+        await update.message.reply_text(
+            t(L, "support_disabled"), reply_markup=main_keyboard(user.id),
+        )
+        return
     db.set_user_state(user.id, "conv_state", None)
     await update.message.reply_text(
         t(L, "support_submenu_title"),
@@ -2664,6 +2675,16 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Maintenance check (after home button)
     if await maintenance_reply(update, L):
         return
+
+    # Replace stale Telegram keyboards when a customer presses a disabled button.
+    settings = db.get_settings()
+    for key, flag in (("btn_support", "support_enabled"),
+                      ("btn_gift", "gift_enabled"), ("btn_intro", "intro_enabled")):
+        if text in (t("vi", key), t("en", key)) and not settings.get(flag, True):
+            await update.message.reply_text(
+                t(L, "feature_disabled"), reply_markup=main_keyboard(user.id),
+            )
+            return
 
     # Main menu buttons
     if text in (t("vi", "btn_support"), t("en", "btn_support")):
