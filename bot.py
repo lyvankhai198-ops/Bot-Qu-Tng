@@ -2696,6 +2696,11 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                       ("btn_check_order", "check_order_enabled"), ("btn_shop", "shop_enabled"),
                       ("btn_chat_support", "chat_support_enabled")):
         if text in (t("vi", key), t("en", key)) and not settings.get(flag, True):
+            if (key == "btn_chat_support"
+                    and _load_chat_sessions().get("sessions", {}).get(str(user.id), {}).get("status") == "active"):
+                # The switch disables new sessions, not a customer's saved active chat.
+                await handle_chat_support_start(update, context)
+                return
             await update.message.reply_text(
                 t(L, "feature_disabled"), reply_markup=main_keyboard(user.id),
             )
@@ -4447,11 +4452,12 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
     """User nhấn Chat với Support — tạo/tiếp tục phiên chat."""
     user = update.effective_user
     L = lang(user.id)
-    if not db.get_settings().get("chat_support_enabled", True):
-        await update.message.reply_text(t(L, "feature_disabled"), reply_markup=main_keyboard(user.id))
-        return
     data = _load_chat_sessions()
     uid_str = str(user.id)
+    active_session = data.get("sessions", {}).get(uid_str, {}).get("status") == "active"
+    if not db.get_settings().get("chat_support_enabled", True) and not active_session:
+        await update.message.reply_text(t(L, "feature_disabled"), reply_markup=main_keyboard(user.id))
+        return
 
     # ── Kiểm tra giờ làm việc ───────────────────────────────────────────────
     _is_open, _offline_msg = _check_working_hours()

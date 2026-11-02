@@ -18,10 +18,11 @@ KEYS = ("btn_support", "btn_gift", "btn_check_order",
         "btn_shop", "btn_chat_support", "btn_intro")
 
 
-def namespace(settings, language="vi", state=None):
+def namespace(settings, language="vi", state=None, sessions=None):
     names = {
         "main_keyboard", "menu_router", "handle_check_order", "handle_shop",
         "handle_chat_support_start", "handle_order_lookup", "_show_welcome_and_menu",
+        "show_main_menu", "_chat_keyboard",
     }
     tree = ast.parse((ROOT / "bot.py").read_text())
     nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names]
@@ -32,10 +33,14 @@ def namespace(settings, language="vi", state=None):
             arg.annotation = None
     translations = {}
     exec(compile((ROOT / "translations.py").read_text(), "translations.py", "exec"), translations)
+    user_state = {"conv_state": state}
+    session_data = sessions if sessions is not None else {"sessions": {}}
     db = SimpleNamespace(
         get_settings=lambda: settings, get_user_lang=lambda _: language,
-        get_user_state=lambda _: {"conv_state": state},
-        set_user_state=Mock(), set_user_lang=Mock(), clear_user_state=Mock(),
+        get_user_state=lambda _: user_state,
+        set_user_state=Mock(side_effect=lambda _, key, value: user_state.update({key: value})),
+        set_user_lang=Mock(),
+        clear_user_state=Mock(side_effect=lambda _, key: user_state.pop(key, None)),
     )
     ns = {
         "db": db, "lang": lambda _: language, "t": translations["t"],
@@ -51,6 +56,10 @@ def namespace(settings, language="vi", state=None):
         "get_active_shop_channels": Mock(return_value=[{"id": "fixture"}]),
         "shop_channels_inline": Mock(return_value="shop-channels"),
         "is_admin": lambda _: False, "back_keyboard": lambda _: "back",
+        "_load_chat_sessions": lambda: session_data,
+        "_save_chat_sessions": Mock(),
+        "_check_working_hours": lambda: (True, ""),
+        "_get_chat_ban": Mock(return_value=None),
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "bot.py", "exec"), ns)
     return ns
@@ -151,6 +160,47 @@ class MenuTests(unittest.TestCase):
                 self.assertEqual(module.get_settings()["unrelated"], fixture["unrelated"])
             for name, content in before.items():
                 self.assertEqual((directory / f"{name}.json").read_bytes(), content)
+
+    def test_active_chat_home_then_resume_after_switch_is_disabled(self):
+        for language in ("vi", "en"):
+            settings = {"chat_support_enabled": True}
+            sessions = {"sessions": {"123": {
+                "status": "active", "started_at": "fixture",
+                "messages": [{"text": "retain existing history"}],
+            }}}
+            before = json.dumps(sessions, sort_keys=True)
+            ns = namespace(settings, language, state="live_chat", sessions=sessions)
+            home = update(ns["t"](language, "btn_home"))
+            asyncio.run(ns["menu_router"](home, None))
+            self.assertNotEqual(ns["db"].get_user_state(123).get("conv_state"), "live_chat")
+            settings["chat_support_enabled"] = False
+            resume = update(ns["t"](language, "btn_chat_support"))
+            asyncio.run(ns["menu_router"](resume, None))
+            self.assertEqual(ns["db"].get_user_state(123)["conv_state"], "live_chat")
+            self.assertEqual(resume.message.reply_text.await_args.args[0],
+                             ns["t"](language, "chat_support_existing"))
+            self.assertEqual(json.dumps(sessions, sort_keys=True), before)
+            ns["_save_chat_sessions"].assert_not_called()
+            ns["_get_chat_ban"].assert_called_once_with("123")
+
+    def test_closed_session_does_not_bypass_disabled_switch(self):
+        sessions = {"sessions": {"123": {"status": "closed", "messages": ["keep history"]}}}
+        ns = namespace({"chat_support_enabled": False}, sessions=sessions)
+        u = update(ns["t"]("vi", "btn_chat_support"))
+        asyncio.run(ns["menu_router"](u, None))
+        self.assertEqual(u.message.reply_text.await_args.args[0], ns["t"]("vi", "feature_disabled"))
+        ns["db"].set_user_state.assert_not_called()
+        ns["_save_chat_sessions"].assert_not_called()
+
+    def test_resuming_active_chat_does_not_bypass_existing_chat_ban(self):
+        sessions = {"sessions": {"123": {"status": "active"}}}
+        ns = namespace({"chat_support_enabled": False}, sessions=sessions)
+        ns["_get_chat_ban"].return_value = {"expiresAt": None}
+        u = update(ns["t"]("vi", "btn_chat_support"))
+        asyncio.run(ns["menu_router"](u, None))
+        self.assertNotEqual(u.message.reply_text.await_args.args[0], ns["t"]("vi", "chat_support_existing"))
+        ns["db"].set_user_state.assert_not_called()
+        ns["_save_chat_sessions"].assert_not_called()
 
 
 if __name__ == "__main__":
