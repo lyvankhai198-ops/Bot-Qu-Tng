@@ -15,6 +15,9 @@ export interface BotSettings {
   giftEnabled?: boolean;
   supportEnabled?: boolean;
   introEnabled?: boolean;
+  checkOrderEnabled?: boolean;
+  shopEnabled?: boolean;
+  chatSupportEnabled?: boolean;
   maintenanceMode?: boolean;
   refundFormula?: string;
   refundCustomText?: string;

@@ -598,7 +598,7 @@ export default function Settings() {
       <Card>
         <CardHeader>
           <CardTitle>Tính năng chính</CardTitle>
-          <CardDescription>Bật tắt các module trên hệ thống</CardDescription>
+          <CardDescription>Bật/tắt từng nút trong menu bot. Sau khi lưu, khách bấm /start hoặc Trang chủ để cập nhật menu. Không xóa đơn hàng hay lịch sử chat.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 md:space-y-6">
           <div className="flex items-center justify-between gap-4 border-b border-border/50 pb-4">
@@ -621,6 +621,45 @@ export default function Settings() {
             <Switch
               checked={!!form.supportEnabled}
               onCheckedChange={v => setForm({...form, supportEnabled: v})}
+              className="shrink-0"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4 border-b border-border/50 pb-4">
+            <div className="space-y-0.5 min-w-0">
+              <Label htmlFor="check-order-enabled" className="text-base font-semibold">Kiểm tra đơn hàng</Label>
+              <p className="text-sm text-muted-foreground">Hiện nút tra cứu đơn hàng trong bot</p>
+            </div>
+            <Switch
+              id="check-order-enabled"
+              checked={form.checkOrderEnabled !== false}
+              onCheckedChange={v => setForm({...form, checkOrderEnabled: v})}
+              className="shrink-0"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4 border-b border-border/50 pb-4">
+            <div className="space-y-0.5 min-w-0">
+              <Label htmlFor="shop-enabled" className="text-base font-semibold">Kênh bán hàng</Label>
+              <p className="text-sm text-muted-foreground">Hiện nút và danh sách kênh bán hàng khi mở bot</p>
+            </div>
+            <Switch
+              id="shop-enabled"
+              checked={form.shopEnabled !== false}
+              onCheckedChange={v => setForm({...form, shopEnabled: v})}
+              className="shrink-0"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4 border-b border-border/50 pb-4">
+            <div className="space-y-0.5 min-w-0">
+              <Label htmlFor="chat-support-enabled" className="text-base font-semibold">Chat với Support</Label>
+              <p className="text-sm text-muted-foreground">Cho phép mở chat mới; giữ nguyên phiên chat và lịch sử đã có</p>
+            </div>
+            <Switch
+              id="chat-support-enabled"
+              checked={form.chatSupportEnabled !== false}
+              onCheckedChange={v => setForm({...form, chatSupportEnabled: v})}
               className="shrink-0"
             />
           </div>

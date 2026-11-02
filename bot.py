@@ -55,19 +55,25 @@ def lang(user_id: int) -> str:
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
 
-def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+def main_keyboard(user_id: int) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
     L = lang(user_id)
     settings = db.get_settings()
     rows = [
         [("btn_support", "support_enabled"), ("btn_gift", "gift_enabled")],
-        [("btn_check_order", None), ("btn_shop", None)],
-        [("btn_chat_support", None), ("btn_intro", "intro_enabled")],
+        [("btn_check_order", "check_order_enabled"), ("btn_shop", "shop_enabled")],
+        [("btn_chat_support", "chat_support_enabled"), ("btn_intro", "intro_enabled")],
     ]
     keyboard = [
         [t(L, key) for key, flag in row if flag is None or settings.get(flag, True)]
         for row in rows
     ]
-    return ReplyKeyboardMarkup([row for row in keyboard if row], resize_keyboard=True)
+    keyboard = [row for row in keyboard if row]
+    if (not settings.get("chat_support_enabled", True)
+            and _load_chat_sessions().get("sessions", {}).get(str(user_id), {}).get("status") == "active"):
+        # A separate continuation action preserves an existing chat without
+        # exposing the disabled entry point for creating new conversations.
+        keyboard.append([t(L, "btn_resume_chat")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True) if keyboard else ReplyKeyboardRemove()
 
 def back_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     L = lang(user_id)
@@ -625,7 +631,7 @@ async def _show_welcome_and_menu(bot, user, L: str) -> None:
     await bot.send_message(
         user.id, welcome, parse_mode=ParseMode.HTML, reply_markup=main_keyboard(user.id)
     )
-    shop_channels = get_active_shop_channels()
+    shop_channels = get_active_shop_channels() if db.get_settings().get("shop_enabled", True) else []
     if shop_channels:
         await bot.send_message(
             user.id,
@@ -2143,6 +2149,9 @@ async def handle_multi_warranty_desc(update: Update, context: ContextTypes.DEFAU
 async def handle_check_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     L = lang(user.id)
+    if not db.get_settings().get("check_order_enabled", True):
+        await update.message.reply_text(t(L, "feature_disabled"), reply_markup=main_keyboard(user.id))
+        return
     db.set_user_state(user.id, "conv_state", "check_lookup")
     await update.message.reply_text(
         t(L, "check_order_ask"),
@@ -2157,6 +2166,12 @@ async def handle_check_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def handle_order_lookup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     L = lang(user.id)
+    # A pending lookup prompt may predate an administrator disabling the button.
+    # Do not affect warranty/delivery lookups, which have their own switch.
+    if (db.get_user_state(user.id).get("conv_state") == "check_lookup"
+            and not db.get_settings().get("check_order_enabled", True)):
+        await update.message.reply_text(t(L, "feature_disabled"), reply_markup=main_keyboard(user.id))
+        return
 
     # ── Rate limit check ───────────────────────────────────────────────────
     rl_result = rl.check_and_record(user.id, "lookup", user.username or "")
@@ -2554,6 +2569,9 @@ async def handle_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = update.effective_user
     L = lang(user.id)
     settings = db.get_settings()
+    if not settings.get("shop_enabled", True):
+        await update.message.reply_text(t(L, "feature_disabled"), reply_markup=main_keyboard(user.id))
+        return
 
     channels = get_active_shop_channels()
 
@@ -2635,7 +2653,7 @@ async def handle_intro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 # All button keys used in menus — used to auto-detect language from button press
 _MENU_KEYS = ["btn_home", "btn_support", "btn_gift", "btn_check_order", "btn_shop", "btn_intro", "btn_gift_box",
-              "btn_bao_loi", "btn_yeu_cau_giao", "btn_chat_support", "btn_end_chat"]
+              "btn_bao_loi", "btn_yeu_cau_giao", "btn_chat_support", "btn_end_chat", "btn_resume_chat"]
 
 def detect_lang_from_text(text: str) -> str | None:
     """Return 'vi' or 'en' if text matches a known menu button, else None."""
@@ -2676,11 +2694,28 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if await maintenance_reply(update, L):
         return
 
+    if text in (t("vi", "btn_resume_chat"), t("en", "btn_resume_chat")):
+        if _load_chat_sessions().get("sessions", {}).get(str(user.id), {}).get("status") == "active":
+            await handle_chat_support_start(update, context)
+        else:
+            # A stale continuation button must never create a new session.
+            await update.message.reply_text(
+                t(L, "feature_disabled"), reply_markup=main_keyboard(user.id),
+            )
+        return
+
     # Replace stale Telegram keyboards when a customer presses a disabled button.
     settings = db.get_settings()
     for key, flag in (("btn_support", "support_enabled"),
-                      ("btn_gift", "gift_enabled"), ("btn_intro", "intro_enabled")):
+                      ("btn_gift", "gift_enabled"), ("btn_intro", "intro_enabled"),
+                      ("btn_check_order", "check_order_enabled"), ("btn_shop", "shop_enabled"),
+                      ("btn_chat_support", "chat_support_enabled")):
         if text in (t("vi", key), t("en", key)) and not settings.get(flag, True):
+            if (key == "btn_chat_support"
+                    and _load_chat_sessions().get("sessions", {}).get(str(user.id), {}).get("status") == "active"):
+                # The switch disables new sessions, not a customer's saved active chat.
+                await handle_chat_support_start(update, context)
+                return
             await update.message.reply_text(
                 t(L, "feature_disabled"), reply_markup=main_keyboard(user.id),
             )
@@ -4434,6 +4469,10 @@ async def handle_chat_support_start(update: Update, context: ContextTypes.DEFAUL
     L = lang(user.id)
     data = _load_chat_sessions()
     uid_str = str(user.id)
+    active_session = data.get("sessions", {}).get(uid_str, {}).get("status") == "active"
+    if not db.get_settings().get("chat_support_enabled", True) and not active_session:
+        await update.message.reply_text(t(L, "feature_disabled"), reply_markup=main_keyboard(user.id))
+        return
 
     # ── Kiểm tra giờ làm việc ───────────────────────────────────────────────
     _is_open, _offline_msg = _check_working_hours()
