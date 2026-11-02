@@ -33,10 +33,17 @@ router.get("/bot/settings", requireAuth, (_req: any, res: any) => {
 router.put("/bot/settings", requireAuth, async (req: any, res: any) => {
   const s = readJson("settings", {}) ?? {};
   const b = req.body ?? {};
+  for (const key of ["checkOrderEnabled", "shopEnabled", "chatSupportEnabled"]) {
+    if (b[key] !== undefined && typeof b[key] !== "boolean") {
+      res.status(400).json({ error: `${key} must be a boolean` });
+      return;
+    }
+  }
   const map: Record<string, string> = {
     shopLink: "shop_link", shopUsername: "shop_username", supportUsername: "support_username",
     cooldownHours: "cooldown_hours", roundId: "round_id",
     giftEnabled: "gift_enabled", supportEnabled: "support_enabled", introEnabled: "intro_enabled",
+    checkOrderEnabled: "check_order_enabled", shopEnabled: "shop_enabled", chatSupportEnabled: "chat_support_enabled",
     maintenanceMode: "maintenance_mode", refundFormula: "refund_formula",
     refundCustomText: "refund_custom_text", requireChannelCheck: "require_channel_check",
   };

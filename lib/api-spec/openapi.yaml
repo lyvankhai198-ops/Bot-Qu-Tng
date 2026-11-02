@@ -1041,6 +1041,12 @@ components:
           type: boolean
         introEnabled:
           type: boolean
+        checkOrderEnabled:
+          type: boolean
+        shopEnabled:
+          type: boolean
+        chatSupportEnabled:
+          type: boolean
         maintenanceMode:
           type: boolean
         refundFormula:
@@ -1070,6 +1076,12 @@ components:
         supportEnabled:
           type: boolean
         introEnabled:
+          type: boolean
+        checkOrderEnabled:
+          type: boolean
+        shopEnabled:
+          type: boolean
+        chatSupportEnabled:
           type: boolean
         maintenanceMode:
           type: boolean

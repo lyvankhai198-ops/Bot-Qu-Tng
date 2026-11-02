@@ -1,0 +1,47 @@
+name: Gift menu settings checks
+on:
+  pull_request:
+    paths:
+      - bot.py
+      - data_manager.py
+      - artifacts/admin-panel/src/pages/settings.tsx
+      - artifacts/api-server/src/routes/botAdmin.ts
+      - artifacts/api-server/src/routes/settings.ts
+      - lib/api-spec/openapi.yaml
+      - lib/api-client-react/src/generated/**
+      - lib/api-zod/src/generated/**
+      - scripts/tests/gift-menu/**
+      - .github/workflows/gift-menu-check.yml
+permissions:
+  contents: read
+concurrency:
+  group: gift-menu-check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install locked dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.11.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Verify VI/EN and saved API settings control the actual bot menu
+        env:
+          GIFT_SOURCE_ROOT: .
+        run: |
+          python3 scripts/tests/gift-menu/test_bot_menu.py
+          node scripts/tests/gift-menu/test_settings.mjs
+      - name: Build the admin website
+        env:
+          PORT: '3000'
+          BASE_PATH: /admin-panel/
+          NODE_ENV: production
+        run: pnpm --filter @workspace/admin-panel run build
+      - name: Build the API
+        run: pnpm --filter @workspace/api-server run build
